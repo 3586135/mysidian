@@ -43,8 +43,7 @@ export enum MdPropType {
 }
 
 /** 行内节点。 */
-export class MdInline {
-  type: MdInlineType = MdInlineType.TEXT;
+export class MdInline {  type: MdInlineType = MdInlineType.TEXT;
   /** 文本内容（TEXT / INLINE_CODE / TAG 等） */
   text: string = '';
   /** 链接地址（LINK / IMAGE） */
@@ -64,6 +63,8 @@ export class MdInline {
 /** 列表项。 */
 export class MdListItem {
   ordinal: number = 0;
+  /** 是否为任务列表项（- [ ] / - [x]） */
+  isTask: boolean = false;
   checked: boolean = false;
   inlines: MdInline[] = [];
   children: MdListItem[] = [];
@@ -109,6 +110,21 @@ export class MdFrontmatter {
   properties: MdProperty[] = [];
   tags: string[] = [];
   raw: string = '';
+}
+
+/** 扁平化后的行内片段，渲染层按片段着色。 */
+export class MdInlineSegment {
+  text: string = '';
+  bold: boolean = false;
+  italic: boolean = false;
+  strike: boolean = false;
+  code: boolean = false;
+  /** 链接目标（wiki 链接为笔记名，markdown 链接为 url） */
+  linkTarget: string = '';
+  /** 链接类型：wiki / url / embed */
+  linkKind: string = '';
+  /** 标签名（不含 #） */
+  tag: string = '';
 }
 
 /** 解析后的整篇文档。 */

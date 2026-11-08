@@ -1,7 +1,8 @@
 import { common } from '@kit.AbilityKit';
-import { FileNode, FlatFileNode, VaultInfo } from '@ohos/domain';
+import { FileNode, FlatFileNode, MdDocument, VaultInfo } from '@ohos/domain';
 import { Logger } from '@ohos/common';
-import { VaultManager, VaultPath } from '@ohos/vault';
+import { MarkdownParser } from '@ohos/markdown';
+import { NoteResolver, VaultManager, VaultPath } from '@ohos/vault';
 
 const LOG: Logger = new Logger('MySidianVM');
 
@@ -16,15 +17,18 @@ export class VaultViewModel {
   @Trace selectedPath: string = '';
   @Trace noteTitle: string = '';
   @Trace noteContent: string = '';
+  @Trace document: MdDocument = new MdDocument();
   @Trace busy: boolean = false;
 
   private manager: VaultManager | null = null;
+  private context: common.Context | null = null;
   private tree: FileNode[] = [];
   private expandedPaths: string[] = [];
 
   /** 初始化存储层并加载仓库列表。 */
   public async init(context: common.Context): Promise<void> {
     try {
+      this.context = context;
       this.manager = await VaultManager.create(context);
       await this.refreshVaults();
       if (this.vaults.length > 0) {
@@ -77,6 +81,25 @@ export class VaultViewModel {
     this.selectedPath = path;
     this.noteTitle = VaultPath.basename(path);
     this.noteContent = await manager.readNote(this.currentVault, path);
+    this.document = MarkdownParser.parse(this.noteContent);
+  }
+
+  /** 处理正文中的链接点击：wiki 链接在仓库内跳转。 */
+  public async openLink(target: string, kind: string): Promise<void> {
+    if (kind === 'url') {
+      LOG.info(`external link ignored: ${target}`);
+      return;
+    }
+    const context: common.Context | null = this.context;
+    if (context === null) {
+      return;
+    }
+    const note = await NoteResolver.resolve(context, this.currentVault.id, target);
+    if (note === null) {
+      LOG.info(`unresolved wiki link: ${target}`);
+      return;
+    }
+    await this.openNote(note.path);
   }
 
   /** 关闭当前笔记。 */
@@ -84,6 +107,7 @@ export class VaultViewModel {
     this.selectedPath = '';
     this.noteTitle = '';
     this.noteContent = '';
+    this.document = new MdDocument();
   }
 
   /** 新建空仓库。 */

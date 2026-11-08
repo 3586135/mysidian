@@ -2,6 +2,7 @@ import { common } from '@kit.AbilityKit';
 import { promptAction } from '@kit.ArkUI';
 import { picker } from '@kit.CoreFileKit';
 import { EmptyState, FileTreeView, Logger } from '@ohos/common';
+import { MdDocumentView } from '@ohos/markdown';
 import { VaultViewModel } from '../viewmodel/VaultViewModel';
 
 const LOG: Logger = new Logger('MySidianPage');
@@ -157,14 +158,17 @@ struct Index {
         }
         .width('100%')
         .padding({ left: 16, right: 16, top: 10, bottom: 10 })
-        Scroll() {
-          Text(this.vm.noteContent)
-            .fontSize(16)
-            .fontColor($r('sys.color.ohos_id_color_text_primary'))
-            .width('100%')
-        }
+        MdDocumentView({
+          document: this.vm.document,
+          fontSize: 16,
+          onOpenLink: (target: string, kind: string): void => {
+            this.vm.openLink(target, kind);
+          },
+          onOpenTag: (tag: string): void => {
+            promptAction.showToast({ message: `#${tag}` });
+          }
+        })
         .layoutWeight(1)
-        .width('100%')
         .padding({ left: 16, right: 16 })
       }
     }

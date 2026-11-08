@@ -1,5 +1,6 @@
 export { MdBlockType, MdInlineType, MdPropType } from './src/main/ets/model/MdModel';
-export { MdInline, MdListItem, MdBlock, MdProperty, MdFrontmatter, MdDocument } from './src/main/ets/model/MdModel';
+export { MdInline, MdListItem, MdBlock, MdProperty, MdFrontmatter, MdDocument, MdInlineSegment }
+  from './src/main/ets/model/MdModel';
 
 export { LinkKind } from './src/main/ets/model/VaultModel';
 export { VaultInfo, NoteRow, FileNode, FlatFileNode, LinkRef, TagRef, SearchHit, OutlineEntry, IndexProgress }
