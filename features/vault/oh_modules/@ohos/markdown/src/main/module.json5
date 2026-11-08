@@ -1,0 +1,12 @@
+{
+  "module": {
+    "name": "markdown",
+    "type": "har",
+    "description": "mysidian markdown parser and renderer",
+    "deviceTypes": [
+      "phone",
+      "tablet",
+      "2in1"
+    ]
+  }
+}

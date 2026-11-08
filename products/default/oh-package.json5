@@ -1,13 +1,15 @@
 {
   "name": "default",
   "version": "1.0.0",
-  "description": "Please describe the basic information.",
+  "description": "mysidian application entry.",
   "main": "",
   "author": "",
   "license": "",
   "dependencies": {
-    "@ohos/adaptivelayout": "file:../../features/adaptiveLayout",
-    "@ohos/responsivelayout": "file:../../features/responsiveLayout",
-    "@ohos/common": "file:../../common"
+    "@ohos/common": "file:../../common",
+    "@ohos/domain": "file:../../features/domain",
+    "@ohos/vault": "file:../../features/vault",
+    "@ohos/markdown": "file:../../features/markdown",
+    "@ohos/sync": "file:../../features/sync"
   }
 }

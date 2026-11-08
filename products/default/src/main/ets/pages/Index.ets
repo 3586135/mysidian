@@ -1,17 +1,15 @@
-import { catalogueListComponent } from '../view/CatalogueListComponent';
-import CatalogueViewModel from '../viewmodel/CatalogueViewModel';
-
-/**
- * Index is the entry of application and Here is a list showing three buttons,
- * click the button to jump to different pages.
- */
 @Entry
-@Component
+@ComponentV2
 struct Index {
   build() {
     Column() {
-      catalogueListComponent(this.getUIContext(), CatalogueViewModel.getCatalogueData());
+      Text('mysidian')
+        .fontSize(24)
+        .fontWeight(FontWeight.Medium)
     }
+    .width('100%')
+    .height('100%')
+    .justifyContent(FlexAlign.Center)
     .backgroundColor($r('sys.color.ohos_id_color_sub_background'))
   }
 }

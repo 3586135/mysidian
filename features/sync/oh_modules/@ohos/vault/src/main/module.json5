@@ -1,0 +1,12 @@
+{
+  "module": {
+    "name": "vault",
+    "type": "har",
+    "description": "mysidian vault storage and index",
+    "deviceTypes": [
+      "phone",
+      "tablet",
+      "2in1"
+    ]
+  }
+}

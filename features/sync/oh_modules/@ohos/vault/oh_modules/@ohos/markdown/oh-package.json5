@@ -1,0 +1,12 @@
+{
+  "name": "@ohos/markdown",
+  "version": "1.0.0",
+  "description": "mysidian markdown parser and native renderer.",
+  "main": "Index.ets",
+  "author": "",
+  "license": "Apache-2.0",
+  "dependencies": {
+    "@ohos/domain": "file:../domain",
+    "@ohos/common": "file:../../common"
+  }
+}

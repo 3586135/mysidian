@@ -1,0 +1,9 @@
+{
+  "name": "@ohos/domain",
+  "version": "1.0.0",
+  "description": "mysidian domain models and service interfaces.",
+  "main": "Index.ets",
+  "author": "",
+  "license": "Apache-2.0",
+  "dependencies": {}
+}

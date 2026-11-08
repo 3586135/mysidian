@@ -39,6 +39,15 @@
       ]
     },
     {
+      "name": "domain",
+      "srcPath": "./features/domain",
+      "targets": [
+        {
+          "name": "default"
+        }
+      ]
+    },
+    {
       "name": "common",
       "srcPath": "./common",
       "targets": [
@@ -48,8 +57,8 @@
       ]
     },
     {
-      "name": "adaptiveLayout",
-      "srcPath": "./features/adaptiveLayout",
+      "name": "markdown",
+      "srcPath": "./features/markdown",
       "targets": [
         {
           "name": "default"
@@ -57,8 +66,17 @@
       ]
     },
     {
-      "name": "responsiveLayout",
-      "srcPath": "./features/responsiveLayout",
+      "name": "vault",
+      "srcPath": "./features/vault",
+      "targets": [
+        {
+          "name": "default"
+        }
+      ]
+    },
+    {
+      "name": "sync",
+      "srcPath": "./features/sync",
       "targets": [
         {
           "name": "default"

@@ -1,0 +1,13 @@
+{
+  "name": "@ohos/sync",
+  "version": "1.0.0",
+  "description": "mysidian sync engine and providers.",
+  "main": "Index.ets",
+  "author": "",
+  "license": "Apache-2.0",
+  "dependencies": {
+    "@ohos/domain": "file:../domain",
+    "@ohos/common": "file:../../common",
+    "@ohos/vault": "file:../vault"
+  }
+}
