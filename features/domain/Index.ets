@@ -3,7 +3,8 @@ export { MdInline, MdListItem, MdBlock, MdProperty, MdFrontmatter, MdDocument, M
   from './src/main/ets/model/MdModel';
 
 export { LinkKind } from './src/main/ets/model/VaultModel';
-export { VaultInfo, NoteRow, FileNode, FlatFileNode, LinkRef, TagRef, SearchHit, OutlineEntry, IndexProgress }
+export { VaultInfo, NoteRow, FileNode, FlatFileNode, LinkRef, TagRef, SearchHit, OutlineEntry,
+  BacklinkItem, IndexProgress }
   from './src/main/ets/model/VaultModel';
 
 export { SyncState, ConflictResolution } from './src/main/ets/model/SyncModel';

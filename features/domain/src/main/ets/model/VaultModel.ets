@@ -90,6 +90,14 @@ export class OutlineEntry {
   ordinal: number = 0;
 }
 
+/** 反向链接条目。 */
+export class BacklinkItem {
+  sourceNoteId: number = 0;
+  sourcePath: string = '';
+  sourceTitle: string = '';
+  context: string = '';
+}
+
 /** 索引进度。 */
 export class IndexProgress {
   total: number = 0;

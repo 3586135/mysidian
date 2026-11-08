@@ -1,13 +1,15 @@
 import { common } from '@kit.AbilityKit';
-import { FileNode, FlatFileNode, MdDocument, VaultInfo } from '@ohos/domain';
+import { BacklinkItem, FileNode, FlatFileNode, MdDocument, MdProperty, NoteRow, OutlineEntry,
+  VaultInfo } from '@ohos/domain';
 import { Logger } from '@ohos/common';
 import { MarkdownParser } from '@ohos/markdown';
-import { NoteResolver, VaultManager, VaultPath } from '@ohos/vault';
+import { BlockDao, IndexPipeline, LinkDao, NoteDao, NoteResolver, PropDao, TagDao, VaultManager,
+  VaultPath } from '@ohos/vault';
 
 const LOG: Logger = new Logger('MySidianVM');
 
 /**
- * 仓库视图模型：负责仓库列表、文件树、笔记读取与导入导出。
+ * 仓库视图模型：负责仓库列表、文件树、笔记读取编辑、索引与信息面板。
  */
 @ObservedV2
 export class VaultViewModel {
@@ -19,6 +21,17 @@ export class VaultViewModel {
   @Trace noteContent: string = '';
   @Trace document: MdDocument = new MdDocument();
   @Trace busy: boolean = false;
+
+  /** 编辑态。 */
+  @Trace editMode: boolean = false;
+  /** 编辑器缓冲区（非响应式，避免输入时重建 TextArea 造成光标跳动）。 */
+  draftBuffer: string = '';
+  /** 信息面板。 */
+  @Trace infoTabIndex: number = 0;
+  @Trace outline: OutlineEntry[] = [];
+  @Trace backlinks: BacklinkItem[] = [];
+  @Trace noteTags: string[] = [];
+  @Trace noteProperties: MdProperty[] = [];
 
   private manager: VaultManager | null = null;
   private context: common.Context | null = null;
@@ -72,7 +85,7 @@ export class VaultViewModel {
     this.refreshTreeItems();
   }
 
-  /** 打开笔记。 */
+  /** 打开笔记，并同步建立索引。 */
   public async openNote(path: string): Promise<void> {
     const manager: VaultManager | null = this.manager;
     if (manager === null) {
@@ -82,6 +95,10 @@ export class VaultViewModel {
     this.noteTitle = VaultPath.basename(path);
     this.noteContent = await manager.readNote(this.currentVault, path);
     this.document = MarkdownParser.parse(this.noteContent);
+    this.editMode = false;
+    this.draftBuffer = '';
+    await this.reindexCurrentNote();
+    await this.refreshNoteInfo();
   }
 
   /** 处理正文中的链接点击：wiki 链接在仓库内跳转。 */
@@ -108,6 +125,56 @@ export class VaultViewModel {
     this.noteTitle = '';
     this.noteContent = '';
     this.document = new MdDocument();
+    this.editMode = false;
+    this.draftBuffer = '';
+    this.outline = [];
+    this.backlinks = [];
+    this.noteTags = [];
+    this.noteProperties = [];
+  }
+
+  /** 进入编辑模式。 */
+  public startEdit(): void {
+    this.draftBuffer = this.noteContent;
+    this.editMode = true;
+  }
+
+  /** 取消编辑。 */
+  public cancelEdit(): void {
+    this.editMode = false;
+    this.draftBuffer = '';
+  }
+
+  /** 更新编辑草稿。 */
+  public updateDraft(value: string): void {
+    this.draftBuffer = value;
+  }
+
+  /** 保存编辑内容并重建索引。 */
+  public async saveDraft(): Promise<void> {
+    const manager: VaultManager | null = this.manager;
+    const context: common.Context | null = this.context;
+    if (manager === null || context === null) {
+      return;
+    }
+    await manager.writeNote(this.currentVault, this.selectedPath, this.draftBuffer);
+    this.noteContent = this.draftBuffer;
+    this.document = MarkdownParser.parse(this.noteContent);
+    this.editMode = false;
+    this.draftBuffer = '';
+    await this.refreshNoteMeta();
+    await this.reindexCurrentNote();
+    await this.refreshNoteInfo();
+  }
+
+  /** 切换信息面板页签。 */
+  public setInfoTab(index: number): void {
+    this.infoTabIndex = index;
+  }
+
+  /** 打开标签检索（M4 接入搜索页）。 */
+  public onTagSelected(tag: string): void {
+    LOG.info(`tag selected: ${tag}`);
   }
 
   /** 新建空仓库。 */
@@ -154,6 +221,43 @@ export class VaultViewModel {
     } finally {
       this.busy = false;
     }
+  }
+
+  private async refreshNoteMeta(): Promise<void> {
+    const manager: VaultManager | null = this.manager;
+    if (manager === null) {
+      return;
+    }
+    await manager.refreshNote(this.currentVault, this.selectedPath);
+  }
+
+  private async reindexCurrentNote(): Promise<void> {
+    const context: common.Context | null = this.context;
+    if (context === null || this.selectedPath.length === 0) {
+      return;
+    }
+    const note: NoteRow | null = await NoteDao.findByPath(context, this.currentVault.id,
+      this.selectedPath);
+    if (note === null) {
+      return;
+    }
+    await IndexPipeline.indexNote(context, note, this.document);
+  }
+
+  private async refreshNoteInfo(): Promise<void> {
+    const context: common.Context | null = this.context;
+    if (context === null || this.selectedPath.length === 0) {
+      return;
+    }
+    const note: NoteRow | null = await NoteDao.findByPath(context, this.currentVault.id,
+      this.selectedPath);
+    if (note === null) {
+      return;
+    }
+    this.outline = await BlockDao.outline(context, note.id);
+    this.backlinks = await LinkDao.backlinks(context, this.selectedPath);
+    this.noteTags = await TagDao.tagsOfNote(context, note.id);
+    this.noteProperties = await PropDao.ofNote(context, note.id);
   }
 
   private refreshTreeItems(): void {

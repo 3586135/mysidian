@@ -177,6 +177,25 @@ export class VaultManager {
     return await NoteDao.listByVault(this.context, vault.id);
   }
 
+  /** 刷新单篇笔记的元数据（保存后调用）。 */
+  public async refreshNote(vault: VaultInfo, relativePath: string): Promise<NoteRow | null> {
+    const absolute: string = VaultPath.absolute(vault.rootPath, relativePath);
+    if (!fileIo.accessSync(absolute)) {
+      return null;
+    }
+    const stat = fileIo.statSync(absolute);
+    const row: NoteRow = new NoteRow();
+    row.vaultId = vault.id;
+    row.path = relativePath;
+    row.ext = VaultPath.extension(relativePath);
+    row.title = VaultPath.basenameWithoutExt(relativePath);
+    row.mtime = stat.mtime;
+    row.size = stat.size;
+    row.hash = await this.hashFile(absolute);
+    row.id = await NoteDao.upsert(this.context, row);
+    return row;
+  }
+
   private async hashFile(absolutePath: string): Promise<string> {
     try {
       return await hash.hash(absolutePath, 'sha256');

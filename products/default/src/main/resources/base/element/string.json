@@ -37,6 +37,54 @@
       "value": "返回"
     },
     {
+      "name": "action_edit",
+      "value": "编辑"
+    },
+    {
+      "name": "action_save",
+      "value": "保存"
+    },
+    {
+      "name": "action_cancel",
+      "value": "取消"
+    },
+    {
+      "name": "action_info",
+      "value": "信息"
+    },
+    {
+      "name": "tab_outline",
+      "value": "大纲"
+    },
+    {
+      "name": "tab_backlinks",
+      "value": "反链"
+    },
+    {
+      "name": "tab_tags",
+      "value": "标签"
+    },
+    {
+      "name": "tab_props",
+      "value": "属性"
+    },
+    {
+      "name": "empty_outline",
+      "value": "暂无标题"
+    },
+    {
+      "name": "empty_backlinks",
+      "value": "暂无反向链接"
+    },
+    {
+      "name": "empty_tags",
+      "value": "暂无标签"
+    },
+    {
+      "name": "empty_props",
+      "value": "暂无属性"
+    },
+    {
       "name": "vault_empty_title",
       "value": "还没有仓库"
     },

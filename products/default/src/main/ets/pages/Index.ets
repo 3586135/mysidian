@@ -3,6 +3,7 @@ import { promptAction } from '@kit.ArkUI';
 import { picker } from '@kit.CoreFileKit';
 import { EmptyState, FileTreeView, Logger } from '@ohos/common';
 import { MdDocumentView } from '@ohos/markdown';
+import { NoteInfoPanel } from '../view/NoteInfoPanel';
 import { VaultViewModel } from '../viewmodel/VaultViewModel';
 
 const LOG: Logger = new Logger('MySidianPage');
@@ -13,6 +14,7 @@ struct Index {
   @Local vm: VaultViewModel = new VaultViewModel();
   @Local isWide: boolean = false;
   @Local showCreatePanel: boolean = false;
+  @Local showInfo: boolean = false;
   @Local newVaultName: string = '';
 
   aboutToAppear(): void {
@@ -80,12 +82,17 @@ struct Index {
         Column() {
           this.treePanel()
         }
-        .width('34%')
+        .width('28%')
         .height('100%')
         Column() {
           this.notePanel()
         }
         .layoutWeight(1)
+        .height('100%')
+        Column() {
+          this.infoPanel()
+        }
+        .width('26%')
         .height('100%')
       }
       .width('100%')
@@ -134,30 +141,66 @@ struct Index {
   @Builder
   notePanel() {
     Column() {
-      if (this.vm.selectedPath.length === 0) {
-        EmptyState({
-          title: $r('app.string.note_empty_title'),
-          description: $r('app.string.note_empty_desc')
-        })
-      } else {
-        Row() {
-          Text(this.vm.noteTitle)
-            .fontSize(18)
-            .fontWeight(FontWeight.Bold)
-            .fontColor($r('sys.color.ohos_id_color_text_primary'))
-            .maxLines(1)
-            .textOverflow({ overflow: TextOverflow.Ellipsis })
-          Blank()
+      Row() {
+        Text(this.vm.noteTitle)
+          .fontSize(18)
+          .fontWeight(FontWeight.Bold)
+          .fontColor($r('sys.color.ohos_id_color_text_primary'))
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+          .layoutWeight(1)
+        if (!this.isWide) {
+          Button($r('app.string.action_back'))
+            .type(ButtonType.Normal)
+            .margin({ right: 8 })
+            .onClick(() => {
+              this.vm.closeNote();
+            })
+        }
+        if (this.vm.editMode) {
+          Button($r('app.string.action_cancel'))
+            .type(ButtonType.Normal)
+            .margin({ right: 8 })
+            .onClick(() => {
+              this.vm.cancelEdit();
+            })
+          Button($r('app.string.action_save'))
+            .type(ButtonType.Normal)
+            .onClick(() => {
+              this.vm.saveDraft();
+            })
+        } else {
+          Button($r('app.string.action_edit'))
+            .type(ButtonType.Normal)
+            .margin({ right: 8 })
+            .onClick(() => {
+              this.vm.startEdit();
+            })
           if (!this.isWide) {
-            Button($r('app.string.action_back'))
+            Button($r('app.string.action_info'))
               .type(ButtonType.Normal)
               .onClick(() => {
-                this.vm.closeNote();
+                this.showInfo = !this.showInfo;
               })
           }
         }
-        .width('100%')
-        .padding({ left: 16, right: 16, top: 10, bottom: 10 })
+      }
+      .width('100%')
+      .padding({ left: 16, right: 16, top: 10, bottom: 10 })
+      if (this.vm.editMode) {
+        TextArea({
+          placeholder: $r('app.string.action_edit'),
+          text: this.vm.draftBuffer
+        })
+          .fontSize(15)
+          .fontFamily('monospace')
+          .width('100%')
+          .layoutWeight(1)
+          .onChange((value: string) => {
+            this.vm.updateDraft(value);
+          })
+          .padding({ left: 12, right: 12 })
+      } else {
         MdDocumentView({
           document: this.vm.document,
           fontSize: 16,
@@ -165,15 +208,42 @@ struct Index {
             this.vm.openLink(target, kind);
           },
           onOpenTag: (tag: string): void => {
-            promptAction.showToast({ message: `#${tag}` });
+            this.vm.onTagSelected(tag);
           }
         })
         .layoutWeight(1)
         .padding({ left: 16, right: 16 })
+        if (!this.isWide && this.showInfo) {
+          Column() {
+            this.infoPanel()
+          }
+          .width('100%')
+          .height('45%')
+        }
       }
     }
     .width('100%')
     .height('100%')
+  }
+
+  @Builder
+  infoPanel() {
+    NoteInfoPanel({
+      outlineEntries: this.vm.outline,
+      backlinks: this.vm.backlinks,
+      tags: this.vm.noteTags,
+      properties: this.vm.noteProperties,
+      currentTab: this.vm.infoTabIndex,
+      onTabChange: (index: number): void => {
+        this.vm.setInfoTab(index);
+      },
+      onOpenNote: (path: string): void => {
+        this.vm.openNote(path);
+      },
+      onOpenTag: (tag: string): void => {
+        this.vm.onTagSelected(tag);
+      }
+    })
   }
 
   @Builder
