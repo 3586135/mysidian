@@ -53,6 +53,122 @@
       "value": "信息"
     },
     {
+      "name": "action_search",
+      "value": "搜索"
+    },
+    {
+      "name": "action_quick",
+      "value": "跳转"
+    },
+    {
+      "name": "action_commands",
+      "value": "命令"
+    },
+    {
+      "name": "action_sync",
+      "value": "同步"
+    },
+    {
+      "name": "action_settings",
+      "value": "设置"
+    },
+    {
+      "name": "settings_title",
+      "value": "设置"
+    },
+    {
+      "name": "settings_font_size",
+      "value": "正文字号"
+    },
+    {
+      "name": "settings_font_small",
+      "value": "小"
+    },
+    {
+      "name": "settings_font_medium",
+      "value": "中"
+    },
+    {
+      "name": "settings_font_large",
+      "value": "大"
+    },
+    {
+      "name": "settings_reindex",
+      "value": "重建索引"
+    },
+    {
+      "name": "settings_about",
+      "value": "mysidian · 鸿蒙原生 Markdown 笔记应用\n仓库保存在应用沙箱，导出 zip 后可在桌面 Obsidian 中打开。"
+    },
+    {
+      "name": "sync_title",
+      "value": "同步设置"
+    },
+    {
+      "name": "sync_server",
+      "value": "WebDAV 服务器地址"
+    },
+    {
+      "name": "sync_server_placeholder",
+      "value": "https://example.com/dav/"
+    },
+    {
+      "name": "sync_username",
+      "value": "用户名"
+    },
+    {
+      "name": "sync_username_placeholder",
+      "value": "用户名"
+    },
+    {
+      "name": "sync_password",
+      "value": "密码"
+    },
+    {
+      "name": "sync_password_placeholder",
+      "value": "密码"
+    },
+    {
+      "name": "sync_root",
+      "value": "远端目录"
+    },
+    {
+      "name": "sync_root_placeholder",
+      "value": "mysidian"
+    },
+    {
+      "name": "sync_auto",
+      "value": "自动同步"
+    },
+    {
+      "name": "sync_now",
+      "value": "立即同步"
+    },
+    {
+      "name": "sync_conflicts",
+      "value": "冲突文件"
+    },
+    {
+      "name": "search_placeholder",
+      "value": "搜索笔记内容"
+    },
+    {
+      "name": "search_empty",
+      "value": "没有匹配的结果"
+    },
+    {
+      "name": "search_loading",
+      "value": "搜索中…"
+    },
+    {
+      "name": "quick_placeholder",
+      "value": "输入笔记名称"
+    },
+    {
+      "name": "command_placeholder",
+      "value": "输入命令"
+    },
+    {
       "name": "tab_outline",
       "value": "大纲"
     },

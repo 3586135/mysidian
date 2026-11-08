@@ -1,4 +1,5 @@
 import { common } from '@kit.AbilityKit';
+import { preferences } from '@kit.ArkData';
 import { BacklinkItem, FileNode, FlatFileNode, MdDocument, MdProperty, NoteRow, OutlineEntry,
   VaultInfo } from '@ohos/domain';
 import { Logger } from '@ohos/common';
@@ -7,6 +8,7 @@ import { BlockDao, IndexPipeline, LinkDao, NoteDao, NoteResolver, PropDao, TagDa
   VaultPath } from '@ohos/vault';
 
 const LOG: Logger = new Logger('MySidianVM');
+const PREFERENCE_STORE: string = 'mysidian_preferences';
 
 /**
  * 仓库视图模型：负责仓库列表、文件树、笔记读取编辑、索引与信息面板。
@@ -32,6 +34,8 @@ export class VaultViewModel {
   @Trace backlinks: BacklinkItem[] = [];
   @Trace noteTags: string[] = [];
   @Trace noteProperties: MdProperty[] = [];
+  /** 正文字号。 */
+  @Trace fontSize: number = 16;
 
   private manager: VaultManager | null = null;
   private context: common.Context | null = null;
@@ -43,12 +47,43 @@ export class VaultViewModel {
     try {
       this.context = context;
       this.manager = await VaultManager.create(context);
+      await this.loadPreferences(context);
       await this.refreshVaults();
       if (this.vaults.length > 0) {
         await this.selectVault(this.vaults[0]);
       }
     } catch (error) {
       LOG.error('vault view model init failed');
+    }
+  }
+
+  /** 更新正文字号并持久化。 */
+  public async setFontSize(size: number): Promise<void> {
+    this.fontSize = size;
+    const context: common.Context | null = this.context;
+    if (context === null) {
+      return;
+    }
+    try {
+      const store: preferences.Preferences = await preferences.getPreferences(context,
+        PREFERENCE_STORE);
+      await store.put('fontSize', size);
+      await store.flush();
+    } catch (error) {
+      LOG.error('save font size failed');
+    }
+  }
+
+  private async loadPreferences(context: common.Context): Promise<void> {
+    try {
+      const store: preferences.Preferences = await preferences.getPreferences(context,
+        PREFERENCE_STORE);
+      const value: preferences.ValueType = await store.get('fontSize', 16);
+      if (typeof value === 'number') {
+        this.fontSize = value;
+      }
+    } catch (error) {
+      LOG.error('load preferences failed');
     }
   }
 
@@ -72,6 +107,26 @@ export class VaultViewModel {
     this.closeNote();
     this.tree = await manager.buildTree(vault);
     this.refreshTreeItems();
+    await this.ensureIndexed(vault);
+  }
+
+  /** 为尚未建立索引的笔记补建索引。 */
+  private async ensureIndexed(vault: VaultInfo): Promise<void> {
+    const context: common.Context | null = this.context;
+    const manager: VaultManager | null = this.manager;
+    if (context === null || manager === null) {
+      return;
+    }
+    const notes: NoteRow[] = await NoteDao.listByVault(context, vault.id);
+    for (const note of notes) {
+      const count: number = await BlockDao.countOfNote(context, note.id);
+      if (count > 0) {
+        continue;
+      }
+      const content: string = await manager.readNote(vault, note.path);
+      const document: MdDocument = MarkdownParser.parse(content);
+      await IndexPipeline.indexNote(context, note, document);
+    }
   }
 
   /** 展开或折叠目录。 */
@@ -95,6 +150,9 @@ export class VaultViewModel {
     this.noteTitle = VaultPath.basename(path);
     this.noteContent = await manager.readNote(this.currentVault, path);
     this.document = MarkdownParser.parse(this.noteContent);
+    if (this.document.title.length > 0) {
+      this.noteTitle = this.document.title;
+    }
     this.editMode = false;
     this.draftBuffer = '';
     await this.reindexCurrentNote();
@@ -221,6 +279,25 @@ export class VaultViewModel {
     } finally {
       this.busy = false;
     }
+  }
+
+  /** 重建整个仓库的索引。 */
+  public async rescanVault(): Promise<void> {
+    const manager: VaultManager | null = this.manager;
+    const context: common.Context | null = this.context;
+    if (manager === null || context === null) {
+      return;
+    }
+    await manager.scanVault(this.currentVault);
+    const notes: NoteRow[] = await NoteDao.listByVault(context, this.currentVault.id);
+    for (const note of notes) {
+      const content: string = await manager.readNote(this.currentVault, note.path);
+      const document: MdDocument = MarkdownParser.parse(content);
+      await IndexPipeline.indexNote(context, note, document);
+    }
+    this.tree = await manager.buildTree(this.currentVault);
+    this.refreshTreeItems();
+    await this.refreshNoteInfo();
   }
 
   private async refreshNoteMeta(): Promise<void> {

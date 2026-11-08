@@ -1,11 +1,14 @@
 import { common } from '@kit.AbilityKit';
+import { relationalStore } from '@kit.ArkData';
 import { LinkKind, LinkRef, MdBlock, MdDocument, MdInline, MdInlineType, NoteRow } from '@ohos/domain';
 import { BlockDao } from '../db/BlockDao';
+import { DbHelper } from '../db/DbHelper';
 import { LinkDao } from '../db/LinkDao';
 import { NoteDao } from '../db/NoteDao';
 import { PropDao } from '../db/PropDao';
 import { TagDao } from '../db/TagDao';
 import { VaultPath } from '../manager/VaultPath';
+import { Tokenizer } from './Tokenizer';
 
 /**
  * 索引管线：把解析后的文档写入块 / 链接 / 标签 / 属性索引表。
@@ -30,6 +33,29 @@ export class IndexPipeline {
     await TagDao.replaceForNote(context, note.id, tags);
 
     await PropDao.replaceForNote(context, note.id, document.frontmatter.properties);
+
+    await IndexPipeline.updateFts(context, note, document);
+  }
+
+  /** 更新全文检索索引。 */
+  private static async updateFts(context: common.Context, note: NoteRow,
+    document: MdDocument): Promise<void> {
+    if (!DbHelper.isFtsReady()) {
+      return;
+    }
+    const store = await DbHelper.getStore();
+    const deleteArgs: Array<relationalStore.ValueType> = [note.id];
+    await store.executeSql('DELETE FROM note_fts WHERE rowid = ?', deleteArgs);
+    let body: string = '';
+    for (const block of document.blocks) {
+      body += `${BlockDao.plainTextOfBlock(block)}\n`;
+    }
+    const insertArgs: Array<relationalStore.ValueType> = [
+      note.id,
+      Tokenizer.buildTerms(note.title),
+      Tokenizer.buildTerms(body)
+    ];
+    await store.executeSql('INSERT INTO note_fts (rowid, title, terms) VALUES (?, ?, ?)', insertArgs);
   }
 
   /** 重建整个仓库的索引。 */

@@ -20,6 +20,9 @@ export interface SyncProvider {
   /** 查询远端单个文件元信息，不存在时返回 null */
   stat(path: string): Promise<RemoteEntry | null>;
 
+  /** 写回远端清单（用于记录已同步的文件与哈希） */
+  putManifest(entries: RemoteEntry[]): Promise<void>;
+
   /** 断开连接并释放资源 */
   disconnect(): Promise<void>;
 }

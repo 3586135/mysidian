@@ -83,6 +83,19 @@ export class SearchHit {
   score: number = 0;
 }
 
+/** 检索条件。 */
+export class SearchQuery {
+  /** 关键词 */
+  text: string = '';
+  /** path: 前缀过滤 */
+  path: string = '';
+  /** tag: 标签过滤 */
+  tag: string = '';
+  /** 检索范围：content / title / path */
+  scope: string = 'content';
+  limit: number = 50;
+}
+
 /** 大纲条目。 */
 export class OutlineEntry {
   level: number = 0;

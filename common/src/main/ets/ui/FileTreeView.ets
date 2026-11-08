@@ -1,4 +1,5 @@
 import { FlatFileNode } from '@ohos/domain';
+import { FileTreeDataSource } from './FileTreeDataSource';
 
 /**
  * 仓库文件树列表。父组件负责扁平化数据与展开状态，
@@ -11,10 +12,20 @@ export struct FileTreeView {
   @Event onSelect: (path: string, isDir: boolean) => void =
     (path: string, isDir: boolean): void => {};
   @Event onToggle: (path: string) => void = (path: string): void => {};
+  private dataSource: FileTreeDataSource = new FileTreeDataSource();
+
+  aboutToAppear(): void {
+    this.dataSource.setItems(this.items);
+  }
+
+  @Monitor('items')
+  onItemsChange(): void {
+    this.dataSource.setItems(this.items);
+  }
 
   build() {
     List() {
-      ForEach(this.items, (item: FlatFileNode) => {
+      LazyForEach(this.dataSource, (item: FlatFileNode) => {
         ListItem() {
           Row() {
             Text(item.expanded ? '▾' : '▸')

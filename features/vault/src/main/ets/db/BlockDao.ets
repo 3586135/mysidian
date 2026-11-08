@@ -28,6 +28,19 @@ export class BlockDao {
     }
   }
 
+  /** 统计一篇笔记的块数量（用于判断是否已建立索引）。 */
+  public static async countOfNote(context: common.Context, noteId: number): Promise<number> {
+    const store = await DbHelper.getStore();
+    const args: Array<relationalStore.ValueType> = [noteId];
+    const result = await store.querySql('SELECT COUNT(*) FROM block WHERE note_id = ?', args);
+    let count: number = 0;
+    if (result.goToFirstRow()) {
+      count = result.getLong(0);
+    }
+    result.close();
+    return count;
+  }
+
   /** 查询笔记的大纲（标题块）。 */
   public static async outline(context: common.Context, noteId: number): Promise<OutlineEntry[]> {
     const store = await DbHelper.getStore();
@@ -49,7 +62,8 @@ export class BlockDao {
     return entries;
   }
 
-  private static plainText(block: MdBlock): string {
+  /** 提取块内纯文本。 */
+  public static plainTextOfBlock(block: MdBlock): string {
     if (block.inlines.length === 0) {
       return block.rawContent;
     }
@@ -58,6 +72,10 @@ export class BlockDao {
       text += BlockDao.inlineText(inline);
     }
     return text;
+  }
+
+  private static plainText(block: MdBlock): string {
+    return BlockDao.plainTextOfBlock(block);
   }
 
   private static inlineText(inline: MdInline): string {

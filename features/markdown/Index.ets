@@ -7,3 +7,4 @@ export { MdInlineFlattener } from './src/main/ets/render/MdInlineFlattener';
 export { MdInlineText } from './src/main/ets/render/MdInlineText';
 export { MdBlockView } from './src/main/ets/render/MdBlockView';
 export { MdDocumentView } from './src/main/ets/render/MdDocumentView';
+export { MdWebFallback } from './src/main/ets/render/MdWebFallback';

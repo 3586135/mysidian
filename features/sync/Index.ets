@@ -1,1 +1,3 @@
-export const SYNC_MODULE_VERSION: string = '1.0.0';
+export { SyncEngine } from './src/main/ets/engine/SyncEngine';
+export { ConflictResolver } from './src/main/ets/engine/ConflictResolver';
+export { WebDavProvider } from './src/main/ets/provider/WebDavProvider';

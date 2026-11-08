@@ -4,6 +4,14 @@ import { picker } from '@kit.CoreFileKit';
 import { EmptyState, FileTreeView, Logger } from '@ohos/common';
 import { MdDocumentView } from '@ohos/markdown';
 import { NoteInfoPanel } from '../view/NoteInfoPanel';
+import { SearchOverlay } from '../view/SearchOverlay';
+import { QuickSwitcher } from '../view/QuickSwitcher';
+import { CommandPalette } from '../view/CommandPalette';
+import { SettingsOverlay } from '../view/SettingsOverlay';
+import { SyncSettings } from '../view/SyncSettings';
+import { AppCommand } from '../viewmodel/AppCommand';
+import { SearchViewModel } from '../viewmodel/SearchViewModel';
+import { SyncViewModel } from '../viewmodel/SyncViewModel';
 import { VaultViewModel } from '../viewmodel/VaultViewModel';
 
 const LOG: Logger = new Logger('MySidianPage');
@@ -12,10 +20,19 @@ const LOG: Logger = new Logger('MySidianPage');
 @ComponentV2
 struct Index {
   @Local vm: VaultViewModel = new VaultViewModel();
+  @Local searchVm: SearchViewModel = new SearchViewModel();
+  @Local syncVm: SyncViewModel = new SyncViewModel();
   @Local isWide: boolean = false;
   @Local showCreatePanel: boolean = false;
   @Local showInfo: boolean = false;
+  @Local showSearch: boolean = false;
+  @Local showQuick: boolean = false;
+  @Local showCommands: boolean = false;
+  @Local showSync: boolean = false;
+  @Local showSettings: boolean = false;
+  @Local commandKeyword: string = '';
   @Local newVaultName: string = '';
+  private commands: AppCommand[] = [];
 
   aboutToAppear(): void {
     const context = this.getUIContext().getHostContext();
@@ -23,7 +40,10 @@ struct Index {
       LOG.error('host context is unavailable');
       return;
     }
+    this.searchVm.setContext(context);
     this.vm.init(context);
+    this.syncVm.init(context);
+    this.commands = this.buildCommands();
   }
 
   build() {
@@ -39,6 +59,103 @@ struct Index {
       }
       if (this.showCreatePanel) {
         this.createPanel()
+      }
+      if (this.showSearch) {
+        SearchOverlay({
+          hits: this.searchVm.hits,
+          keyword: this.searchVm.keyword,
+          busy: this.searchVm.busy,
+          onKeywordChange: (value: string): void => {
+            this.searchVm.search(this.vm.currentVault.id, value);
+          },
+          onOpenNote: (path: string): void => {
+            this.showSearch = false;
+            this.vm.openNote(path);
+          },
+          onClose: (): void => {
+            this.showSearch = false;
+          }
+        })
+      }
+      if (this.showQuick) {
+        QuickSwitcher({
+          items: this.searchVm.quickItems,
+          keyword: this.searchVm.quickKeyword,
+          onKeywordChange: (value: string): void => {
+            this.searchVm.updateQuickKeyword(value);
+          },
+          onOpenNote: (path: string): void => {
+            this.showQuick = false;
+            this.vm.openNote(path);
+          },
+          onClose: (): void => {
+            this.showQuick = false;
+          }
+        })
+      }
+      if (this.showCommands) {
+        CommandPalette({          commands: this.filteredCommands(),
+          keyword: this.commandKeyword,
+          onKeywordChange: (value: string): void => {
+            this.commandKeyword = value;
+          },
+          onRun: (command: AppCommand): void => {
+            this.showCommands = false;
+            command.action();
+          },
+          onClose: (): void => {
+            this.showCommands = false;
+          }
+        })
+      }
+      if (this.showSync) {
+        SyncSettings({
+          serverUrl: this.syncVm.serverUrl,
+          username: this.syncVm.username,
+          password: this.syncVm.password,
+          remoteRoot: this.syncVm.remoteRoot,
+          autoSync: this.syncVm.autoSync,
+          statusText: this.syncVm.statusText(),
+          conflicts: this.syncVm.conflicts,
+          onServerUrlChange: (value: string): void => {
+            this.syncVm.serverUrl = value;
+          },
+          onUsernameChange: (value: string): void => {
+            this.syncVm.username = value;
+          },
+          onPasswordChange: (value: string): void => {
+            this.syncVm.password = value;
+          },
+          onRemoteRootChange: (value: string): void => {
+            this.syncVm.remoteRoot = value;
+          },
+          onAutoSyncChange: (value: boolean): void => {
+            this.syncVm.autoSync = value;
+          },
+          onSyncNow: (): void => {
+            this.syncVm.runSync(this.vm.currentVault);
+          },
+          onClose: (): void => {
+            this.showSync = false;
+          }
+        })
+      }
+      if (this.showSettings) {
+        SettingsOverlay({
+          fontSize: this.vm.fontSize,
+          onFontSizeChange: (size: number): void => {
+            this.vm.setFontSize(size);
+          },
+          onReindex: (): void => {
+            this.vm.rescanVault();
+          },
+          onExport: (): void => {
+            this.exportVault();
+          },
+          onClose: (): void => {
+            this.showSettings = false;
+          }
+        })
       }
     }
     .width('100%')
@@ -57,6 +174,37 @@ struct Index {
         .fontWeight(FontWeight.Bold)
         .fontColor($r('sys.color.ohos_id_color_text_primary'))
       Blank()
+      Button($r('app.string.action_search'))
+        .type(ButtonType.Normal)
+        .margin({ right: 8 })
+        .onClick(() => {
+          this.openSearch();
+        })
+      Button($r('app.string.action_quick'))
+        .type(ButtonType.Normal)
+        .margin({ right: 8 })
+        .onClick(() => {
+          this.openQuickSwitcher();
+        })
+      Button($r('app.string.action_commands'))
+        .type(ButtonType.Normal)
+        .margin({ right: 8 })
+        .onClick(() => {
+          this.commandKeyword = '';
+          this.showCommands = true;
+        })
+      Button($r('app.string.action_sync'))
+        .type(ButtonType.Normal)
+        .margin({ right: 8 })
+        .onClick(() => {
+          this.showSync = true;
+        })
+      Button($r('app.string.action_settings'))
+        .type(ButtonType.Normal)
+        .margin({ right: 8 })
+        .onClick(() => {
+          this.showSettings = true;
+        })
       Button($r('app.string.action_import_vault'))
         .type(ButtonType.Normal)
         .margin({ right: 8 })
@@ -203,7 +351,7 @@ struct Index {
       } else {
         MdDocumentView({
           document: this.vm.document,
-          fontSize: 16,
+          fontSize: this.vm.fontSize,
           onOpenLink: (target: string, kind: string): void => {
             this.vm.openLink(target, kind);
           },
@@ -296,6 +444,67 @@ struct Index {
     .height('100%')
   }
 
+  private openSearch(): void {
+    this.showSearch = true;
+    this.searchVm.search(this.vm.currentVault.id, '');
+  }
+
+  private openQuickSwitcher(): void {
+    this.showQuick = true;
+    this.searchVm.loadNotes(this.vm.currentVault.id);
+  }
+
+  private buildCommands(): AppCommand[] {
+    const commands: AppCommand[] = [];
+    const search: AppCommand = new AppCommand();
+    search.id = 'search';
+    search.title = '搜索全文';
+    search.action = (): void => {
+      this.openSearch();
+    };
+    commands.push(search);
+
+    const quick: AppCommand = new AppCommand();
+    quick.id = 'quick';
+    quick.title = '快速跳转到笔记';
+    quick.action = (): void => {
+      this.openQuickSwitcher();
+    };
+    commands.push(quick);
+
+    const exportCommand: AppCommand = new AppCommand();
+    exportCommand.id = 'export';
+    exportCommand.title = '导出仓库为 zip';
+    exportCommand.action = (): void => {
+      this.exportVault();
+    };
+    commands.push(exportCommand);
+
+    const reindex: AppCommand = new AppCommand();
+    reindex.id = 'reindex';
+    reindex.title = '重建索引';
+    reindex.action = (): void => {
+      this.vm.rescanVault();
+    };
+    commands.push(reindex);
+
+    return commands;
+  }
+
+  private filteredCommands(): AppCommand[] {
+    const keyword: string = this.commandKeyword.trim().toLowerCase();
+    if (keyword.length === 0) {
+      return this.commands;
+    }
+    const result: AppCommand[] = [];
+    for (const command of this.commands) {
+      if (command.title.toLowerCase().includes(keyword)) {
+        result.push(command);
+      }
+    }
+    return result;
+  }
+
   private async importVault(): Promise<void> {
     const context = this.getUIContext().getHostContext();
     if (context === undefined) {
@@ -313,6 +522,26 @@ struct Index {
     } catch (error) {
       LOG.error('import vault failed');
       promptAction.showToast({ message: $r('app.string.msg_import_failed') });
+    }
+  }
+
+  private async exportVault(): Promise<void> {
+    const context = this.getUIContext().getHostContext();
+    if (context === undefined) {
+      return;
+    }
+    try {
+      const documentPicker = new picker.DocumentViewPicker(context);
+      const options = new picker.DocumentSaveOptions();
+      options.newFileNames = [`${this.vm.currentVault.name}.zip`];
+      const uris: string[] = await documentPicker.save(options);
+      if (uris.length === 0) {
+        return;
+      }
+      await this.vm.exportVault(uris[0]);
+    } catch (error) {
+      LOG.error('export vault failed');
+      promptAction.showToast({ message: $r('app.string.msg_export_failed') });
     }
   }
 

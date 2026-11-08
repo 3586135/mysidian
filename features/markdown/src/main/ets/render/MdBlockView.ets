@@ -1,6 +1,7 @@
 import { MdBlock, MdBlockType, MdListItem } from '@ohos/domain';
 import { MdInlineFlattener } from './MdInlineFlattener';
 import { MdInlineText } from './MdInlineText';
+import { MdWebFallback } from './MdWebFallback';
 
 /**
  * 块级渲染器：按块类型输出原生 ArkUI 组件。
@@ -42,6 +43,12 @@ export struct MdBlockView {
         Divider()
           .color($r('sys.color.ohos_id_color_text_secondary'))
           .margin({ top: 8, bottom: 8 })
+      } else if (this.block.type === MdBlockType.HTML) {
+        MdWebFallback({
+          html: this.block.rawContent,
+          contentHeight: this.htmlHeight()
+        })
+        .width('100%')
       } else {
         this.rawView()
       }
@@ -239,8 +246,13 @@ export struct MdBlockView {
     .margin({ top: 6, bottom: 6 })
   }
 
-  private headingFontSize(): number {
-    if (this.block.level <= 1) {
+  private htmlHeight(): number {
+    const length: number = this.block.rawContent.length;
+    const lines: number = Math.max(1, Math.floor(length / 40));
+    return Math.min(420, 80 + lines * 20);
+  }
+
+  private headingFontSize(): number {    if (this.block.level <= 1) {
       return this.fontSize + 8;
     }
     if (this.block.level === 2) {
