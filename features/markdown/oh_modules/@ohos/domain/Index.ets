@@ -2,7 +2,7 @@ export { MdBlockType, MdInlineType, MdPropType } from './src/main/ets/model/MdMo
 export { MdInline, MdListItem, MdBlock, MdProperty, MdFrontmatter, MdDocument } from './src/main/ets/model/MdModel';
 
 export { LinkKind } from './src/main/ets/model/VaultModel';
-export { VaultInfo, NoteRow, FileNode, LinkRef, TagRef, SearchHit, OutlineEntry, IndexProgress }
+export { VaultInfo, NoteRow, FileNode, FlatFileNode, LinkRef, TagRef, SearchHit, OutlineEntry, IndexProgress }
   from './src/main/ets/model/VaultModel';
 
 export { SyncState, ConflictResolution } from './src/main/ets/model/SyncModel';

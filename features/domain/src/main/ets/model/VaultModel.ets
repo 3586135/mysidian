@@ -45,6 +45,13 @@ export class FileNode {
   children: FileNode[] = [];
 }
 
+/** 扁平化后的文件树条目，配合懒加载列表渲染。 */
+export class FlatFileNode {
+  node: FileNode = new FileNode();
+  depth: number = 0;
+  expanded: boolean = false;
+}
+
 /** 链接记录。 */
 export class LinkRef {
   sourceNoteId: number = 0;
