@@ -14,6 +14,13 @@ devecocli run --skip-build               # 装机运行（必须先 build 成功
 - 若 `C:\Users\song\.local\bin\deveco.exe` 被 Device Guard / WDAC 拦截（报 "blocked by your organization's Device Guard policy"），复制到 `C:\Users\song\AppData\Local\Temp\deveco\` 再以 `deveco2.exe __devecocli-proxy -- build` 调用。
 - 单元测试位于 `features/markdown/src/test/LocalUnit.test.ets`（等），CLI 无 test 命令，只能在 DevEco Studio 内运行。
 
+### 签名配置（不入库）
+
+- git 跟踪的 `build-profile.json5` 的 `signingConfigs` 为空（签名材料不上传）。
+- 本地 `build-profile.json5` 含签名材料，已设 `git update-index --skip-worktree` 隔离（`git ls-files -v` 显示 `S`）；签名版备份在 `build-profile.signed.json5`（已 gitignore）。
+- 新克隆/换机后：复制 `build-profile.signed.json5` 覆盖 `build-profile.json5` 并重设 skip-worktree；或在 DevEco Studio（File → Project Structure → Signing Configs）重新自动签名。
+- 无签名配置时 `devecocli build` 只产出 `default-default-unsigned.hap`（无法装机），必须带签名材料构建。
+
 ## 测试设备环境
 
 | 设备 | 连接 | 说明 |
