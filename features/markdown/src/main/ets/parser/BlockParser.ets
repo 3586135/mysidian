@@ -1,5 +1,6 @@
 import { MdBlock, MdBlockType, MdInline, MdListItem } from '@ohos/domain';
 import { InlineParser } from './InlineParser';
+import { TaskMetadata } from './TaskMetadata';
 
 /** 块解析结果（块 + 消费到的行号）。 */
 export class BlockParseResult {
@@ -196,11 +197,13 @@ export class BlockParser {
       }
       const item: MdListItem = new MdListItem();
       item.ordinal = block.items.length + 1;
+      item.rawLine = raw;
       let content: string = match[2];
       if (content.startsWith('[ ] ') || content.startsWith('[x] ') || content.startsWith('[X] ')) {
         item.isTask = true;
         item.checked = content.charAt(1) === 'x' || content.charAt(1) === 'X';
         content = content.substring(4);
+        content = TaskMetadata.apply(item, content);
       }
       item.inlines = this.inlineParser.parse(content);
       block.items.push(item);

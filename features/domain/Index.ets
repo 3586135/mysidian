@@ -1,5 +1,6 @@
 export { MdBlockType, MdInlineType, MdPropType } from './src/main/ets/model/MdModel';
-export { MdInline, MdListItem, MdBlock, MdProperty, MdFrontmatter, MdDocument, MdInlineSegment }
+export { MdInline, MdListItem, MdBlock, MdProperty, MdFrontmatter, MdDocument, MdInlineSegment,
+  DataViewTask }
   from './src/main/ets/model/MdModel';
 
 export { LinkKind } from './src/main/ets/model/VaultModel';

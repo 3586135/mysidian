@@ -246,7 +246,7 @@ export class InlineParser {
     return result;
   }
 
-  /** 解析 *斜体* / **粗体** / _斜体_ / __粗体__。 */
+  /** 解析 *斜体* / **粗体** / ***粗斜体*** / _斜体_ / __粗体__。 */
   private parseEmphasis(text: string, start: number, end: number, marker: string):
     InlineParseResult | null {
     if (marker === '_') {
@@ -255,19 +255,38 @@ export class InlineParser {
         return null;
       }
     }
-    const isDouble: boolean = start + 1 < end && text.charAt(start + 1) === marker;
-    const markerLength: number = isDouble ? 2 : 1;
-    const contentStart: number = start + markerLength;
-    const close: number = this.findMarkerEnd(text, contentStart, end, marker, markerLength);
-    if (close < 0) {
+    let runLength: number = 0;
+    while (start + runLength < end && text.charAt(start + runLength) === marker) {
+      runLength++;
+    }
+    if (runLength > 3) {
+      return null;
+    }
+    const contentStart: number = start + runLength;
+    if (contentStart >= end || text.charAt(contentStart) === ' ' || text.charAt(contentStart) === '\n') {
+      return null;
+    }
+    const close: number = this.findMarkerEnd(text, contentStart, end, marker, runLength);
+    if (close <= contentStart || close > end) {
+      return null;
+    }
+    if (text.charAt(close - 1) === ' ' || text.charAt(close - 1) === '\n') {
       return null;
     }
     const result: InlineParseResult = new InlineParseResult();
     const node: MdInline = new MdInline();
-    node.type = isDouble ? MdInlineType.STRONG : MdInlineType.EMPHASIS;
-    node.children = this.parseRange(text, contentStart, close);
+    if (runLength === 3) {
+      node.type = MdInlineType.STRONG;
+      const inner: MdInline = new MdInline();
+      inner.type = MdInlineType.EMPHASIS;
+      inner.children = this.parseRange(text, contentStart, close);
+      node.children.push(inner);
+    } else {
+      node.type = runLength === 2 ? MdInlineType.STRONG : MdInlineType.EMPHASIS;
+      node.children = this.parseRange(text, contentStart, close);
+    }
     result.node = node;
-    result.next = close + markerLength;
+    result.next = close + runLength;
     return result;
   }
 

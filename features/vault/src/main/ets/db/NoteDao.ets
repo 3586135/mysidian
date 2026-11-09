@@ -8,6 +8,7 @@ export class NoteDao {
   /** 按 (vault_id, path) 覆盖写入笔记元数据，返回笔记主键。 */
   public static async upsert(context: common.Context, row: NoteRow): Promise<number> {
     const store = await DbHelper.getStore();
+    const now: number = Date.now();
     const args: Array<relationalStore.ValueType> = [
       row.vaultId,
       row.path,
@@ -17,7 +18,8 @@ export class NoteDao {
       row.size,
       row.hash,
       row.frontmatter,
-      Date.now()
+      now,
+      now
     ];
     await store.executeSql(
       'INSERT INTO note (vault_id, path, title, ext, mtime, size, hash, frontmatter, created_at, updated_at) ' +

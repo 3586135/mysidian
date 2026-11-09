@@ -7,6 +7,8 @@ import { MdInlineSegment } from '@ohos/domain';
 export struct MdInlineText {
   @Param segments: MdInlineSegment[] = [];
   @Param fontSize: number = 16;
+  @Param textAlignment: TextAlign = TextAlign.Start;
+  @Param forceBold: boolean = false;
   @Event onOpenLink: (target: string, kind: string) => void =
     (target: string, kind: string): void => {};
   @Event onOpenTag: (tag: string) => void = (tag: string): void => {};
@@ -16,7 +18,7 @@ export struct MdInlineText {
       ForEach(this.segments, (segment: MdInlineSegment, index: number) => {
         Span(segment.text)
           .fontSize(segment.code ? this.fontSize - 1 : this.fontSize)
-          .fontWeight(segment.bold ? FontWeight.Bold : FontWeight.Normal)
+          .fontWeight(segment.bold || this.forceBold ? FontWeight.Bold : FontWeight.Normal)
           .fontStyle(segment.italic ? FontStyle.Italic : FontStyle.Normal)
           .fontColor(this.segmentColor(segment))
           .fontFamily(segment.code ? 'monospace' : 'HarmonyOS Sans')
@@ -31,6 +33,7 @@ export struct MdInlineText {
     }
     .width('100%')
     .fontSize(this.fontSize)
+    .textAlign(this.textAlignment)
     .fontColor($r('sys.color.ohos_id_color_text_primary'))
   }
 

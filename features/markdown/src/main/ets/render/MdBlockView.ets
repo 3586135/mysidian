@@ -1,7 +1,16 @@
-import { MdBlock, MdBlockType, MdListItem } from '@ohos/domain';
+import { DataViewTask, MdBlock, MdBlockType, MdInlineSegment, MdListItem } from '@ohos/domain';
+import { BusinessError, pasteboard } from '@kit.BasicServicesKit';
+import { DataViewQuery } from '../parser/DataViewQuery';
+import { InlineParser } from '../parser/InlineParser';
 import { MdInlineFlattener } from './MdInlineFlattener';
 import { MdInlineText } from './MdInlineText';
 import { MdWebFallback } from './MdWebFallback';
+
+/** 任务元数据标签。 */
+class TaskChip {
+  label: string = '';
+  kind: string = '';
+}
 
 /**
  * 块级渲染器：按块类型输出原生 ArkUI 组件。
@@ -10,9 +19,37 @@ import { MdWebFallback } from './MdWebFallback';
 export struct MdBlockView {
   @Param block: MdBlock = new MdBlock();
   @Param fontSize: number = 16;
+  @Local copied: boolean = false;
+  private inlineParser: InlineParser = new InlineParser();
   @Event onOpenLink: (target: string, kind: string) => void =
     (target: string, kind: string): void => {};
   @Event onOpenTag: (tag: string) => void = (tag: string): void => {};
+  @Event onToggleTask: (rawLine: string, checked: boolean) => void =
+    (rawLine: string, checked: boolean): void => {};
+  @Event onLoadDataView: (query: string, onResult: (tasks: DataViewTask[]) => void) => void =
+    (query: string, onResult: (tasks: DataViewTask[]) => void): void => {};
+  @Event onToggleDataViewTask: (task: DataViewTask, checked: boolean) => void =
+    (task: DataViewTask, checked: boolean): void => {};
+  @Local dataTasks: DataViewTask[] = [];
+  @Local dataLoaded: boolean = false;
+  private dataViewQuery: DataViewQuery | null = null;
+
+  aboutToAppear(): void {
+    if (this.block.type === MdBlockType.CODE && this.block.lang.trim().toLowerCase() === 'dataview') {
+      const query: DataViewQuery = DataViewQuery.parse(this.block.rawContent);
+      if (query.isTaskQuery()) {
+        this.dataViewQuery = query;
+        this.onLoadDataView(this.block.rawContent, (tasks: DataViewTask[]): void => {
+          this.dataTasks = tasks;
+          this.dataLoaded = true;
+        });
+      }
+    }
+  }
+
+  private isDataViewTask(): boolean {
+    return this.dataViewQuery !== null && this.dataViewQuery.isTaskQuery();
+  }
 
   build() {
     Column() {
@@ -32,7 +69,11 @@ export struct MdBlockView {
       } else if (this.block.type === MdBlockType.LIST) {
         this.listView()
       } else if (this.block.type === MdBlockType.CODE) {
-        this.codeView()
+        if (this.isDataViewTask()) {
+          this.dataViewTaskView()
+        } else {
+          this.codeView()
+        }
       } else if (this.block.type === MdBlockType.QUOTE) {
         this.quoteView()
       } else if (this.block.type === MdBlockType.CALLOUT) {
@@ -96,20 +137,38 @@ export struct MdBlockView {
           .fontColor($r('sys.color.ohos_id_color_text_secondary'))
           .width(24)
         if (item.isTask) {
-          Text(item.checked ? '☑' : '☐')
-            .fontSize(this.fontSize)
-            .width(22)
+          SymbolGlyph(item.checked ? $r('sys.symbol.checkmark_circle') : $r('sys.symbol.circle'))
+            .fontSize(20)
+            .fontColor([item.checked ? $r('sys.color.ohos_id_color_emphasize')
+              : $r('sys.color.ohos_id_color_text_secondary')])
+            .width(26)
+            .margin({ top: 2 })
+            .onClick(() => {
+              this.onToggleTask(item.rawLine, !item.checked);
+            })
         }
-        MdInlineText({
-          segments: MdInlineFlattener.flatten(item.inlines),
-          fontSize: this.fontSize,
-          onOpenLink: (target: string, kind: string): void => {
-            this.onOpenLink(target, kind);
-          },
-          onOpenTag: (tag: string): void => {
-            this.onOpenTag(tag);
+        Column() {
+          MdInlineText({
+            segments: MdInlineFlattener.flatten(item.inlines),
+            fontSize: this.fontSize,
+            onOpenLink: (target: string, kind: string): void => {
+              this.onOpenLink(target, kind);
+            },
+            onOpenTag: (tag: string): void => {
+              this.onOpenTag(tag);
+            }
+          })
+          if (item.isTask && this.taskHasMeta(item)) {
+            Flex({ wrap: FlexWrap.Wrap }) {
+              ForEach(this.taskChips(item), (chip: TaskChip) => {
+                this.taskChipView(chip)
+              }, (chip: TaskChip, index: number): string => `chip_${index}`)
+            }
+            .margin({ top: 2 })
           }
-        })
+        }
+        .layoutWeight(1)
+        .alignItems(HorizontalAlign.Start)
       }
       .width('100%')
       .alignItems(VerticalAlign.Top)
@@ -122,9 +181,98 @@ export struct MdBlockView {
     .alignItems(HorizontalAlign.Start)
   }
 
+  /** 任务元数据标签。 */
+  @Builder
+  taskChipView(chip: TaskChip) {
+    Text(chip.label)
+      .fontSize(10)
+      .fontColor(this.chipColor(chip.kind))
+      .padding({ left: 6, right: 6, top: 2, bottom: 2 })
+      .borderRadius(8)
+      .backgroundColor($r('app.color.md_chip_bg'))
+      .margin({ right: 4, bottom: 2 })
+  }
+
+  private chipColor(kind: string): ResourceColor {
+    if (kind === 'danger') {
+      return $r('app.color.md_danger');
+    }
+    if (kind === 'accent') {
+      return $r('sys.color.ohos_id_color_emphasize');
+    }
+    return $r('sys.color.ohos_id_color_text_secondary');
+  }
+
+  private taskHasMeta(item: MdListItem): boolean {
+    return item.priority.length > 0 || item.dueDate.length > 0 ||
+      item.scheduledDate.length > 0 || item.startDate.length > 0 ||
+      item.doneDate.length > 0 || item.createdDate.length > 0 ||
+      item.recurrence.length > 0;
+  }
+
+  private taskChips(item: MdListItem): TaskChip[] {
+    const chips: TaskChip[] = [];
+    if (item.priority.length > 0) {
+      const chip: TaskChip = new TaskChip();
+      chip.label = item.priority;
+      chip.kind = item.priority === '⏫' ? 'danger' : 'accent';
+      chips.push(chip);
+    }
+    if (item.dueDate.length > 0) {
+      const chip: TaskChip = new TaskChip();
+      chip.label = `📅 ${item.dueDate}`;
+      chip.kind = 'danger';
+      chips.push(chip);
+    }
+    if (item.scheduledDate.length > 0) {
+      const chip: TaskChip = new TaskChip();
+      chip.label = `⏳ ${item.scheduledDate}`;
+      chips.push(chip);
+    }
+    if (item.startDate.length > 0) {
+      const chip: TaskChip = new TaskChip();
+      chip.label = `🛫 ${item.startDate}`;
+      chips.push(chip);
+    }
+    if (item.doneDate.length > 0) {
+      const chip: TaskChip = new TaskChip();
+      chip.label = `✅ ${item.doneDate}`;
+      chip.kind = 'accent';
+      chips.push(chip);
+    }
+    if (item.createdDate.length > 0) {
+      const chip: TaskChip = new TaskChip();
+      chip.label = `➕ ${item.createdDate}`;
+      chips.push(chip);
+    }
+    if (item.recurrence.length > 0) {
+      const chip: TaskChip = new TaskChip();
+      chip.label = `🔁 ${item.recurrence}`;
+      chips.push(chip);
+    }
+    return chips;
+  }
+
   @Builder
   codeView() {
     Column() {
+      Row() {
+        Text(this.codeLangLabel())
+          .fontSize(11)
+          .fontColor($r('sys.color.ohos_id_color_text_secondary'))
+          .layoutWeight(1)
+        SymbolGlyph(this.copied ? $r('sys.symbol.checkmark') : $r('sys.symbol.doc_text_on_doc_text'))
+          .fontSize(15)
+          .fontColor([$r('sys.color.ohos_id_color_text_secondary')])
+          .padding(6)
+          .borderRadius(12)
+          .onClick(() => {
+            this.copyCode();
+          })
+      }
+      .width('100%')
+      .margin({ bottom: 6 })
+
       Text(this.block.rawContent)
         .fontSize(this.fontSize - 2)
         .fontFamily('monospace')
@@ -132,10 +280,128 @@ export struct MdBlockView {
         .width('100%')
     }
     .width('100%')
+    .alignItems(HorizontalAlign.Start)
     .padding(12)
     .borderRadius(8)
     .backgroundColor($r('sys.color.ohos_id_color_card_bg'))
     .margin({ top: 6, bottom: 6 })
+  }
+
+  /** 常见语言别名（fence 标记 �?显示名）�?*/
+  private static readonly LANG_ALIASES: Record<string, string> = {
+    'js': 'JavaScript', 'javascript': 'JavaScript', 'ts': 'TypeScript', 'typescript': 'TypeScript',
+    'jsx': 'JSX', 'tsx': 'TSX', 'py': 'Python', 'python': 'Python', 'java': 'Java',
+    'kotlin': 'Kotlin', 'swift': 'Swift', 'c': 'C', 'cpp': 'C++', 'c++': 'C++', 'csharp': 'C#',
+    'go': 'Go', 'rust': 'Rust', 'php': 'PHP', 'ruby': 'Ruby', 'html': 'HTML', 'css': 'CSS',
+    'json': 'JSON', 'yaml': 'YAML', 'yml': 'YAML', 'xml': 'XML', 'md': 'Markdown',
+    'markdown': 'Markdown', 'sh': 'Shell', 'bash': 'Shell', 'shell': 'Shell', 'zsh': 'Shell',
+    'sql': 'SQL', 'dart': 'Dart', 'arkts': 'ArkTS', 'ets': 'ArkTS'
+  };
+
+  /** 代码块语言标签：别名映射，未知语言原样显示�?*/
+  private codeLangLabel(): string {
+    const lang: string = this.block.lang.trim();
+    if (lang.length === 0) {
+      return '';
+    }
+    const mapped: string | undefined = MdBlockView.LANG_ALIASES[lang.toLowerCase()];
+    return mapped !== undefined ? mapped : lang;
+  }
+
+  /** 复制代码块内容到系统剪贴板，图标短暂变为对勾�?*/
+  private copyCode(): void {
+    if (this.block.rawContent.length === 0) {
+      return;
+    }
+    const data: pasteboard.PasteData =
+      pasteboard.createData(pasteboard.MIMETYPE_TEXT_PLAIN, this.block.rawContent);
+    pasteboard.getSystemPasteboard().setData(data).then((): void => {
+      this.copied = true;
+      setTimeout((): void => {
+        this.copied = false;
+      }, 1500);
+    }).catch((error: BusinessError): void => {
+    });
+  }
+
+  /** Dataview TASK 查询结果：按来源笔记分组渲染跨笔记任务。 */
+  @Builder
+  dataViewTaskView() {
+    Column() {
+      if (this.dataLoaded && this.dataTasks.length === 0) {
+        Text($r('app.string.md_dataview_empty'))
+          .fontSize(this.fontSize - 2)
+          .fontColor($r('sys.color.ohos_id_color_text_secondary'))
+      }
+      ForEach(this.dataTasks, (task: DataViewTask, index: number) => {
+        if (this.needGroupHeader(index)) {
+          Text(task.fileName)
+            .fontSize(this.fontSize - 1)
+            .fontWeight(FontWeight.Medium)
+            .fontColor($r('sys.color.ohos_id_color_text_primary'))
+            .margin({ top: index === 0 ? 0 : 10, bottom: 4 })
+        }
+        Row() {
+          SymbolGlyph(task.item.checked ? $r('sys.symbol.checkmark_circle') : $r('sys.symbol.circle'))
+            .fontSize(20)
+            .fontColor([task.item.checked ? $r('sys.color.ohos_id_color_emphasize')
+              : $r('sys.color.ohos_id_color_text_secondary')])
+            .width(26)
+            .margin({ top: 2 })
+            .onClick(() => {
+              this.toggleDataViewTask(task);
+            })
+          Column() {
+            MdInlineText({
+              segments: MdInlineFlattener.flatten(task.item.inlines),
+              fontSize: this.fontSize,
+              onOpenLink: (target: string, kind: string): void => {
+                this.onOpenLink(target, kind);
+              },
+              onOpenTag: (tag: string): void => {
+                this.onOpenTag(tag);
+              }
+            })
+            if (this.taskHasMeta(task.item)) {
+              Flex({ wrap: FlexWrap.Wrap }) {
+                ForEach(this.taskChips(task.item), (chip: TaskChip) => {
+                  this.taskChipView(chip)
+                }, (chip: TaskChip, chipIndex: number): string =>
+                  `dvchip_${index}_${chipIndex}_${task.item.checked}`)
+              }
+              .margin({ top: 2 })
+            }
+          }
+          .layoutWeight(1)
+          .alignItems(HorizontalAlign.Start)
+        }
+        .width('100%')
+        .alignItems(VerticalAlign.Top)
+      }, (task: DataViewTask, index: number): string => `dv_${index}_${task.item.checked}`)
+    }
+    .width('100%')
+    .alignItems(HorizontalAlign.Start)
+    .padding(12)
+    .borderRadius(8)
+    .backgroundColor($r('sys.color.ohos_id_color_card_bg'))
+    .margin({ top: 6, bottom: 6 })
+  }
+
+  /** 分组头：首项或来源笔记切换时显示。 */
+  private needGroupHeader(index: number): boolean {
+    if (index === 0) {
+      return true;
+    }
+    const prev: DataViewTask = this.dataTasks[index - 1];
+    return this.dataTasks[index].fileName !== prev.fileName;
+  }
+
+  /** 本地翻转勾选状态（即时反馈）并通知宿主回写。 */
+  private toggleDataViewTask(task: DataViewTask): void {
+    const next: boolean = !task.item.checked;
+    task.item.checked = next;
+    this.dataTasks = this.dataTasks.slice();
+    this.onToggleDataViewTask(task, next);
   }
 
   @Builder
@@ -202,10 +468,18 @@ export struct MdBlockView {
     Column() {
       Row() {
         ForEach(this.block.headers, (header: string, index: number) => {
-          Text(header)
-            .fontSize(this.fontSize)
-            .fontWeight(FontWeight.Bold)
-            .fontColor($r('sys.color.ohos_id_color_text_primary'))
+          MdInlineText({
+            segments: MdInlineFlattener.flatten(this.inlineParser.parse(header)),
+            fontSize: this.fontSize,
+            textAlignment: this.cellAlign(index),
+            forceBold: true,
+            onOpenLink: (target: string, kind: string): void => {
+              this.onOpenLink(target, kind);
+            },
+            onOpenTag: (tag: string): void => {
+              this.onOpenTag(tag);
+            }
+          })
             .layoutWeight(1)
         }, (header: string, index: number): string => `head_${index}`)
       }
@@ -216,9 +490,17 @@ export struct MdBlockView {
       ForEach(this.block.rows, (row: string[], rowIndex: number) => {
         Row() {
           ForEach(row, (cell: string, cellIndex: number) => {
-            Text(cell)
-              .fontSize(this.fontSize)
-              .fontColor($r('sys.color.ohos_id_color_text_primary'))
+            MdInlineText({
+              segments: MdInlineFlattener.flatten(this.inlineParser.parse(cell)),
+              fontSize: this.fontSize,
+              textAlignment: this.cellAlign(cellIndex),
+              onOpenLink: (target: string, kind: string): void => {
+                this.onOpenLink(target, kind);
+              },
+              onOpenTag: (tag: string): void => {
+                this.onOpenTag(tag);
+              }
+            })
               .layoutWeight(1)
           }, (cell: string, cellIndex: number): string => `cell_${rowIndex}_${cellIndex}`)
         }
@@ -228,6 +510,18 @@ export struct MdBlockView {
     }
     .width('100%')
     .margin({ top: 6, bottom: 6 })
+  }
+
+  /** 表格列对齐：依据分隔�?`:---:` 解析结果映射�?TextAlign�?*/
+  private cellAlign(index: number): TextAlign {
+    const align: string = index < this.block.aligns.length ? this.block.aligns[index] : 'left';
+    if (align === 'center') {
+      return TextAlign.Center;
+    }
+    if (align === 'right') {
+      return TextAlign.End;
+    }
+    return TextAlign.Start;
   }
 
   @Builder

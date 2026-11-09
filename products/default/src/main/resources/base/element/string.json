@@ -110,7 +110,7 @@
     },
     {
       "name": "sync_server_placeholder",
-      "value": "https://example.com/dav/"
+      "value": "https://dav.jianguoyun.com/dav/"
     },
     {
       "name": "sync_username",
@@ -141,6 +141,42 @@
       "value": "自动同步"
     },
     {
+      "name": "sync_auto_desc",
+      "value": "每 30 分钟及每次保存、新建笔记后自动同步"
+    },
+    {
+      "name": "sync_cert",
+      "value": "证书校验"
+    },
+    {
+      "name": "sync_cert_system",
+      "value": "使用系统内置证书（自签名服务器需导入 PEM 证书）"
+    },
+    {
+      "name": "sync_cert_imported",
+      "value": "已导入自定义证书"
+    },
+    {
+      "name": "sync_cert_import",
+      "value": "导入证书"
+    },
+    {
+      "name": "sync_cert_remove",
+      "value": "移除"
+    },
+    {
+      "name": "msg_cert_import_failed",
+      "value": "证书导入失败"
+    },
+    {
+      "name": "sync_skip_cert",
+      "value": "跳过证书校验"
+    },
+    {
+      "name": "sync_skip_cert_desc",
+      "value": "不校验服务器证书（不安全，自签名服务器可开启）"
+    },
+    {
       "name": "sync_now",
       "value": "立即同步"
     },
@@ -151,6 +187,26 @@
     {
       "name": "search_placeholder",
       "value": "搜索笔记内容"
+    },
+    {
+      "name": "search_mode_all",
+      "value": "全文"
+    },
+    {
+      "name": "search_mode_tag",
+      "value": "标签"
+    },
+    {
+      "name": "search_mode_prop",
+      "value": "属性"
+    },
+    {
+      "name": "search_tag_placeholder",
+      "value": "输入标签名筛选，点击标签查看笔记"
+    },
+    {
+      "name": "search_prop_placeholder",
+      "value": "属性名:属性值（如 author:张三）"
     },
     {
       "name": "search_empty",
@@ -243,6 +299,138 @@
     {
       "name": "msg_export_failed",
       "value": "仓库导出失败"
+    },
+    {
+      "name": "action_new_note",
+      "value": "新建笔记"
+    },
+    {
+      "name": "action_new_vault",
+      "value": "新建仓库"
+    },
+    {
+      "name": "action_import_vault_short",
+      "value": "导入"
+    },
+    {
+      "name": "action_create_vault_short",
+      "value": "新建"
+    },
+    {
+      "name": "new_note_default_name",
+      "value": "未命名"
+    },
+    {
+      "name": "status_chars",
+      "value": "字符"
+    },
+    {
+      "name": "status_backlinks",
+      "value": "反链"
+    },
+    {
+      "name": "status_words",
+      "value": "词"
+    },
+    {
+      "name": "tab_header_outline",
+      "value": "大纲"
+    },
+    {
+      "name": "editor_placeholder",
+      "value": "开始书写…"
+    },
+    {
+      "name": "settings_appearance",
+      "value": "外观"
+    },
+    {
+      "name": "settings_maintenance",
+      "value": "维护"
+    },
+    {
+      "name": "settings_vault_manage",
+      "value": "仓库管理"
+    },
+    {
+      "name": "menu_quick_switch",
+      "value": "快速切换笔记"
+    },
+    {
+      "name": "menu_command_palette",
+      "value": "命令面板"
+    },
+    {
+      "name": "tab_notes",
+      "value": "笔记"
+    },
+    {
+      "name": "tab_vaults",
+      "value": "仓库"
+    },
+    {
+      "name": "tab_settings",
+      "value": "设置"
+    },
+    {
+      "name": "vault_card_open",
+      "value": "打开"
+    },
+    {
+      "name": "vault_card_export",
+      "value": "导出"
+    },
+    {
+      "name": "vault_card_delete",
+      "value": "删除"
+    },
+    {
+      "name": "vault_card_current",
+      "value": "当前"
+    },
+    {
+      "name": "dialog_delete_vault_title",
+      "value": "删除仓库"
+    },
+    {
+      "name": "dialog_delete_vault_msg",
+      "value": "仓库及其全部笔记将被删除，且无法恢复"
+    },
+    {
+      "name": "msg_delete_failed",
+      "value": "仓库删除失败"
+    },
+    {
+      "name": "msg_reindex_done",
+      "value": "索引重建完成"
+    },
+    {
+      "name": "msg_no_recent_note",
+      "value": "没有其他笔记可打开"
+    },
+    {
+      "name": "menu_back_note",
+      "value": "返回上一笔记"
+    },
+    {
+      "name": "menu_recent_notes",
+      "value": "最近访问的笔记"
+    },
+    {
+      "name": "menu_daily_note",
+      "value": "今天的日记"
+    },
+    {
+      "name": "menu_new_note",
+      "value": "新建笔记"
+    },
+    {
+      "name": "recent_notes_title",
+      "value": "最近访问"
+    },
+    {
+      "name": "recent_notes_empty",
+      "value": "还没有访问记录"
     }
   ]
 }

@@ -1,13 +1,15 @@
-import { common } from '@kit.AbilityKit';
-import { promptAction } from '@kit.ArkUI';
+import { promptAction, window } from '@kit.ArkUI';
 import { picker } from '@kit.CoreFileKit';
+import { BusinessError } from '@kit.BasicServicesKit';
+import { HdsBarStyle, HdsTabs, HdsTabsController, hdsMaterial } from '@kit.UIDesignKit';
 import { EmptyState, FileTreeView, Logger } from '@ohos/common';
-import { MdDocumentView } from '@ohos/markdown';
+import { MdDocumentView, MdDocumentViewController } from '@ohos/markdown';
+import { DataViewTask, OutlineEntry, VaultInfo } from '@ohos/domain';
 import { NoteInfoPanel } from '../view/NoteInfoPanel';
 import { SearchOverlay } from '../view/SearchOverlay';
 import { QuickSwitcher } from '../view/QuickSwitcher';
+import { RecentNotesPanel } from '../view/RecentNotesPanel';
 import { CommandPalette } from '../view/CommandPalette';
-import { SettingsOverlay } from '../view/SettingsOverlay';
 import { SyncSettings } from '../view/SyncSettings';
 import { AppCommand } from '../viewmodel/AppCommand';
 import { SearchViewModel } from '../viewmodel/SearchViewModel';
@@ -16,6 +18,10 @@ import { VaultViewModel } from '../viewmodel/VaultViewModel';
 
 const LOG: Logger = new Logger('MySidianPage');
 
+/**
+ * Material You 风格主界面（参考 FlClash 布局）：
+ * 沉浸式状态栏 + 底部导航（窄屏）/ 侧边导航栏（宽屏）+ 大标题内容区 + 卡片 + FAB。
+ */
 @Entry
 @ComponentV2
 struct Index {
@@ -23,16 +29,31 @@ struct Index {
   @Local searchVm: SearchViewModel = new SearchViewModel();
   @Local syncVm: SyncViewModel = new SyncViewModel();
   @Local isWide: boolean = false;
-  @Local showCreatePanel: boolean = false;
+  @Local currentTab: number = 0;
+  @Local topInset: number = 0;
+  @Local bottomInset: number = 0;
+  @Local showSideBar: boolean = true;
+  @Local showRightPanel: boolean = true;
   @Local showInfo: boolean = false;
+  @Local showCreatePanel: boolean = false;
   @Local showSearch: boolean = false;
   @Local showQuick: boolean = false;
   @Local showCommands: boolean = false;
   @Local showSync: boolean = false;
-  @Local showSettings: boolean = false;
+  @Local showVaults: boolean = false;
+  @Local showRecent: boolean = false;
+  private docController: MdDocumentViewController = new MdDocumentViewController();
+  private tabsController: HdsTabsController = new HdsTabsController();
   @Local commandKeyword: string = '';
   @Local newVaultName: string = '';
   private commands: AppCommand[] = [];
+  private autoSyncTimer: number = -1;
+  private static readonly AUTO_SYNC_INTERVAL_MS: number = 30 * 60 * 1000;
+  private swipeStartSidebarOpen: boolean = false;
+  private swipeStartX: number = -1;
+  private contentWidth: number = 0;
+  /** 屏幕左右边缘系统返回手势保留区宽度（vp）。 */
+  private static readonly EDGE_GESTURE_ZONE: number = 32;
 
   aboutToAppear(): void {
     const context = this.getUIContext().getHostContext();
@@ -41,22 +62,90 @@ struct Index {
       return;
     }
     this.searchVm.setContext(context);
+    this.vm.attachUi(this.getUIContext());
     this.vm.init(context);
-    this.syncVm.init(context);
+    this.syncVm.init(context).then((): void => {
+      this.restartAutoSyncTimer();
+    });
     this.commands = this.buildCommands();
+    this.loadWindowInsets();
+  }
+
+  aboutToDisappear(): void {
+    this.stopAutoSyncTimer();
   }
 
   build() {
-    Column() {
-      this.headerBar()
-      if (this.vm.vaults.length === 0) {
-        EmptyState({
-          title: $r('app.string.vault_empty_title'),
-          description: $r('app.string.vault_empty_desc')
-        })
+    Stack() {
+      if (this.isWide) {
+        Row() {
+          this.navRail()
+          Stack({ alignContent: Alignment.BottomEnd }) {
+            this.tabBody()
+            if (this.currentTab === 0 && this.vm.vaults.length > 0) {
+              this.fab(20)
+            }
+          }
+          .layoutWeight(1)
+          .height('100%')
+        }
+        .width('100%')
+        .height('100%')
       } else {
-        this.workspace()
+        Stack({ alignContent: Alignment.BottomEnd }) {
+          HdsTabs({ controller: this.tabsController }) {
+            TabContent() {
+              Column() {
+                this.notesTab()
+              }
+              .width('100%')
+              .height('100%')
+              .padding({ bottom: 84 })
+            }
+            .tabBar(this.floatingTabItem(0, $r('app.string.tab_notes'), $r('sys.symbol.doc_plaintext')))
+
+            TabContent() {
+              Column() {
+                this.settingsTab()
+              }
+              .width('100%')
+              .height('100%')
+              .padding({ bottom: 84 })
+            }
+            .tabBar(this.floatingTabItem(1, $r('app.string.tab_settings'), $r('sys.symbol.gearshape')))
+          }
+          .barOverlap(true)
+          .barPosition(BarPosition.End)
+          .vertical(false)
+          .scrollable(false)
+          .barFloatingStyle({
+            barWidth: { smallWidth: 200, mediumWidth: 260, largeWidth: 320 },
+            barBottomMargin: 16,
+            systemMaterialEffect: {
+              materialType: hdsMaterial.MaterialType.IMMERSIVE,
+              materialLevel: hdsMaterial.MaterialLevel.ADAPTIVE
+            },
+            miniBar: {
+              miniBarBuilder: (): void => {
+                this.commandAnchor()
+              },
+              miniBarStyle: HdsBarStyle.EXPAND
+            }
+          })
+          .onChange((index: number): void => {
+            this.currentTab = index;
+          })
+          .width('100%')
+          .height('100%')
+
+          if (this.currentTab === 0 && this.vm.vaults.length > 0 && this.showSideBar) {
+            this.fab(84)
+          }
+        }
+        .width('100%')
+        .height('100%')
       }
+
       if (this.showCreatePanel) {
         this.createPanel()
       }
@@ -65,15 +154,28 @@ struct Index {
           hits: this.searchVm.hits,
           keyword: this.searchVm.keyword,
           busy: this.searchVm.busy,
+          searchMode: this.searchVm.searchMode,
+          tagChips: this.searchVm.tagChips,
+          activeTag: this.searchVm.activeTag,
           onKeywordChange: (value: string): void => {
             this.searchVm.search(this.vm.currentVault.id, value);
           },
+          onModeChange: (mode: number): void => {
+            this.searchVm.setMode(this.vm.currentVault.id, mode);
+          },
+          onSelectTag: (tag: string): void => {
+            this.searchVm.selectTag(this.vm.currentVault.id, tag);
+          },
           onOpenNote: (path: string): void => {
-            this.showSearch = false;
-            this.vm.openNote(path);
+            this.animAssign((): void => {
+              this.showSearch = false;
+            });
+            this.openNoteFrom(path);
           },
           onClose: (): void => {
-            this.showSearch = false;
+            this.animAssign((): void => {
+              this.showSearch = false;
+            });
           }
         })
       }
@@ -85,26 +187,51 @@ struct Index {
             this.searchVm.updateQuickKeyword(value);
           },
           onOpenNote: (path: string): void => {
-            this.showQuick = false;
-            this.vm.openNote(path);
+            this.animAssign((): void => {
+              this.showQuick = false;
+            });
+            this.openNoteFrom(path);
           },
           onClose: (): void => {
-            this.showQuick = false;
+            this.animAssign((): void => {
+              this.showQuick = false;
+            });
+          }
+        })
+      }
+      if (this.showRecent) {
+        RecentNotesPanel({
+          items: this.vm.recentNotes,
+          onOpenNote: (path: string): void => {
+            this.animAssign((): void => {
+              this.showRecent = false;
+            });
+            this.openNoteFrom(path);
+          },
+          onClose: (): void => {
+            this.animAssign((): void => {
+              this.showRecent = false;
+            });
           }
         })
       }
       if (this.showCommands) {
-        CommandPalette({          commands: this.filteredCommands(),
+        CommandPalette({
+          commands: this.filteredCommands(),
           keyword: this.commandKeyword,
           onKeywordChange: (value: string): void => {
             this.commandKeyword = value;
           },
           onRun: (command: AppCommand): void => {
-            this.showCommands = false;
+            this.animAssign((): void => {
+              this.showCommands = false;
+            });
             command.action();
           },
           onClose: (): void => {
-            this.showCommands = false;
+            this.animAssign((): void => {
+              this.showCommands = false;
+            });
           }
         })
       }
@@ -114,6 +241,8 @@ struct Index {
           username: this.syncVm.username,
           password: this.syncVm.password,
           remoteRoot: this.syncVm.remoteRoot,
+          caCertPath: this.syncVm.caCertPath,
+          skipCertVerify: this.syncVm.skipCertVerify,
           autoSync: this.syncVm.autoSync,
           statusText: this.syncVm.statusText(),
           conflicts: this.syncVm.conflicts,
@@ -129,249 +258,1077 @@ struct Index {
           onRemoteRootChange: (value: string): void => {
             this.syncVm.remoteRoot = value;
           },
+          onImportCert: (): void => {
+            this.pickCertFile();
+          },
+          onClearCert: (): void => {
+            this.syncVm.clearCert();
+          },
+          onSkipCertChange: (value: boolean): void => {
+            this.syncVm.skipCertVerify = value;
+          },
           onAutoSyncChange: (value: boolean): void => {
             this.syncVm.autoSync = value;
+            this.restartAutoSyncTimer();
           },
           onSyncNow: (): void => {
             this.syncVm.runSync(this.vm.currentVault);
           },
           onClose: (): void => {
-            this.showSync = false;
+            this.animAssign((): void => {
+              this.showSync = false;
+            });
           }
         })
       }
-      if (this.showSettings) {
-        SettingsOverlay({
-          fontSize: this.vm.fontSize,
-          onFontSizeChange: (size: number): void => {
-            this.vm.setFontSize(size);
-          },
-          onReindex: (): void => {
-            this.vm.rescanVault();
-          },
-          onExport: (): void => {
-            this.exportVault();
-          },
-          onClose: (): void => {
-            this.showSettings = false;
-          }
-        })
+      if (this.showVaults) {
+        Column() {
+          this.vaultsTab()
+        }
+        .width('100%')
+        .height('100%')
+        .backgroundColor($r('app.color.hm_bg'))
+        .transition(this.tabTransition())
       }
     }
     .width('100%')
     .height('100%')
-    .backgroundColor($r('sys.color.ohos_id_color_sub_background'))
+    .backgroundColor($r('app.color.hm_bg'))
+    .padding({
+      top: this.topInset,
+      bottom: this.bottomInset
+    })
     .onAreaChange((oldArea: Area, newArea: Area) => {
-      this.isWide = newArea.width >= 600;
+      this.contentWidth = Number(newArea.width);
+      const wide: boolean = newArea.width >= 600;
+      if (wide !== this.isWide) {
+        this.isWide = wide;
+        if (wide) {
+          this.showSideBar = true;
+          this.showRightPanel = newArea.width >= 900;
+        }
+      }
     })
   }
 
-  @Builder
-  headerBar() {
-    Row() {
-      Text($r('app.string.app_title'))
-        .fontSize(20)
-        .fontWeight(FontWeight.Bold)
-        .fontColor($r('sys.color.ohos_id_color_text_primary'))
-      Blank()
-      Button($r('app.string.action_search'))
-        .type(ButtonType.Normal)
-        .margin({ right: 8 })
-        .onClick(() => {
-          this.openSearch();
-        })
-      Button($r('app.string.action_quick'))
-        .type(ButtonType.Normal)
-        .margin({ right: 8 })
-        .onClick(() => {
-          this.openQuickSwitcher();
-        })
-      Button($r('app.string.action_commands'))
-        .type(ButtonType.Normal)
-        .margin({ right: 8 })
-        .onClick(() => {
-          this.commandKeyword = '';
-          this.showCommands = true;
-        })
-      Button($r('app.string.action_sync'))
-        .type(ButtonType.Normal)
-        .margin({ right: 8 })
-        .onClick(() => {
-          this.showSync = true;
-        })
-      Button($r('app.string.action_settings'))
-        .type(ButtonType.Normal)
-        .margin({ right: 8 })
-        .onClick(() => {
-          this.showSettings = true;
-        })
-      Button($r('app.string.action_import_vault'))
-        .type(ButtonType.Normal)
-        .margin({ right: 8 })
-        .onClick(() => {
-          this.importVault();
-        })
-      Button($r('app.string.action_create_vault'))
-        .type(ButtonType.Normal)
-        .onClick(() => {
-          this.showCreatePanel = true;
-          this.newVaultName = '';
-        })
-    }
-    .width('100%')
-    .padding({ left: 16, right: 16, top: 12, bottom: 12 })
-    .backgroundColor($r('sys.color.ohos_id_color_background'))
+  /** 宽度是否足以让信息面板与编辑器并排显示（否则信息面板悬浮覆盖）。 */
+  private fixedPanelEnabled(): boolean {
+    return this.contentWidth >= 900;
   }
 
+  /** 是否以固定侧栏形式显示信息面板。 */
+  private showFixedInfoPanel(): boolean {
+    return this.showRightPanel && this.fixedPanelEnabled();
+  }
+
+  /** 当前页签内容（宽屏侧边导航使用）。 */
   @Builder
-  workspace() {
-    if (this.isWide) {
-      Row() {
-        Column() {
-          this.treePanel()
-        }
-        .width('28%')
-        .height('100%')
-        Column() {
-          this.notePanel()
-        }
-        .layoutWeight(1)
-        .height('100%')
-        Column() {
-          this.infoPanel()
-        }
-        .width('26%')
-        .height('100%')
-      }
-      .width('100%')
-      .layoutWeight(1)
+  tabBody() {
+    if (this.currentTab === 0) {
+      this.notesTab()
     } else {
-      if (this.vm.selectedPath.length === 0) {
-        this.treePanel()
-      } else {
-        this.notePanel()
-      }
+      this.settingsTab()
     }
   }
 
+  /** 宽屏左侧导航栏。 */
   @Builder
-  treePanel() {
+  navRail() {
     Column() {
-      Row() {
-        Text($r('app.string.file_tree_title'))
-          .fontSize(14)
-          .fontWeight(FontWeight.Medium)
-          .fontColor($r('sys.color.ohos_id_color_text_primary'))
-        Blank()
-        Text(this.vm.currentVault.name)
-          .fontSize(12)
-          .fontColor($r('sys.color.ohos_id_color_text_secondary'))
-          .maxLines(1)
-          .textOverflow({ overflow: TextOverflow.Ellipsis })
+      Column() {
+        this.navItemContent(0, $r('app.string.tab_notes'), $r('sys.symbol.doc_plaintext'))
       }
       .width('100%')
-      .padding({ left: 12, right: 12, top: 8, bottom: 8 })
-      FileTreeView({
-        items: this.vm.treeItems,
-        selectedPath: this.vm.selectedPath,
-        onSelect: (path: string, isDir: boolean): void => {
-          this.vm.openNote(path);
-        },
-        onToggle: (path: string): void => {
-          this.vm.toggleDir(path);
-        }
-      })
+      .height(64)
+      .justifyContent(FlexAlign.Center)
+
+      Column() {
+        this.navItemContent(1, $r('app.string.tab_settings'), $r('sys.symbol.gearshape'))
+      }
+      .width('100%')
+      .height(64)
+      .justifyContent(FlexAlign.Center)
     }
-    .width('100%')
+    .width(88)
     .height('100%')
+    .padding({ top: 4 })
   }
 
+  /** 悬浮页签栏页签：图标（选中胶囊高亮）+ 文字。 */
   @Builder
-  notePanel() {
-    Column() {
-      Row() {
-        Text(this.vm.noteTitle)
-          .fontSize(18)
-          .fontWeight(FontWeight.Bold)
-          .fontColor($r('sys.color.ohos_id_color_text_primary'))
-          .maxLines(1)
-          .textOverflow({ overflow: TextOverflow.Ellipsis })
-          .layoutWeight(1)
-        if (!this.isWide) {
-          Button($r('app.string.action_back'))
-            .type(ButtonType.Normal)
-            .margin({ right: 8 })
-            .onClick(() => {
-              this.vm.closeNote();
-            })
+  floatingTabItem(index: number, label: Resource, symbol: Resource) {
+    Column({ space: 2 }) {
+      Stack() {
+        if (this.currentTab === index) {
+          Column()
+            .width(44)
+            .height(26)
+            .borderRadius(13)
+            .backgroundColor($r('app.color.hm_selected_bg'))
+            .transition(TransitionEffect.scale({ x: 0.4, y: 0.4 })
+              .combine(TransitionEffect.opacity(0))
+              .animation({ duration: 240, curve: Curve.Friction }))
         }
-        if (this.vm.editMode) {
-          Button($r('app.string.action_cancel'))
-            .type(ButtonType.Normal)
-            .margin({ right: 8 })
-            .onClick(() => {
-              this.vm.cancelEdit();
+        SymbolGlyph(symbol)
+          .fontSize(20)
+          .fontColor([this.currentTab === index ? $r('app.color.hm_accent')
+            : $r('app.color.hm_text_secondary')])
+      }
+      .width(44)
+      .height(26)
+
+      Text(label)
+        .fontSize(10)
+        .fontColor(this.currentTab === index ? $r('app.color.hm_accent')
+          : $r('app.color.hm_text_secondary'))
+        .maxLines(1)
+    }
+    .justifyContent(FlexAlign.Center)
+  }
+
+  /** 迷你栏命令入口：点击弹出候选命令菜单。 */
+  @Builder
+  commandAnchor() {
+    Column() {
+      SymbolGlyph($r('sys.symbol.circle_grid_2x2'))
+        .fontSize(22)
+        .fontColor([$r('app.color.hm_text_primary')])
+    }
+    .width(40)
+    .height(40)
+    .borderRadius(20)
+    .backgroundColor($r('app.color.hm_hover_bg'))
+    .justifyContent(FlexAlign.Center)
+    .margin({ left: 4 })
+    .bindMenu(this.commandMenuItems())
+  }
+
+  /** 迷你栏候选命令。 */
+  private commandMenuItems(): MenuElement[] {
+    const items: MenuElement[] = [];
+    const back: MenuElement = {
+      value: $r('app.string.menu_back_note'),
+      action: (): void => {
+        this.goBackFromBar();
+      }
+    };
+    items.push(back);
+    const recent: MenuElement = {
+      value: $r('app.string.menu_recent_notes'),
+      action: (): void => {
+        this.openRecentPicker();
+      }
+    };
+    items.push(recent);
+    const daily: MenuElement = {
+      value: $r('app.string.menu_daily_note'),
+      action: (): void => {
+        this.openDailyFromBar();
+      }
+    };
+    items.push(daily);
+    const create: MenuElement = {
+      value: $r('app.string.menu_new_note'),
+      action: (): void => {
+        this.createNote();
+      }
+    };
+    items.push(create);
+    return items;
+  }
+
+  /** 导航项：图标（选中带胶囊高亮）+ 文字。 */
+  @Builder
+  navItemContent(index: number, label: Resource, symbol: Resource) {
+    Column({ space: 2 }) {
+      Stack() {
+        if (this.currentTab === index) {
+          Column()
+            .width(44)
+            .height(26)
+            .borderRadius(13)
+            .backgroundColor($r('app.color.hm_selected_bg'))
+            .transition(TransitionEffect.scale({ x: 0.4, y: 0.4 })
+              .combine(TransitionEffect.opacity(0))
+              .animation({ duration: 240, curve: Curve.Friction }))
+        }
+        SymbolGlyph(symbol)
+          .fontSize(20)
+          .fontColor([this.currentTab === index ? $r('app.color.hm_accent')
+            : $r('app.color.hm_text_secondary')])
+      }
+      .width(44)
+      .height(26)
+
+      Text(label)
+        .fontSize(10)
+        .fontColor(this.currentTab === index ? $r('app.color.hm_accent')
+          : $r('app.color.hm_text_secondary'))
+        .maxLines(1)
+    }
+    .justifyContent(FlexAlign.Center)
+    .onClick(() => {
+      this.getUIContext().animateTo({ duration: 300, curve: Curve.Friction }, (): void => {
+        this.currentTab = index;
+      });
+    })
+  }
+
+  /** 页签切换过渡：淡入 + 轻微上移。 */
+  private tabTransition(): TransitionEffect {
+    return TransitionEffect.opacity(0)
+      .combine(TransitionEffect.translate({ y: 12 }))
+      .animation({ duration: 300, curve: Curve.Friction });
+  }
+
+  /** 在过渡动画中修改状态。 */
+  private animAssign(action: () => void): void {
+    this.getUIContext().animateTo({ duration: 240, curve: Curve.Friction }, action);
+  }
+
+  /** 笔记页签：文件列表 + 编辑器。 */
+  @Builder
+  notesTab() {
+    if (this.vm.vaults.length === 0) {
+      Column() {
+        this.emptyVaultView()
+      }
+      .width('100%')
+      .height('100%')
+      .transition(this.tabTransition())
+    } else if (this.isWide) {
+      Stack() {
+        Row() {
+          Column() {
+            this.notesHeader()
+            FileTreeView({
+              items: this.vm.treeItems,
+              selectedPath: this.vm.selectedPath,
+              selectedBgColor: $r('app.color.hm_selected_bg'),
+              selectedTextColor: $r('app.color.hm_selected_text'),
+              onSelect: (path: string, isDir: boolean): void => {
+                this.openNoteFrom(path);
+              },
+              onToggle: (path: string): void => {
+                this.vm.toggleDir(path);
+              }
             })
-          Button($r('app.string.action_save'))
-            .type(ButtonType.Normal)
-            .onClick(() => {
-              this.vm.saveDraft();
-            })
-        } else {
-          Button($r('app.string.action_edit'))
-            .type(ButtonType.Normal)
-            .margin({ right: 8 })
-            .onClick(() => {
-              this.vm.startEdit();
-            })
-          if (!this.isWide) {
-            Button($r('app.string.action_info'))
-              .type(ButtonType.Normal)
-              .onClick(() => {
-                this.showInfo = !this.showInfo;
-              })
           }
+          .width(this.fixedPanelEnabled() ? 280 : 250)
+          .height('100%')
+          .backgroundColor($r('app.color.hm_bg'))
+
+          Column() {
+            this.editorArea()
+          }
+          .layoutWeight(1)
+          .height('100%')
+          .backgroundColor($r('app.color.hm_card_bg'))
+          .borderRadius(16)
+          .margin({ top: 12, bottom: 12, right: this.showFixedInfoPanel() ? 0 : 12 })
+          .clip(true)
+
+          if (this.showFixedInfoPanel()) {
+            Column() {
+              this.infoPanel()
+            }
+            .width(300)
+            .height('100%')
+            .backgroundColor($r('app.color.hm_card_bg'))
+            .borderRadius(16)
+            .margin({ top: 12, bottom: 12, right: 12 })
+            .clip(true)
+          }
+        }
+        .width('100%')
+        .height('100%')
+
+        if (this.showRightPanel && !this.fixedPanelEnabled()) {
+          Column() {
+            Row() {
+              Blank()
+              SymbolGlyph($r('sys.symbol.xmark'))
+                .fontSize(18)
+                .fontColor([$r('app.color.hm_text_secondary')])
+                .width(36)
+                .height(36)
+                .onClick(() => {
+                  this.animAssign((): void => {
+                    this.showRightPanel = false;
+                  });
+                })
+            }
+            .width('100%')
+            .height(44)
+            .padding({ left: 12, right: 4 })
+            .alignItems(VerticalAlign.Center)
+
+            Column() {
+              this.infoPanel()
+            }
+            .layoutWeight(1)
+          }
+          .width(360)
+          .height('100%')
+          .backgroundColor($r('app.color.hm_card_bg'))
+          .border({ width: { left: 1 }, color: $r('app.color.hm_divider') })
+          .shadow({ radius: 16, color: '#26000000', offsetX: -4 })
+          .position({ x: '100%' })
+          .markAnchor({ x: '100%' })
+          .transition(TransitionEffect.translate({ x: '100%' })
+            .animation({ duration: 260, curve: Curve.Friction }))
         }
       }
       .width('100%')
-      .padding({ left: 16, right: 16, top: 10, bottom: 10 })
-      if (this.vm.editMode) {
-        TextArea({
-          placeholder: $r('app.string.action_edit'),
-          text: this.vm.draftBuffer
-        })
-          .fontSize(15)
-          .fontFamily('monospace')
-          .width('100%')
-          .layoutWeight(1)
-          .onChange((value: string) => {
-            this.vm.updateDraft(value);
-          })
-          .padding({ left: 12, right: 12 })
-      } else {
-        MdDocumentView({
-          document: this.vm.document,
-          fontSize: this.vm.fontSize,
-          onOpenLink: (target: string, kind: string): void => {
-            this.vm.openLink(target, kind);
-          },
-          onOpenTag: (tag: string): void => {
-            this.vm.onTagSelected(tag);
+      .height('100%')
+      .transition(this.tabTransition())
+    } else {
+      Stack() {
+        SideBarContainer(SideBarContainerType.Overlay) {
+          Column() {
+            this.notesHeader()
+            FileTreeView({
+              items: this.vm.treeItems,
+              selectedPath: this.vm.selectedPath,
+              selectedBgColor: $r('app.color.hm_selected_bg'),
+              selectedTextColor: $r('app.color.hm_selected_text'),
+              onSelect: (path: string, isDir: boolean): void => {
+                this.openNoteFrom(path);
+              },
+              onToggle: (path: string): void => {
+                this.vm.toggleDir(path);
+              }
+            })
           }
+          .width('100%')
+          .height('100%')
+          .backgroundColor($r('app.color.hm_bg'))
+
+          Column() {
+            this.editorArea()
+          }
+          .width('100%')
+          .height('100%')
+        }
+        .showSideBar(this.showSideBar)
+        .sideBarWidth(300)
+        .minSideBarWidth(220)
+        .maxSideBarWidth(360)
+        .autoHide(true)
+        .showControlButton(false)
+        .onChange((visible: boolean) => {
+          this.showSideBar = visible;
         })
-        .layoutWeight(1)
-        .padding({ left: 16, right: 16 })
-        if (!this.isWide && this.showInfo) {
+        .width('100%')
+        .height('100%')
+
+        if (this.showInfo) {
           Column() {
             this.infoPanel()
           }
+          .width('88%')
+          .height('100%')
+          .backgroundColor($r('app.color.hm_card_bg'))
+          .border({ width: { left: 1 }, color: $r('app.color.hm_divider') })
+          .shadow({ radius: 16, color: '#26000000', offsetX: -4 })
+          .position({ x: '100%' })
+          .markAnchor({ x: '100%' })
+          .transition(TransitionEffect.translate({ x: '100%' })
+            .animation({ duration: 260, curve: Curve.Friction }))
+        }
+      }
+      .width('100%')
+      .height('100%')
+      .transition(this.tabTransition())
+    }
+  }
+
+  /** 仓库管理浮层：仓库卡片列表（从设置页进入）。 */
+  @Builder
+  vaultsTab() {
+    Scroll() {
+      Column() {
+        Row() {
+          SymbolGlyph($r('sys.symbol.chevron_left'))
+            .fontSize(20)
+            .fontColor([$r('app.color.hm_text_primary')])
+            .width(36)
+            .height(36)
+            .borderRadius(18)
+            .backgroundColor($r('app.color.hm_hover_bg'))
+            .onClick(() => {
+              this.animAssign((): void => {
+                this.showVaults = false;
+              });
+            })
+          Text($r('app.string.tab_vaults'))
+            .fontSize(24)
+            .fontWeight(FontWeight.Bold)
+            .fontColor($r('app.color.hm_text_primary'))
+            .layoutWeight(1)
+            .margin({ left: 8 })
+          Button($r('app.string.action_import_vault_short'))
+            .type(ButtonType.Capsule)
+            .height(36)
+            .fontSize(14)
+            .backgroundColor($r('app.color.hm_hover_bg'))
+            .fontColor($r('app.color.hm_text_primary'))
+            .margin({ right: 8 })
+            .onClick(() => {
+              this.importVault();
+            })
+          Button($r('app.string.action_create_vault_short'))
+            .type(ButtonType.Capsule)
+            .height(36)
+            .fontSize(14)
+            .backgroundColor($r('app.color.hm_accent'))
+            .fontColor(Color.White)
+            .onClick(() => {
+              this.newVaultName = '';
+              this.animAssign((): void => {
+                this.showCreatePanel = true;
+              });
+            })
+        }
+        .width('100%')
+        .height(56)
+        .padding({ left: 16, right: 12 })
+        .margin({ bottom: 4 })
+
+        ForEach(this.vm.vaults, (vault: VaultInfo) => {
+          this.vaultCard(vault)
+        }, (vault: VaultInfo) => vault.id.toString())
+      }
+      .width('100%')
+      .constraintSize({ maxWidth: 560 })
+    }
+    .width('100%')
+    .height('100%')
+    .align(Alignment.Top)
+    .scrollBar(BarState.Off)
+    .edgeEffect(EdgeEffect.Spring)
+    .transition(this.tabTransition())
+  }
+
+  /** 单个仓库卡片。 */
+  @Builder
+  vaultCard(vault: VaultInfo) {
+    Column() {
+      Row() {
+        SymbolGlyph($r('sys.symbol.folder'))
+          .fontSize(20)
+          .fontColor([$r('app.color.hm_accent')])
+        Text(vault.name)
+          .fontSize(16)
+          .fontWeight(FontWeight.Medium)
+          .fontColor($r('app.color.hm_text_primary'))
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+          .layoutWeight(1)
+          .margin({ left: 8 })
+        if (vault.id === this.vm.currentVault.id) {
+          Text($r('app.string.vault_card_current'))
+            .fontSize(12)
+            .fontColor($r('app.color.hm_selected_text'))
+            .backgroundColor($r('app.color.hm_selected_bg'))
+            .borderRadius(10)
+            .padding({ left: 8, right: 8, top: 3, bottom: 3 })
+            .margin({ left: 8 })
+        }
+      }
+      .width('100%')
+
+      Text(vault.rootPath)
+        .fontSize(12)
+        .fontColor($r('app.color.hm_text_hint'))
+        .maxLines(1)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
+        .margin({ top: 4, left: 28 })
+
+      Row({ space: 8 }) {
+        if (vault.id !== this.vm.currentVault.id) {
+          Button($r('app.string.vault_card_open'))
+            .type(ButtonType.Capsule)
+            .height(32)
+            .fontSize(13)
+            .backgroundColor($r('app.color.hm_accent'))
+            .fontColor(Color.White)
+            .onClick(() => {
+              this.openVault(vault);
+            })
+        }
+        Button($r('app.string.vault_card_export'))
+          .type(ButtonType.Capsule)
+          .height(32)
+          .fontSize(13)
+          .backgroundColor($r('app.color.hm_hover_bg'))
+          .fontColor($r('app.color.hm_text_primary'))
+          .onClick(() => {
+            this.exportVault(vault);
+          })
+        Button($r('app.string.vault_card_delete'))
+          .type(ButtonType.Capsule)
+          .height(32)
+          .fontSize(13)
+          .backgroundColor($r('app.color.hm_hover_bg'))
+          .fontColor($r('app.color.hm_danger'))
+          .onClick(() => {
+            this.confirmDeleteVault(vault);
+          })
+      }
+      .margin({ top: 12 })
+    }
+    .padding(16)
+    .borderRadius(16)
+    .backgroundColor($r('app.color.hm_card_bg'))
+    .margin({ left: 16, right: 16, top: 8 })
+    .transition(TransitionEffect.opacity(0)
+      .combine(TransitionEffect.translate({ y: 16 }))
+      .animation({ duration: 300, curve: Curve.Friction }))
+  }
+
+  /** 设置页签：字号、维护、关于。 */
+  @Builder
+  settingsTab() {
+    Scroll() {
+      Column() {
+        Row() {
+          Text($r('app.string.tab_settings'))
+            .fontSize(24)
+            .fontWeight(FontWeight.Bold)
+            .fontColor($r('app.color.hm_text_primary'))
+        }
+        .width('100%')
+        .height(56)
+        .padding({ left: 16 })
+        .margin({ bottom: 4 })
+
+        Text($r('app.string.settings_appearance'))
+          .fontSize(13)
+          .fontColor($r('app.color.hm_text_hint'))
           .width('100%')
-          .height('45%')
+          .padding({ left: 28 })
+          .margin({ top: 4 })
+
+        Column() {
+          Row() {
+            Text($r('app.string.settings_font_size'))
+              .fontSize(15)
+              .fontColor($r('app.color.hm_text_primary'))
+            Blank()
+            Text(`${this.vm.fontSize} fp`)
+              .fontSize(13)
+              .fontColor($r('app.color.hm_text_secondary'))
+              .margin({ right: 8 })
+          }
+          .width('100%')
+
+          Slider({ value: this.vm.fontSize, min: 12, max: 28, step: 1 })
+            .selectedColor($r('app.color.hm_accent'))
+            .trackColor($r('app.color.hm_hover_bg'))
+            .blockColor($r('app.color.hm_accent'))
+            .width('100%')
+            .margin({ top: 8 })
+            .onChange((value: number) => {
+              this.vm.setFontSize(Math.round(value));
+            })
+        }
+        .padding(16)
+        .borderRadius(16)
+        .backgroundColor($r('app.color.hm_card_bg'))
+        .margin({ left: 16, right: 16, top: 8 })
+
+        Text($r('app.string.tab_vaults'))
+          .fontSize(13)
+          .fontColor($r('app.color.hm_text_hint'))
+          .width('100%')
+          .padding({ left: 28 })
+          .margin({ top: 16 })
+
+        Column() {
+          Row() {
+            SymbolGlyph($r('sys.symbol.folder'))
+              .fontSize(18)
+              .fontColor([$r('app.color.hm_accent')])
+            Text($r('app.string.settings_vault_manage'))
+              .fontSize(15)
+              .fontColor($r('app.color.hm_text_primary'))
+              .margin({ left: 8 })
+              .layoutWeight(1)
+            Text(this.vm.currentVault.name)
+              .fontSize(13)
+              .fontColor($r('app.color.hm_text_secondary'))
+              .maxLines(1)
+              .textOverflow({ overflow: TextOverflow.Ellipsis })
+              .constraintSize({ maxWidth: 140 })
+            SymbolGlyph($r('sys.symbol.chevron_right'))
+              .fontSize(16)
+              .fontColor([$r('app.color.hm_text_hint')])
+              .margin({ left: 4 })
+          }
+          .width('100%')
+          .onClick(() => {
+            this.animAssign((): void => {
+              this.showVaults = true;
+            });
+          })
+        }
+        .padding(16)
+        .borderRadius(16)
+        .backgroundColor($r('app.color.hm_card_bg'))
+        .margin({ left: 16, right: 16, top: 8 })
+
+        Text($r('app.string.settings_maintenance'))
+          .fontSize(13)
+          .fontColor($r('app.color.hm_text_hint'))
+          .width('100%')
+          .padding({ left: 28 })
+          .margin({ top: 16 })
+
+        Column() {
+          Row() {
+            Text($r('app.string.settings_reindex'))
+              .fontSize(15)
+              .fontColor($r('app.color.hm_text_primary'))
+              .layoutWeight(1)
+            SymbolGlyph($r('sys.symbol.arrow_clockwise'))
+              .fontSize(18)
+              .fontColor([$r('app.color.hm_accent')])
+          }
+          .width('100%')
+          .onClick(() => {
+            this.reindexVault();
+          })
+
+          Divider()
+            .color($r('app.color.hm_divider'))
+            .margin({ top: 12, bottom: 12 })
+
+          Row() {
+            Text($r('app.string.sync_title'))
+              .fontSize(15)
+              .fontColor($r('app.color.hm_text_primary'))
+              .layoutWeight(1)
+            SymbolGlyph($r('sys.symbol.chevron_right'))
+              .fontSize(16)
+              .fontColor([$r('app.color.hm_text_hint')])
+          }
+          .width('100%')
+          .onClick(() => {
+            this.animAssign((): void => {
+              this.showSync = true;
+            });
+          })
+        }
+        .padding(16)
+        .borderRadius(16)
+        .backgroundColor($r('app.color.hm_card_bg'))
+        .margin({ left: 16, right: 16, top: 8 })
+
+        Text($r('app.string.settings_about'))
+          .fontSize(13)
+          .fontColor($r('app.color.hm_text_hint'))
+          .lineHeight(20)
+          .padding({ left: 28, right: 28 })
+          .margin({ top: 16, bottom: 16 })
+      }
+      .width('100%')
+      .constraintSize({ maxWidth: 560 })
+    }
+    .width('100%')
+    .height('100%')
+    .align(Alignment.Top)
+    .scrollBar(BarState.Off)
+    .edgeEffect(EdgeEffect.Spring)
+    .transition(this.tabTransition())
+  }
+
+  /** 笔记列表头部：大标题 + 搜索 + 更多菜单。 */
+  @Builder
+  notesHeader() {
+    Row() {
+      Text(this.vm.currentVault.name.length > 0 ? this.vm.currentVault.name : $r('app.string.app_title'))
+        .fontSize(24)
+        .fontWeight(FontWeight.Bold)
+        .fontColor($r('app.color.hm_text_primary'))
+        .maxLines(1)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
+        .layoutWeight(1)
+      SymbolGlyph($r('sys.symbol.magnifyingglass'))
+        .fontSize(22)
+        .fontColor([$r('app.color.hm_text_primary')])
+        .width(40)
+        .height(40)
+        .margin({ left: 4 })
+        .onClick(() => {
+          this.openSearch();
+        })
+      SymbolGlyph($r('sys.symbol.more'))
+        .fontSize(22)
+        .fontColor([$r('app.color.hm_text_primary')])
+        .width(40)
+        .height(40)
+        .bindMenu(this.moreMenuBuilder)
+    }
+    .width('100%')
+    .height(56)
+    .padding({ left: 16, right: 4 })
+    .alignItems(VerticalAlign.Center)
+  }
+
+  /** 更多菜单：高频操作入口。 */
+  @Builder
+  moreMenuBuilder() {
+    Menu() {
+      MenuItem({ content: $r('app.string.menu_quick_switch') })
+        .onClick(() => {
+          this.openQuickSwitcher();
+        })
+      MenuItem({ content: $r('app.string.menu_command_palette') })
+        .onClick(() => {
+          this.commandKeyword = '';
+          this.animAssign((): void => {
+            this.showCommands = true;
+          });
+        })
+      MenuItem({ content: $r('app.string.action_new_note') })
+        .onClick(() => {
+          this.createNote();
+        })
+      MenuItem({ content: $r('app.string.action_import_vault') })
+        .onClick(() => {
+          this.importVault();
+        })
+      MenuItem({ content: $r('app.string.action_export_vault') })
+        .onClick(() => {
+          this.exportVault(this.vm.currentVault);
+        })
+    }
+  }
+
+  /** 新建笔记悬浮按钮。 */
+  @Builder
+  fab(bottomMargin: number) {
+    Column() {
+      SymbolGlyph($r('sys.symbol.square_and_pencil'))
+        .fontSize(24)
+        .fontColor([Color.White])
+    }
+    .width(56)
+    .height(56)
+    .borderRadius(28)
+    .backgroundColor($r('app.color.hm_accent'))
+    .shadow({ radius: 16, color: '#33000000', offsetY: 4 })
+    .justifyContent(FlexAlign.Center)
+    .margin({ right: 20, bottom: bottomMargin })
+    .transition(TransitionEffect.scale({ x: 0, y: 0 })
+      .combine(TransitionEffect.opacity(0))
+      .animation({ duration: 250, curve: Curve.Friction }))
+    .onClick(() => {
+      this.createNote();
+    })
+  }
+
+  /** 仓库为空时的引导视图。 */
+  @Builder
+  emptyVaultView() {
+    Column() {
+      EmptyState({
+        title: $r('app.string.vault_empty_title'),
+        description: $r('app.string.vault_empty_desc'),
+        icon: $r('sys.symbol.folder'),
+        iconColor: $r('app.color.hm_accent')
+      })
+      Row() {
+        Button($r('app.string.action_import_vault'))
+          .type(ButtonType.Capsule)
+          .height(40)
+          .fontSize(16)
+          .backgroundColor($r('app.color.hm_hover_bg'))
+          .fontColor($r('app.color.hm_text_primary'))
+          .margin({ right: 12 })
+          .onClick(() => {
+            this.importVault();
+          })
+        Button($r('app.string.action_create_vault'))
+          .type(ButtonType.Capsule)
+          .height(40)
+          .fontSize(16)
+          .backgroundColor($r('app.color.hm_accent'))
+          .fontColor(Color.White)
+          .onClick(() => {
+            this.newVaultName = '';
+            this.animAssign((): void => {
+              this.showCreatePanel = true;
+            });
+          })
+      }
+      .margin({ top: 8 })
+    }
+    .width('100%')
+    .layoutWeight(1)
+    .justifyContent(FlexAlign.Center)
+    .padding(24)
+  }
+
+  /** 编辑器区域：标题栏 + 正文。 */
+  @Builder
+  editorArea() {
+    Column() {
+      if (this.vm.selectedPath.length === 0) {
+        EmptyState({
+          title: $r('app.string.note_empty_title'),
+          description: $r('app.string.note_empty_desc'),
+          icon: $r('sys.symbol.doc_plaintext'),
+          iconColor: $r('app.color.hm_text_secondary')
+        })
+        .onTouch((event: TouchEvent) => {
+          this.onContentTouch(event);
+        })
+        .transition(TransitionEffect.opacity(0)
+          .combine(TransitionEffect.scale({ x: 0.96, y: 0.96 }))
+          .animation({ duration: 240, curve: Curve.Friction }))
+      } else {
+        this.editorHeader()
+        if (this.vm.editMode) {
+          TextArea({
+            placeholder: $r('app.string.editor_placeholder'),
+            text: this.vm.draftBuffer
+          })
+            .fontSize(16)
+            .width('100%')
+            .layoutWeight(1)
+            .backgroundColor(Color.Transparent)
+            .fontColor($r('app.color.hm_text_primary'))
+            .placeholderColor($r('app.color.hm_text_secondary'))
+            .caretColor($r('app.color.hm_accent'))
+            .padding({ left: 20, right: 20, top: 8, bottom: 8 })
+            .onTouch((event: TouchEvent) => {
+              this.onContentTouch(event);
+            })
+            .onChange((value: string) => {
+              this.vm.updateDraft(value);
+            })
+            .transition(TransitionEffect.opacity(0)
+              .animation({ duration: 200, curve: Curve.Friction }))
+        } else {
+          MdDocumentView({
+            document: this.vm.document,
+            docKey: this.vm.selectedPath,
+            fontSize: this.vm.fontSize,
+            controller: this.docController,
+            onOpenLink: (target: string, kind: string): void => {
+              this.vm.openLink(target, kind);
+            },
+            onOpenTag: (tag: string): void => {
+              this.openTagSearch(tag);
+            },
+            onToggleTask: (rawLine: string, checked: boolean): void => {
+              this.vm.toggleTask(rawLine, checked).then((): void => {
+                this.syncNowIfAuto();
+              });
+            },
+            onLoadDataView: (query: string,
+              onResult: (tasks: DataViewTask[]) => void): void => {
+              this.vm.runDataViewQuery(query).then((tasks: DataViewTask[]): void => {
+                onResult(tasks);
+              });
+            },
+            onToggleDataViewTask: (task: DataViewTask, checked: boolean): void => {
+              this.vm.toggleTaskInNote(task, checked).then((): void => {
+                this.syncNowIfAuto();
+              });
+            }
+          })
+          .layoutWeight(1)
+          .padding({ left: 20, right: 20 })
+          .onTouch((event: TouchEvent) => {
+            this.onContentTouch(event);
+          })
+          .transition(TransitionEffect.opacity(0)
+            .animation({ duration: 200, curve: Curve.Friction }))
         }
       }
     }
     .width('100%')
     .height('100%')
+    .gesture(PanGesture({ fingers: 1, direction: PanDirection.Horizontal })
+      .onActionStart((event: GestureEvent) => {
+        this.swipeStartSidebarOpen = this.showSideBar;
+        this.swipeStartX = event.fingerList.length > 0 ? event.fingerList[0].globalX : -1;
+      })
+      .onActionEnd((event: GestureEvent) => {
+        if (this.isEdgeSwipe()) {
+          return;
+        }
+        this.handleContentSwipe(event.offsetX);
+      }))
+  }
+
+  /** 起点位于屏幕左右边缘保留区内的滑动交给系统返回手势处理。 */
+  private isEdgeSwipe(): boolean {
+    if (this.swipeStartX < 0 || !(this.contentWidth > 0)) {
+      return false;
+    }
+    return this.swipeStartX < Index.EDGE_GESTURE_ZONE ||
+      this.swipeStartX > this.contentWidth - Index.EDGE_GESTURE_ZONE;
+  }
+
+  /** 正文触摸：按下即收起窄屏弹层（信息面板 / 文件侧栏）。 */
+  private onContentTouch(event: TouchEvent): void {
+    if (event.type !== TouchType.Down) {
+      return;
+    }
+    this.dismissOverlays();
+  }
+
+  /** 收起窄屏弹层：大纲反链面板与文档目录侧栏。 */
+  private dismissOverlays(): void {
+    if (this.isWide) {
+      return;
+    }
+    if (this.showInfo) {
+      this.animAssign((): void => {
+        this.showInfo = false;
+      });
+    }
+    if (this.showSideBar) {
+      this.animAssign((): void => {
+        this.showSideBar = false;
+      });
+    }
+  }
+
+  /** 正文区横向滑动：向右滑呼出文件侧栏，向左滑查看双链。 */
+  private handleContentSwipe(offsetX: number): void {
+    if (offsetX > 60) {
+      if (!this.isWide && this.showInfo) {
+        this.animAssign((): void => {
+          this.showInfo = false;
+        });
+        return;
+      }
+      if (this.isWide || this.swipeStartSidebarOpen) {
+        return;
+      }
+      this.animAssign((): void => {
+        this.showSideBar = true;
+      });
+    } else if (offsetX < -60) {
+      if (!this.isWide && this.swipeStartSidebarOpen) {
+        this.animAssign((): void => {
+          this.showSideBar = false;
+        });
+        return;
+      }
+      this.openBacklinks();
+    }
+  }
+
+  /** 打开双链信息（窄屏底部面板 / 宽屏右侧面板）。 */
+  private openBacklinks(): void {
+    if (this.isWide) {
+      if (this.showRightPanel) {
+        return;
+      }
+      this.animAssign((): void => {
+        this.showRightPanel = true;
+      });
+      return;
+    }
+    this.vm.setInfoTab(1);
+    this.animAssign((): void => {
+      this.showInfo = true;
+    });
+  }
+
+  /** 编辑器标题栏：返回 + 笔记标题 + 编辑操作。 */
+  @Builder
+  editorHeader() {
+    Row() {
+      if (!this.isWide) {
+        SymbolGlyph($r('sys.symbol.chevron_left'))
+          .fontSize(22)
+          .fontColor([$r('app.color.hm_text_primary')])
+          .width(36)
+          .height(36)
+          .margin({ left: -8 })
+          .onClick(() => {
+            this.animAssign((): void => {
+              this.showSideBar = true;
+            });
+          })
+      }
+      Text(this.vm.noteTitle)
+        .fontSize(16)
+        .fontWeight(FontWeight.Medium)
+        .fontColor($r('app.color.hm_text_primary'))
+        .maxLines(1)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
+        .layoutWeight(1)
+      if (this.vm.editMode) {
+        Text($r('app.string.action_cancel'))
+          .fontSize(15)
+          .fontColor($r('app.color.hm_text_secondary'))
+          .height(36)
+          .padding({ left: 8, right: 8 })
+          .margin({ left: 4 })
+          .onClick(() => {
+            this.vm.cancelEdit();
+          })
+        Text($r('app.string.action_save'))
+          .fontSize(15)
+          .fontWeight(FontWeight.Medium)
+          .fontColor($r('app.color.hm_accent'))
+          .height(36)
+          .padding({ left: 8, right: 8 })
+          .margin({ left: 4 })
+          .onClick(() => {
+            this.vm.saveDraft().then((): void => {
+              this.syncNowIfAuto();
+            });
+          })
+      } else {
+        SymbolGlyph($r('sys.symbol.doc_plaintext_and_pencil'))
+          .fontSize(20)
+          .fontColor([$r('app.color.hm_text_primary')])
+          .width(36)
+          .height(36)
+          .margin({ left: 4 })
+          .onClick(() => {
+            this.vm.startEdit();
+          })
+        if (this.isWide) {
+          SymbolGlyph($r('sys.symbol.rectangle_grid_1x2'))
+            .fontSize(20)
+            .fontColor([$r('app.color.hm_text_primary')])
+            .width(36)
+            .height(36)
+            .margin({ left: 4 })
+            .onClick(() => {
+              this.animAssign((): void => {
+                this.showRightPanel = !this.showRightPanel;
+              });
+            })
+        } else {
+          SymbolGlyph($r('sys.symbol.info_circle'))
+            .fontSize(20)
+            .fontColor([$r('app.color.hm_text_primary')])
+            .width(36)
+            .height(36)
+            .margin({ left: 4 })
+            .onClick(() => {
+              this.animAssign((): void => {
+                this.showInfo = !this.showInfo;
+              });
+            })
+        }
+      }
+    }
+    .width('100%')
+    .height(48)
+    .padding({ left: 16, right: 8 })
+    .alignItems(VerticalAlign.Center)
   }
 
   @Builder
@@ -386,14 +1343,30 @@ struct Index {
         this.vm.setInfoTab(index);
       },
       onOpenNote: (path: string): void => {
-        this.vm.openNote(path);
+        this.openNoteFrom(path);
       },
       onOpenTag: (tag: string): void => {
-        this.vm.onTagSelected(tag);
+        this.openTagSearch(tag);
+      },
+      onOutlineClick: (entry: OutlineEntry): void => {
+        this.scrollToOutlineEntry(entry);
       }
     })
   }
 
+  /** 大纲点击定位：编辑模式下先保存草稿并切回预览，再滚动到目标标题块。 */
+  private async scrollToOutlineEntry(entry: OutlineEntry): Promise<void> {
+    if (this.vm.editMode) {
+      await this.vm.saveDraft();
+      setTimeout((): void => {
+        this.docController.scrollToBlock(entry.ordinal);
+      }, 360);
+    } else {
+      this.docController.scrollToBlock(entry.ordinal);
+    }
+  }
+
+  /** 新建仓库对话框。 */
   @Builder
   createPanel() {
     Stack() {
@@ -401,57 +1374,312 @@ struct Index {
       }
       .width('100%')
       .height('100%')
-      .backgroundColor(Color.Black)
-      .opacity(0.4)
+      .backgroundColor($r('app.color.hm_mask'))
+      .backgroundBlurStyle(BlurStyle.Thin)
+      .transition(TransitionEffect.opacity(0)
+        .animation({ duration: 220, curve: Curve.Friction }))
       .onClick(() => {
-        this.showCreatePanel = false;
+        this.animAssign((): void => {
+          this.showCreatePanel = false;
+        });
       })
 
       Column() {
         Text($r('app.string.dialog_vault_name'))
-          .fontSize(16)
+          .fontSize(18)
           .fontWeight(FontWeight.Medium)
-          .margin({ bottom: 12 })
+          .fontColor($r('app.color.hm_text_primary'))
+          .width('100%')
+          .margin({ bottom: 16 })
         TextInput({
           placeholder: $r('app.string.dialog_vault_name'),
           text: this.newVaultName
         })
+          .width('100%')
+          .height(44)
+          .fontSize(16)
+          .padding({ left: 14, right: 14 })
+          .borderRadius(12)
+          .backgroundColor($r('app.color.hm_input_bg'))
+          .placeholderColor($r('app.color.hm_text_secondary'))
+          .fontColor($r('app.color.hm_text_primary'))
+          .caretColor($r('app.color.hm_accent'))
           .onChange((value: string) => {
             this.newVaultName = value;
           })
-          .margin({ bottom: 16 })
+          .margin({ bottom: 20 })
         Row() {
           Button($r('app.string.dialog_cancel'))
-            .type(ButtonType.Normal)
-            .margin({ right: 8 })
+            .type(ButtonType.Capsule)
+            .height(40)
+            .fontSize(16)
+            .backgroundColor($r('app.color.hm_hover_bg'))
+            .fontColor($r('app.color.hm_text_primary'))
+            .layoutWeight(1)
+            .margin({ right: 12 })
             .onClick(() => {
-              this.showCreatePanel = false;
+              this.animAssign((): void => {
+                this.showCreatePanel = false;
+              });
             })
           Button($r('app.string.dialog_confirm'))
-            .type(ButtonType.Normal)
+            .type(ButtonType.Capsule)
+            .height(40)
+            .fontSize(16)
+            .backgroundColor($r('app.color.hm_accent'))
+            .fontColor(Color.White)
+            .layoutWeight(1)
             .onClick(() => {
-              this.showCreatePanel = false;
+              this.animAssign((): void => {
+                this.showCreatePanel = false;
+              });
               this.createVault();
             })
         }
+        .width('100%')
       }
-      .width('80%')
-      .padding(20)
-      .borderRadius(12)
-      .backgroundColor($r('sys.color.ohos_id_color_background'))
+      .width('76%')
+      .padding(24)
+      .borderRadius(24)
+      .backgroundColor($r('app.color.hm_card_bg'))
+      .transition(TransitionEffect.scale({ x: 0.9, y: 0.9 })
+        .combine(TransitionEffect.opacity(0))
+        .animation({ duration: 220, curve: Curve.Friction }))
     }
     .width('100%')
     .height('100%')
   }
 
+  private loadWindowInsets(): void {
+    const context = this.getUIContext().getHostContext();
+    if (context === undefined) {
+      return;
+    }
+    window.getLastWindow(context).then((win: window.Window) => {
+      const system = win.getWindowAvoidArea(window.AvoidAreaType.TYPE_SYSTEM);
+      const nav = win.getWindowAvoidArea(window.AvoidAreaType.TYPE_NAVIGATION_INDICATOR);
+      this.topInset = this.getUIContext().px2vp(system.topRect.height);
+      this.bottomInset = this.getUIContext().px2vp(nav.bottomRect.height);
+    }).catch((error: BusinessError) => {
+      LOG.error(`get window insets failed, code=${error.code}, message=${error.message}`);
+    });
+  }
+
+  private openNoteFrom(path: string): void {
+    this.vm.openNote(path);
+    this.animAssign((): void => {
+      this.showInfo = false;
+      if (!this.isWide) {
+        this.showSideBar = false;
+      }
+    });
+  }
+
+  private openVault(vault: VaultInfo): void {
+    this.vm.selectVault(vault);
+    this.currentTab = 0;
+    if (!this.isWide) {
+      this.tabsController.changeIndex(0);
+    }
+    this.animAssign((): void => {
+      this.showVaults = false;
+    });
+  }
+
+  private createNote(): void {
+    this.vm.createNote().then((): void => {
+      this.syncNowIfAuto();
+    });
+  }
+
+  /** 自动同步开启时立即触发一次同步（保存 / 新建后调用）。 */
+  private syncNowIfAuto(): void {
+    if (!this.syncVm.autoSync || this.syncVm.serverUrl.length === 0) {
+      return;
+    }
+    this.syncVm.runSync(this.vm.currentVault);
+  }
+
+  /** 依据自动同步开关重建周期同步定时器。 */
+  private restartAutoSyncTimer(): void {
+    this.stopAutoSyncTimer();
+    if (!this.syncVm.autoSync || this.syncVm.serverUrl.length === 0) {
+      return;
+    }
+    this.autoSyncTimer = setInterval((): void => {
+      this.syncNowIfAuto();
+    }, Index.AUTO_SYNC_INTERVAL_MS);
+  }
+
+  private stopAutoSyncTimer(): void {
+    if (this.autoSyncTimer >= 0) {
+      clearInterval(this.autoSyncTimer);
+      this.autoSyncTimer = -1;
+    }
+  }
+
   private openSearch(): void {
-    this.showSearch = true;
+    this.animAssign((): void => {
+      this.showSearch = true;
+    });
     this.searchVm.search(this.vm.currentVault.id, '');
   }
 
+  /** 点击标签：以标签模式打开搜索并直接展示该标签的笔记。 */
+  private openTagSearch(tag: string): void {
+    this.animAssign((): void => {
+      this.showSearch = true;
+    });
+    this.searchVm.setMode(this.vm.currentVault.id, 1).then((): void => {
+      this.searchVm.selectTag(this.vm.currentVault.id, tag);
+    });
+  }
+
+  /** 系统返回：依次关闭浮层 → 返回上一笔记 → 窄屏唤出目录 → 默认退出。 */
+  onBackPress(): boolean {
+    if (this.showSearch) {
+      this.animAssign((): void => {
+        this.showSearch = false;
+      });
+      return true;
+    }
+    if (this.showQuick) {
+      this.animAssign((): void => {
+        this.showQuick = false;
+      });
+      return true;
+    }
+    if (this.showRecent) {
+      this.animAssign((): void => {
+        this.showRecent = false;
+      });
+      return true;
+    }
+    if (this.showCommands) {
+      this.animAssign((): void => {
+        this.showCommands = false;
+      });
+      return true;
+    }
+    if (this.showSync) {
+      this.animAssign((): void => {
+        this.showSync = false;
+      });
+      return true;
+    }
+    if (this.showVaults) {
+      this.animAssign((): void => {
+        this.showVaults = false;
+      });
+      return true;
+    }
+    if (this.showCreatePanel) {
+      this.animAssign((): void => {
+        this.showCreatePanel = false;
+      });
+      return true;
+    }
+    if (this.isWide && this.showRightPanel && !this.fixedPanelEnabled()) {
+      this.animAssign((): void => {
+        this.showRightPanel = false;
+      });
+      return true;
+    }
+    if (this.vm.editMode) {
+      this.vm.cancelEdit();
+      return true;
+    }
+    if (!this.isWide && this.showInfo) {
+      this.animAssign((): void => {
+        this.showInfo = false;
+      });
+      return true;
+    }
+    if (!this.isWide && this.showSideBar) {
+      this.animAssign((): void => {
+        this.showSideBar = false;
+      });
+      return true;
+    }
+    if (this.vm.canGoBackNote()) {
+      this.vm.goBackNote();
+      return true;
+    }
+    if (!this.isWide && this.vm.selectedPath.length > 0 && !this.showSideBar) {
+      this.animAssign((): void => {
+        this.showSideBar = true;
+      });
+      return true;
+    }
+    return false;
+  }
+
   private openQuickSwitcher(): void {
-    this.showQuick = true;
+    this.animAssign((): void => {
+      this.showQuick = true;
+    });
     this.searchVm.loadNotes(this.vm.currentVault.id);
+  }
+
+  /** 迷你栏：返回上一封笔记。 */
+  private goBackFromBar(): void {
+    if (!this.vm.canGoBack) {
+      return;
+    }
+    this.vm.goBackNote();
+  }
+
+  /** 迷你栏：打开最近访问选择器。 */
+  private openRecentPicker(): void {
+    this.switchToNotesTab();
+    this.vm.loadRecentNotes();
+    this.animAssign((): void => {
+      this.showRecent = true;
+    });
+  }
+
+  /** 迷你栏：打开今天的日记（不存在则新建）。 */
+  private openDailyFromBar(): void {
+    this.switchToNotesTab();
+    this.vm.openDailyNote().then((): void => {
+      this.syncNowIfAuto();
+    });
+  }
+
+  /** 切回笔记页签并联动 HdsTabs。 */
+  private switchToNotesTab(): void {
+    if (this.currentTab === 0) {
+      return;
+    }
+    this.currentTab = 0;
+    if (!this.isWide) {
+      this.tabsController.changeIndex(0);
+    }
+  }
+
+  private reindexVault(): void {
+    this.vm.rescanVault();
+    promptAction.showToast({ message: $r('app.string.msg_reindex_done') });
+  }
+
+  private confirmDeleteVault(vault: VaultInfo): void {
+    AlertDialog.show({
+      title: $r('app.string.dialog_delete_vault_title'),
+      message: $r('app.string.dialog_delete_vault_msg'),
+      primaryButton: {
+        value: $r('app.string.dialog_cancel'),
+        action: (): void => {
+        }
+      },
+      secondaryButton: {
+        value: $r('app.string.vault_card_delete'),
+        fontColor: $r('app.color.hm_danger'),
+        action: (): void => {
+          this.deleteVault(vault);
+        }
+      },
+      alignment: DialogAlignment.Bottom
+    });
   }
 
   private buildCommands(): AppCommand[] {
@@ -472,11 +1700,35 @@ struct Index {
     };
     commands.push(quick);
 
+    const newNote: AppCommand = new AppCommand();
+    newNote.id = 'new_note';
+    newNote.title = '新建笔记';
+    newNote.action = (): void => {
+      this.createNote();
+    };
+    commands.push(newNote);
+
+    const recentNote: AppCommand = new AppCommand();
+    recentNote.id = 'open_recent_note';
+    recentNote.title = '最近访问的笔记';
+    recentNote.action = (): void => {
+      this.openRecentPicker();
+    };
+    commands.push(recentNote);
+
+    const dailyNote: AppCommand = new AppCommand();
+    dailyNote.id = 'open_daily_note';
+    dailyNote.title = '打开今天的日记';
+    dailyNote.action = (): void => {
+      this.openDailyFromBar();
+    };
+    commands.push(dailyNote);
+
     const exportCommand: AppCommand = new AppCommand();
     exportCommand.id = 'export';
     exportCommand.title = '导出仓库为 zip';
     exportCommand.action = (): void => {
-      this.exportVault();
+      this.exportVault(this.vm.currentVault);
     };
     commands.push(exportCommand);
 
@@ -484,7 +1736,7 @@ struct Index {
     reindex.id = 'reindex';
     reindex.title = '重建索引';
     reindex.action = (): void => {
-      this.vm.rescanVault();
+      this.reindexVault();
     };
     commands.push(reindex);
 
@@ -520,12 +1772,13 @@ struct Index {
       }
       await this.vm.importVault(uris[0], 'imported');
     } catch (error) {
-      LOG.error('import vault failed');
+      const err = error as BusinessError;
+      LOG.error(`import vault failed, code=${err.code}, message=${err.message}`);
       promptAction.showToast({ message: $r('app.string.msg_import_failed') });
     }
   }
 
-  private async exportVault(): Promise<void> {
+  private async exportVault(vault: VaultInfo): Promise<void> {
     const context = this.getUIContext().getHostContext();
     if (context === undefined) {
       return;
@@ -533,15 +1786,50 @@ struct Index {
     try {
       const documentPicker = new picker.DocumentViewPicker(context);
       const options = new picker.DocumentSaveOptions();
-      options.newFileNames = [`${this.vm.currentVault.name}.zip`];
+      options.newFileNames = [`${vault.name}.zip`];
       const uris: string[] = await documentPicker.save(options);
       if (uris.length === 0) {
         return;
       }
-      await this.vm.exportVault(uris[0]);
+      await this.vm.exportVault(vault, uris[0]);
     } catch (error) {
-      LOG.error('export vault failed');
+      const err = error as BusinessError;
+      LOG.error(`export vault failed, code=${err.code}, message=${err.message}`);
       promptAction.showToast({ message: $r('app.string.msg_export_failed') });
+    }
+  }
+
+  private async deleteVault(vault: VaultInfo): Promise<void> {
+    try {
+      await this.vm.deleteVault(vault);
+    } catch (error) {
+      const err = error as BusinessError;
+      LOG.error(`delete vault failed, code=${err.code}, message=${err.message}`);
+      promptAction.showToast({ message: $r('app.string.msg_delete_failed') });
+    }
+  }
+
+  private async pickCertFile(): Promise<void> {
+    const context = this.getUIContext().getHostContext();
+    if (context === undefined) {
+      return;
+    }
+    try {
+      const documentPicker = new picker.DocumentViewPicker(context);
+      const options = new picker.DocumentSelectOptions();
+      options.maxSelectNumber = 1;
+      options.fileSuffixFilters = ['.pem', '.crt', '.cer'];
+      const uris: string[] = await documentPicker.select(options);
+      if (uris.length === 0) {
+        return;
+      }
+      const ok: boolean = await this.syncVm.importCert(uris[0]);
+      if (!ok) {
+        promptAction.showToast({ message: $r('app.string.msg_cert_import_failed') });
+      }
+    } catch (error) {
+      const err = error as BusinessError;
+      LOG.error(`pick cert failed, code=${err.code}, message=${err.message}`);
     }
   }
 
@@ -549,7 +1837,8 @@ struct Index {
     try {
       await this.vm.createVault(this.newVaultName);
     } catch (error) {
-      LOG.error('create vault failed');
+      const err = error as BusinessError;
+      LOG.error(`create vault failed, code=${err.code}, message=${err.message}`);
       promptAction.showToast({ message: $r('app.string.msg_create_failed') });
     }
   }

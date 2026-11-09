@@ -49,7 +49,7 @@ export class WebDavProvider implements SyncProvider {
       return [];
     }
     if (response.responseCode !== 200) {
-      throw new Error(`webdav list failed with code ${response.responseCode}`);
+      throw new Error(WebDavProvider.describeCode(response.responseCode, 'webdav list'));
     }
     const payload: string | Object | ArrayBuffer = response.result;
     if (typeof payload !== 'string') {
@@ -59,11 +59,11 @@ export class WebDavProvider implements SyncProvider {
   }
 
   public async pull(entry: RemoteEntry, destPath: string): Promise<void> {
-    const url: string = `${this.baseUrl}/${entry.path}`;
+    const url: string = `${this.baseUrl}/${WebDavProvider.encodePath(entry.path)}`;
     const response: http.HttpResponse = await this.request(url, http.RequestMethod.GET,
       http.HttpDataType.STRING);
     if (response.responseCode !== 200) {
-      throw new Error(`webdav pull failed with code ${response.responseCode}`);
+      throw new Error(WebDavProvider.describeCode(response.responseCode, 'webdav pull'));
     }
     const payload: string | Object | ArrayBuffer = response.result;
     if (typeof payload !== 'string') {
@@ -73,12 +73,15 @@ export class WebDavProvider implements SyncProvider {
   }
 
   public async push(localPath: string, entry: RemoteEntry): Promise<void> {
-    const url: string = `${this.baseUrl}/${entry.path}`;
+    const url: string = `${this.baseUrl}/${WebDavProvider.encodePath(entry.path)}`;
     const content: string = WebDavProvider.readText(localPath);
     const response: http.HttpResponse = await this.request(url, http.RequestMethod.PUT,
       http.HttpDataType.STRING, content);
+    if (response.responseCode === 409) {
+      throw new Error(`远端目录不存在(409)，请先在 WebDAV 服务端创建目录: ${this.baseUrl}`);
+    }
     if (response.responseCode < 200 || response.responseCode >= 300) {
-      throw new Error(`webdav push failed with code ${response.responseCode}`);
+      throw new Error(WebDavProvider.describeCode(response.responseCode, 'webdav push'));
     }
   }
 
@@ -109,8 +112,11 @@ export class WebDavProvider implements SyncProvider {
     const url: string = `${this.baseUrl}/${WebDavProvider.MANIFEST}`;
     const response: http.HttpResponse = await this.request(url, http.RequestMethod.PUT,
       http.HttpDataType.STRING, body);
+    if (response.responseCode === 409) {
+      throw new Error(`远端目录不存在(409)，请先在 WebDAV 服务端创建目录: ${this.baseUrl}`);
+    }
     if (response.responseCode < 200 || response.responseCode >= 300) {
-      throw new Error(`webdav manifest write failed with code ${response.responseCode}`);
+      throw new Error(WebDavProvider.describeCode(response.responseCode, 'webdav manifest write'));
     }
   }
 
@@ -134,10 +140,32 @@ export class WebDavProvider implements SyncProvider {
       readTimeout: 30000,
       connectTimeout: 15000
     };
+    if (this.config.skipCertVerify) {
+      options.remoteValidation = 'skip';
+    } else if (this.config.caCertPath.length > 0) {
+      options.caPath = this.config.caCertPath;
+    }
     if (body !== undefined) {
       options.extraData = body;
     }
     return await request.request(url, options);
+  }
+
+  /** 将 HTTP 状态码翻译为带排查建议的中文提示。 */
+  private static describeCode(code: number, action: string): string {
+    if (code === 400) {
+      return `服务器拒绝请求(400)：若使用明文 http://，请确认端口没有指向 HTTPS 服务（nginx 会返回 400）`;
+    }
+    if (code === 401) {
+      return `认证失败(401)，请检查 WebDAV 用户名与密码`;
+    }
+    if (code === 403) {
+      return `无权限(403)，该账号可能没有此目录的读写权限`;
+    }
+    if (code === 405) {
+      return `方法不被允许(405)，服务端可能不支持 ${action}`;
+    }
+    return `${action} failed with code ${code}`;
   }
 
   private buildHeaders(): Object {
@@ -154,15 +182,35 @@ export class WebDavProvider implements SyncProvider {
   }
 
   private static buildBaseUrl(serverUrl: string, remoteRoot: string): string {
-    let base: string = serverUrl.trim();
-    while (base.endsWith('/')) {
-      base = base.substring(0, base.length - 1);
+    const base: string = serverUrl.replace(/\s+/g, '');
+    if (base.length === 0) {
+      throw new Error('服务器地址为空：请填写以 http:// 或 https:// 开头的完整地址');
+    }
+    let trimmed: string = base;
+    while (trimmed.endsWith('/')) {
+      trimmed = trimmed.substring(0, trimmed.length - 1);
+    }
+    if (!trimmed.startsWith('http://') && !trimmed.startsWith('https://')) {
+      throw new Error(`服务器地址无效：请以 http:// 或 https:// 开头，` +
+        `如 https://dav.jianguoyun.com/dav（当前填写 "${serverUrl.trim()}"）`);
     }
     const root: string = remoteRoot.trim();
     if (root.length === 0) {
-      return base;
+      return trimmed;
     }
-    return `${base}/${root}`;
+    return `${trimmed}/${WebDavProvider.encodePath(root)}`;
+  }
+
+  /** 按路径段做 URL 编码，支持中文/空格文件名。 */
+  private static encodePath(path: string): string {
+    const segments: string[] = path.split('/');
+    const encoded: string[] = [];
+    for (const segment of segments) {
+      if (segment.length > 0) {
+        encoded.push(encodeURIComponent(segment));
+      }
+    }
+    return encoded.join('/');
   }
 
   private static parseManifest(payload: string): RemoteEntry[] {

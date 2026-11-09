@@ -1,5 +1,6 @@
 import { fileIo, hash } from '@kit.CoreFileKit';
 import { common } from '@kit.AbilityKit';
+import { BusinessError } from '@kit.BasicServicesKit';
 import { RemoteEntry, SyncConfig, SyncConflict, SyncProvider, SyncState, SyncStatus, VaultInfo }
   from '@ohos/domain';
 import { Logger } from '@ohos/common';
@@ -42,6 +43,7 @@ export class SyncEngine {
       const remoteEntries: RemoteEntry[] = await provider.list('');
       const localEntries: RemoteEntry[] = await this.collectLocalEntries(vault);
       const baselines: Map<string, string> = await SyncStateDao.baselines(context);
+      LOG.info(`sync plan: local=${localEntries.length}, remote=${remoteEntries.length}`);
 
       const remoteMap: Map<string, RemoteEntry> = new Map<string, RemoteEntry>();
       for (const entry of remoteEntries) {
@@ -55,6 +57,7 @@ export class SyncEngine {
       for (const local of localEntries) {
         const remote: RemoteEntry | undefined = remoteMap.get(local.path);
         if (remote === undefined) {
+          LOG.info(`sync push (new): ${local.path}`);
           await this.pushEntry(provider, vault, local);
           this.status.pendingUploads++;
           continue;
@@ -64,20 +67,24 @@ export class SyncEngine {
         }
         const baseline: string | undefined = baselines.get(local.path);
         if (baseline !== undefined && baseline === remote.etag) {
+          LOG.info(`sync push (local changed): ${local.path}`);
           await this.pushEntry(provider, vault, local);
           this.status.pendingUploads++;
           continue;
         }
         if (baseline !== undefined && baseline === local.etag) {
+          LOG.info(`sync pull (remote changed): ${remote.path}`);
           await this.pullEntry(provider, vault, remote);
           this.status.pendingDownloads++;
           continue;
         }
+        LOG.info(`sync conflict: ${local.path}`);
         await this.resolveConflict(provider, vault, local, remote);
       }
 
       for (const remote of remoteEntries) {
         if (!localMap.has(remote.path)) {
+          LOG.info(`sync pull (remote new): ${remote.path}`);
           await this.pullEntry(provider, vault, remote);
           this.status.pendingDownloads++;
         }
@@ -95,9 +102,11 @@ export class SyncEngine {
       LOG.info(`sync finished, uploads=${this.status.pendingUploads}, ` +
         `downloads=${this.status.pendingDownloads}, conflicts=${this.conflicts.length}`);
     } catch (error) {
+      const err = error as BusinessError;
+      const code: string = err.code === undefined ? '' : ` (${err.code})`;
       this.status.state = SyncState.FAILED;
-      this.status.message = 'failed';
-      LOG.error('sync failed');
+      this.status.message = `${err.message}${code}`;
+      LOG.error(`sync failed, code=${err.code}, message=${err.message}`);
     } finally {
       await provider.disconnect();
       this.provider = null;

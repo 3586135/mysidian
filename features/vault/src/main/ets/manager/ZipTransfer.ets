@@ -1,5 +1,5 @@
 import { fileIo } from '@kit.CoreFileKit';
-import { zlib } from '@kit.BasicServicesKit';
+import { zlib, BusinessError } from '@kit.BasicServicesKit';
 import { common } from '@kit.AbilityKit';
 import { Logger } from '@ohos/common';
 
@@ -22,10 +22,27 @@ export class ZipTransfer {
   public static async importZip(context: common.Context, uri: string,
     destDir: string): Promise<void> {
     const cacheFile: string = `${context.cacheDir}/import_${Date.now()}.zip`;
-    ZipTransfer.copyUriToFile(uri, cacheFile);
     try {
-      await zlib.decompressFile(cacheFile, destDir, ZipTransfer.OPTIONS);
-      LOG.info(`imported vault archive to ${destDir}`);
+      let copiedSize = 0;
+      try {
+        copiedSize = ZipTransfer.copyUriToFile(uri, cacheFile);
+      } catch (error) {
+        const err = error as BusinessError;
+        LOG.error(`copy zip from uri failed, code=${err.code}, message=${err.message}, uri=${uri}`);
+        throw new Error(`copy zip failed, code=${err.code}, message=${err.message}`);
+      }
+      LOG.info(`picked archive copied, uri=${uri}, file=${cacheFile}, size=${copiedSize}`);
+      if (copiedSize <= 0) {
+        throw new Error(`picked archive is empty, uri=${uri}`);
+      }
+      try {
+        await zlib.decompressFile(cacheFile, destDir, ZipTransfer.OPTIONS);
+        LOG.info(`imported vault archive to ${destDir}`);
+      } catch (error) {
+        const err = error as BusinessError;
+        LOG.error(`decompress zip failed, code=${err.code}, message=${err.message}, file=${cacheFile}, size=${copiedSize}`);
+        throw new Error(`decompress zip failed, code=${err.code}, message=${err.message}`);
+      }
     } finally {
       if (fileIo.accessSync(cacheFile)) {
         fileIo.unlinkSync(cacheFile);
@@ -50,14 +67,20 @@ export class ZipTransfer {
     }
   }
 
-  /** 把 uri 指向的文件复制到沙箱文件。 */
-  public static copyUriToFile(uri: string, destPath: string): void {
+  /** 把 uri 指向的文件复制到沙箱文件，返回复制后的文件大小（字节）。 */
+  public static copyUriToFile(uri: string, destPath: string): number {
     const source = fileIo.openSync(uri, fileIo.OpenMode.READ_ONLY);
+    let dest: fileIo.File | undefined = undefined;
     try {
-      fileIo.copyFile(source.fd, destPath);
+      dest = fileIo.openSync(destPath, fileIo.OpenMode.WRITE_ONLY | fileIo.OpenMode.CREATE);
+      fileIo.copyFileSync(source.fd, dest.fd);
     } finally {
       fileIo.closeSync(source);
+      if (dest !== undefined) {
+        fileIo.closeSync(dest);
+      }
     }
+    return fileIo.statSync(destPath).size;
   }
 
   /** 把沙箱文件内容写入 uri 指向的文件。 */

@@ -1,5 +1,6 @@
 import { fileIo, hash } from '@kit.CoreFileKit';
 import { common } from '@kit.AbilityKit';
+import { BusinessError } from '@kit.BasicServicesKit';
 import { FileNode, NoteRow, VaultInfo } from '@ohos/domain';
 import { Logger } from '@ohos/common';
 import { DbHelper } from '../db/DbHelper';
@@ -83,8 +84,10 @@ export class VaultManager {
       LOG.info(`imported vault ${info.name} from archive`);
       return info;
     } catch (error) {
+      const err = error as BusinessError;
+      LOG.error(`import vault failed, code=${err.code}, message=${err.message}, root=${root}`);
       this.removeDirectory(root);
-      throw new Error('vault import failed');
+      throw new Error(`vault import failed, code=${err.code}, message=${err.message}`);
     }
   }
 

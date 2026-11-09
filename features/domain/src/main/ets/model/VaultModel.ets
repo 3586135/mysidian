@@ -91,6 +91,10 @@ export class SearchQuery {
   path: string = '';
   /** tag: 标签过滤 */
   tag: string = '';
+  /** 属性名过滤（LIKE，空串代表不过滤） */
+  propKey: string = '';
+  /** 属性值过滤（LIKE，空串代表不过滤） */
+  propValue: string = '';
   /** 检索范围：content / title / path */
   scope: string = 'content';
   limit: number = 50;

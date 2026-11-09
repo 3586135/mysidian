@@ -26,6 +26,10 @@ export class SyncConfig {
   password: string = '';
   /** 远端根目录（相对服务器） */
   remoteRoot: string = 'mysidian';
+  /** 自定义 CA 证书路径（PEM），用于自签名服务器 */
+  caCertPath: string = '';
+  /** 跳过 HTTPS 证书校验（不安全，仅自用服务器建议开启） */
+  skipCertVerify: boolean = false;
   autoSync: boolean = false;
   intervalMinutes: number = 30;
   wifiOnly: boolean = true;

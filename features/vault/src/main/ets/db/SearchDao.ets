@@ -13,21 +13,22 @@ export class SearchDao {
   public static async search(context: common.Context, vaultId: number,
     query: SearchQuery): Promise<SearchHit[]> {
     const keyword: string = query.text.trim();
-    if (keyword.length === 0 && query.tag.length === 0) {
+    if (keyword.length === 0 && query.tag.length === 0 &&
+      query.propKey.length === 0 && query.propValue.length === 0) {
       return [];
     }
+    let hits: SearchHit[] = [];
     if (DbHelper.isFtsReady()) {
-      const hits: SearchHit[] = await SearchDao.searchByFts(vaultId, query);
-      if (hits.length > 0) {
+      hits = await SearchDao.searchByFts(vaultId, query);
+      if (hits.length > 0 || keyword.length === 0) {
         await SearchDao.fillSnippets(vaultId, hits, keyword);
-        return hits;
-      }
-      if (keyword.length === 0) {
+        await SearchDao.fillPropSnippets(hits, query);
         return hits;
       }
     }
     const fallback: SearchHit[] = await SearchDao.searchByLike(vaultId, query);
     await SearchDao.fillSnippets(vaultId, fallback, keyword);
+    await SearchDao.fillPropSnippets(fallback, query);
     return fallback;
   }
 
@@ -52,6 +53,7 @@ export class SearchDao {
       sql += 'AND n.id IN (SELECT note_id FROM tag WHERE tag = ?) ';
       args.push(query.tag);
     }
+    sql = SearchDao.appendPropFilter(sql, args, query, 'n');
     sql += 'ORDER BY n.mtime DESC LIMIT ?';
     args.push(query.limit);
     const result = await store.querySql(sql, args);
@@ -88,6 +90,7 @@ export class SearchDao {
       sql += 'AND id IN (SELECT note_id FROM tag WHERE tag = ?) ';
       args.push(query.tag);
     }
+    sql = SearchDao.appendPropFilter(sql, args, query, '');
     sql += 'ORDER BY mtime DESC LIMIT ?';
     args.push(query.limit);
     const result = await store.querySql(sql, args);
@@ -106,6 +109,19 @@ export class SearchDao {
     return hits;
   }
 
+  /** 拼接属性（frontmatter）过滤子句，返回新的 SQL。noteAlias 为笔记表别名或空串。 */
+  private static appendPropFilter(sql: string, args: Array<relationalStore.ValueType>,
+    query: SearchQuery, noteAlias: string): string {
+    let result: string = sql;
+    if (query.propKey.length > 0 || query.propValue.length > 0) {
+      const idColumn: string = noteAlias.length > 0 ? `${noteAlias}.id` : 'id';
+      result += `AND ${idColumn} IN (SELECT note_id FROM prop WHERE prop_key LIKE ? AND prop_value LIKE ?) `;
+      args.push(`%${query.propKey}%`);
+      args.push(`%${query.propValue}%`);
+    }
+    return result;
+  }
+
   /** 用块索引补齐命中片段。 */
   private static async fillSnippets(vaultId: number, hits: SearchHit[], keyword: string): Promise<void> {
     if (keyword.length === 0) {
@@ -118,6 +134,28 @@ export class SearchDao {
         'SELECT block_text FROM block WHERE note_id = ? AND block_text LIKE ? LIMIT 1', args);
       if (result.goToFirstRow()) {
         hit.snippet = result.getString(0);
+      }
+      result.close();
+    }
+  }
+
+  /** 属性过滤时，用命中的属性行补齐片段。 */
+  private static async fillPropSnippets(hits: SearchHit[], query: SearchQuery): Promise<void> {
+    if (query.propKey.length === 0 && query.propValue.length === 0) {
+      return;
+    }
+    const store = await DbHelper.getStore();
+    for (const hit of hits) {
+      if (hit.snippet.length > 0) {
+        continue;
+      }
+      const args: Array<relationalStore.ValueType> =
+        [hit.noteId, `%${query.propKey}%`, `%${query.propValue}%`];
+      const result = await store.querySql(
+        'SELECT prop_key, prop_value FROM prop WHERE note_id = ? AND prop_key LIKE ? ' +
+        'AND prop_value LIKE ? LIMIT 1', args);
+      if (result.goToFirstRow()) {
+        hit.snippet = `${result.getString(0)}: ${result.getString(1)}`;
       }
       result.close();
     }

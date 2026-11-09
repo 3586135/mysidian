@@ -1,4 +1,5 @@
 import { common } from '@kit.AbilityKit';
+import { fileIo } from '@kit.CoreFileKit';
 import { preferences } from '@kit.ArkData';
 import { SyncConflict, SyncConfig, SyncState, SyncStatus, VaultInfo } from '@ohos/domain';
 import { Logger } from '@ohos/common';
@@ -15,6 +16,8 @@ export class SyncViewModel {
   @Trace username: string = '';
   @Trace password: string = '';
   @Trace remoteRoot: string = 'mysidian';
+  @Trace caCertPath: string = '';
+  @Trace skipCertVerify: boolean = false;
   @Trace autoSync: boolean = false;
   @Trace configured: boolean = false;
   @Trace status: SyncStatus = new SyncStatus();
@@ -22,6 +25,7 @@ export class SyncViewModel {
 
   private context: common.Context | null = null;
   private readonly engine: SyncEngine = new SyncEngine();
+  private syncing: boolean = false;
   private static readonly STORE: string = 'mysidian_sync';
 
   /** 初始化并读取已保存的配置。 */
@@ -43,6 +47,8 @@ export class SyncViewModel {
       const user: preferences.ValueType = await store.get('username', '');
       const pass: preferences.ValueType = await store.get('password', '');
       const root: preferences.ValueType = await store.get('remoteRoot', 'mysidian');
+      const cert: preferences.ValueType = await store.get('caCertPath', '');
+      const skipCert: preferences.ValueType = await store.get('skipCertVerify', false);
       const auto: preferences.ValueType = await store.get('autoSync', false);
       if (typeof url === 'string') {
         this.serverUrl = url;
@@ -55,6 +61,12 @@ export class SyncViewModel {
       }
       if (typeof root === 'string') {
         this.remoteRoot = root;
+      }
+      if (typeof cert === 'string') {
+        this.caCertPath = cert;
+      }
+      if (typeof skipCert === 'boolean') {
+        this.skipCertVerify = skipCert;
       }
       if (typeof auto === 'boolean') {
         this.autoSync = auto;
@@ -78,6 +90,8 @@ export class SyncViewModel {
       await store.put('username', this.username);
       await store.put('password', this.password);
       await store.put('remoteRoot', this.remoteRoot);
+      await store.put('caCertPath', this.caCertPath);
+      await store.put('skipCertVerify', this.skipCertVerify);
       await store.put('autoSync', this.autoSync);
       await store.flush();
       this.configured = this.serverUrl.length > 0;
@@ -86,21 +100,74 @@ export class SyncViewModel {
     }
   }
 
-  /** 执行一次同步。 */
+  /** 执行一次同步（并发保护：上一次未完成时忽略本次请求）。 */
   public async runSync(vault: VaultInfo): Promise<void> {
     const context: common.Context | null = this.context;
-    if (context === null) {
+    if (context === null || this.syncing || vault.rootPath.length === 0) {
       return;
     }
+    this.syncing = true;
+    try {
+      await this.save();
+      const config: SyncConfig = new SyncConfig();
+      config.serverUrl = this.serverUrl;
+      config.username = this.username;
+      config.password = this.password;
+      config.remoteRoot = this.remoteRoot;
+      config.caCertPath = this.caCertPath;
+      config.skipCertVerify = this.skipCertVerify;
+      config.autoSync = this.autoSync;
+      this.status = await this.engine.sync(vault, config, context);
+      this.conflicts = this.engine.getConflicts();
+    } finally {
+      this.syncing = false;
+    }
+  }
+
+  /** 从文件选择器 URI 导入 PEM 证书到应用沙箱。 */
+  public async importCert(uri: string): Promise<boolean> {
+    const context: common.Context | null = this.context;
+    if (context === null) {
+      return false;
+    }
+    const destPath: string = `${context.filesDir}/webdav-ca.pem`;
+    try {
+      const src = fileIo.openSync(uri, fileIo.OpenMode.READ_ONLY);
+      try {
+        const dest = fileIo.openSync(destPath,
+          fileIo.OpenMode.READ_WRITE | fileIo.OpenMode.CREATE | fileIo.OpenMode.TRUNC);
+        try {
+          fileIo.copyFileSync(src.fd, dest.fd);
+        } finally {
+          fileIo.closeSync(dest);
+        }
+      } finally {
+        fileIo.closeSync(src);
+      }
+      this.caCertPath = destPath;
+      await this.save();
+      return true;
+    } catch (error) {
+      LOG.error('import cert failed');
+      return false;
+    }
+  }
+
+  /** 移除已导入的自定义证书。 */
+  public async clearCert(): Promise<void> {
+    const context: common.Context | null = this.context;
+    if (context !== null) {
+      const certPath: string = `${context.filesDir}/webdav-ca.pem`;
+      try {
+        if (fileIo.accessSync(certPath)) {
+          fileIo.unlinkSync(certPath);
+        }
+      } catch (error) {
+        LOG.error('remove cert failed');
+      }
+    }
+    this.caCertPath = '';
     await this.save();
-    const config: SyncConfig = new SyncConfig();
-    config.serverUrl = this.serverUrl;
-    config.username = this.username;
-    config.password = this.password;
-    config.remoteRoot = this.remoteRoot;
-    config.autoSync = this.autoSync;
-    this.status = await this.engine.sync(vault, config, context);
-    this.conflicts = this.engine.getConflicts();
   }
 
   /** 状态展示文案。 */
@@ -115,7 +182,7 @@ export class SyncViewModel {
       return `conflict (${this.conflicts.length})`;
     }
     if (this.status.state === SyncState.FAILED) {
-      return 'failed';
+      return this.status.message.length > 0 ? `failed: ${this.status.message}` : 'failed';
     }
     return 'idle';
   }

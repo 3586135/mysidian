@@ -2,13 +2,15 @@ import { FlatFileNode } from '@ohos/domain';
 import { FileTreeDataSource } from './FileTreeDataSource';
 
 /**
- * 仓库文件树列表。父组件负责扁平化数据与展开状态，
- * 本组件只负责渲染与事件上报。
+ * 文件树列表。父组件负责扁平化数据与展开状态，
+ * 本组件只负责渲染与事件上报。图标使用鸿蒙 SymbolGlyph。
  */
 @ComponentV2
 export struct FileTreeView {
   @Param items: FlatFileNode[] = [];
   @Param selectedPath: string = '';
+  @Param selectedBgColor: ResourceColor = $r('sys.color.ohos_id_color_component_activated');
+  @Param selectedTextColor: ResourceColor = $r('sys.color.ohos_id_color_emphasize');
   @Event onSelect: (path: string, isDir: boolean) => void =
     (path: string, isDir: boolean): void => {};
   @Event onToggle: (path: string) => void = (path: string): void => {};
@@ -28,25 +30,45 @@ export struct FileTreeView {
       LazyForEach(this.dataSource, (item: FlatFileNode) => {
         ListItem() {
           Row() {
-            Text(item.expanded ? '▾' : '▸')
-              .fontSize(14)
-              .fontColor($r('sys.color.ohos_id_color_text_secondary'))
-              .width(16)
-            Text(item.node.name)
+            if (item.node.isDir) {
+              SymbolGlyph(item.expanded ? $r('sys.symbol.chevron_down') : $r('sys.symbol.chevron_right'))
+                .fontSize(14)
+                .fontColor([$r('sys.color.ohos_id_color_text_secondary')])
+                .width(16)
+                .onClick(() => {
+                  this.onToggle(item.node.path);
+                })
+              SymbolGlyph($r('sys.symbol.folder'))
+                .fontSize(16)
+                .fontColor([$r('sys.color.ohos_id_color_text_secondary')])
+                .width(18)
+                .margin({ left: 2 })
+            } else {
+              Row() {
+                SymbolGlyph($r('sys.symbol.doc_plaintext'))
+                  .fontSize(16)
+                  .fontColor([item.node.path === this.selectedPath ?
+                    this.selectedTextColor : $r('sys.color.ohos_id_color_text_secondary')])
+              }
+              .width(36)
+              .justifyContent(FlexAlign.End)
+              .margin({ right: 2 })
+            }
+            Text(this.displayName(item.node.name))
               .fontSize(15)
               .fontWeight(item.node.isDir ? FontWeight.Medium : FontWeight.Normal)
               .fontColor(item.node.path === this.selectedPath ?
-                $r('sys.color.ohos_id_color_emphasize') : $r('sys.color.ohos_id_color_text_primary'))
+                this.selectedTextColor : $r('sys.color.ohos_id_color_text_primary'))
               .maxLines(1)
               .textOverflow({ overflow: TextOverflow.Ellipsis })
               .layoutWeight(1)
           }
           .width('100%')
-          .height(40)
+          .height(38)
           .padding({ left: 8 + item.depth * 16, right: 8 })
-          .borderRadius(6)
+          .borderRadius(8)
           .backgroundColor(item.node.path === this.selectedPath ?
-            $r('sys.color.ohos_id_color_component_activated') : Color.Transparent)
+            this.selectedBgColor : Color.Transparent)
           .onClick(() => {
             if (item.node.isDir) {
               this.onToggle(item.node.path);
@@ -60,5 +82,13 @@ export struct FileTreeView {
     .width('100%')
     .height('100%')
     .scrollBar(BarState.Auto)
+    .padding({ left: 4, right: 4 })
+  }
+
+  private displayName(name: string): string {
+    if (name.length > 3 && name.substring(name.length - 3) === '.md') {
+      return name.substring(0, name.length - 3);
+    }
+    return name;
   }
 }

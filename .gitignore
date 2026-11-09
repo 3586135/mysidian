@@ -15,3 +15,6 @@
 **/BuildProfile.ets
 **/.preview
 /.bak
+/.design-ref
+/.tmp-icon
+/.tmp-verify

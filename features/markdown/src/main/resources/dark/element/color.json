@@ -1,0 +1,12 @@
+{
+  "color": [
+    {
+      "name": "md_danger",
+      "value": "#FF6B5E"
+    },
+    {
+      "name": "md_chip_bg",
+      "value": "#0FFFFFFF"
+    }
+  ]
+}

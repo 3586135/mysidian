@@ -70,12 +70,13 @@ export class FrontmatterParser {
       }
       frontmatter.properties.push(property);
       if (key.toLowerCase() === 'tags') {
-        if (property.type === MdPropType.LIST) {
-          for (const tag of property.listValue) {
-            frontmatter.tags.push(tag);
+        const sources: string[] = property.type === MdPropType.LIST
+          ? property.listValue
+          : (property.value.length > 0 ? [property.value] : []);
+        for (const source of sources) {
+          for (const token of FrontmatterParser.splitTagTokens(source)) {
+            FrontmatterParser.addNormalizedTag(frontmatter.tags, token);
           }
-        } else if (property.value.length > 0) {
-          frontmatter.tags.push(property.value);
         }
       }
       index++;
@@ -124,6 +125,29 @@ export class FrontmatterParser {
       }
     }
     return items;
+  }
+
+  /**
+   * 通用标签分词：一行（或列表项）中出现多个 # 即多个标签。
+   * 以空白、半角/全角逗号、# 为分界，兼容 `[a, b]`、`- #a`、`#a #b`、`#a#b`、`a, b` 等写法。
+   */
+  private static splitTagTokens(value: string): string[] {
+    const tokens: string[] = [];
+    for (const part of value.split(/[\s,，#]+/)) {
+      if (part.length > 0) {
+        tokens.push(part);
+      }
+    }
+    return tokens;
+  }
+
+  /** 归一化单个标签：去首部 # 与包裹引号，去重后压入。 */
+  private static addNormalizedTag(tags: string[], tag: string): void {
+    let normalized: string = tag.trim().replace(/^#/, '');
+    normalized = normalized.replace(/^["']+/, '').replace(/["']+$/, '');
+    if (normalized.length > 0 && !tags.includes(normalized)) {
+      tags.push(normalized);
+    }
   }
 
   private static detectType(value: string): MdPropType {

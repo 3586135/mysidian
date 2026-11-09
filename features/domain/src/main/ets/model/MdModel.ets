@@ -68,6 +68,22 @@ export class MdListItem {
   checked: boolean = false;
   inlines: MdInline[] = [];
   children: MdListItem[] = [];
+  /** 源文本行（任务勾选回写用）。 */
+  rawLine: string = '';
+  /** 任务开始日期 🛫（obsidian-tasks 兼容）。 */
+  startDate: string = '';
+  /** 任务计划日期 ⏳。 */
+  scheduledDate: string = '';
+  /** 任务截止日期 📅。 */
+  dueDate: string = '';
+  /** 任务完成日期 ✅。 */
+  doneDate: string = '';
+  /** 任务创建日期 ➕。 */
+  createdDate: string = '';
+  /** 任务重复规则 🔁。 */
+  recurrence: string = '';
+  /** 任务优先级（⏫ / 🔼 / 🔽）。 */
+  priority: string = '';
 }
 
 /** 块级节点。 */
@@ -125,6 +141,16 @@ export class MdInlineSegment {
   linkKind: string = '';
   /** 标签名（不含 #） */
   tag: string = '';
+}
+
+/** Dataview 查询结果任务（跨笔记聚合）。 */
+export class DataViewTask {
+  /** 来源笔记路径。 */
+  path: string = '';
+  /** 来源笔记显示名（不含扩展名）。 */
+  fileName: string = '';
+  /** 任务项。 */
+  item: MdListItem = new MdListItem();
 }
 
 /** 解析后的整篇文档。 */
