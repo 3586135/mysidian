@@ -12,6 +12,24 @@
 | 构建系统 | hvigor（DevEco Studio / devecocli） |
 | 语言 | ArkTS（严格模式），状态管理 V1 + V2 混用（按 struct 分代） |
 
+## 应用展示
+
+<p align="center">
+  <img src="doc/screenshots/phone-markdown-render.png" width="240" alt="Markdown 渲染" />
+  <img src="doc/screenshots/phone-code-table.png" width="240" alt="代码块与表格" />
+  <img src="doc/screenshots/phone-tasks.png" width="240" alt="任务管理" />
+</p>
+<p align="center">
+  <img src="doc/screenshots/phone-dataview.png" width="240" alt="Dataview 查询块" />
+  <img src="doc/screenshots/phone-editor.png" width="240" alt="源码编辑器" />
+  <img src="doc/screenshots/phone-search.png" width="240" alt="全文搜索" />
+</p>
+<p align="center">
+  <img src="doc/screenshots/phone-note-list.png" width="240" alt="笔记列表" />
+</p>
+
+> 截图来自内置示例仓库（虚构演示内容），设备为 Mate 90 Pro 模拟器（v0.1.1）。
+
 ## 模块结构
 
 ```
