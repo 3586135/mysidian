@@ -356,6 +356,14 @@ export class WebDavProvider implements SyncProvider {
     while (path.endsWith('/')) {
       path = path.substring(0, path.length - 1);
     }
+    // 路径穿越防护：任何路径段不得为 ".."/"."，防止异常/恶意
+    // 服务端响应让 pull 把文件写到 vault 沙箱之外。
+    const segments: string[] = path.split('/');
+    for (const seg of segments) {
+      if (seg === '..' || seg === '.') {
+        return null;
+      }
+    }
     return path;
   }
 
