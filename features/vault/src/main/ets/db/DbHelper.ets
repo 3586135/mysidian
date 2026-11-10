@@ -12,7 +12,7 @@ export class DbHelper {
   private static store: relationalStore.RdbStore | null = null;
   /** 平台 SQLite 是否支持 FTS5（不支持时搜索退化为 LIKE 扫描） */
   private static ftsReady: boolean = false;
-  private static readonly CURRENT_VERSION: number = 1;
+  private static readonly CURRENT_VERSION: number = 2;
 
   private static readonly SCHEMA_V1: string[] = [
     'CREATE TABLE IF NOT EXISTS vault (' +
@@ -38,7 +38,7 @@ export class DbHelper {
     'note_id INTEGER, prop_key TEXT, prop_value TEXT, vtype TEXT, PRIMARY KEY(note_id, prop_key))',
     'CREATE TABLE IF NOT EXISTS sync_state (' +
     'path TEXT PRIMARY KEY, file_hash TEXT, mtime INTEGER, remote_etag TEXT,' +
-    'last_sync_at INTEGER, state TEXT)'
+    'server_tag TEXT, last_sync_at INTEGER, state TEXT)'
   ];
 
   private static readonly FTS_V1: string =
@@ -77,8 +77,17 @@ export class DbHelper {
     if (version >= DbHelper.CURRENT_VERSION) {
       return;
     }
-    for (const sql of DbHelper.SCHEMA_V1) {
-      await store.executeSql(sql);
+    if (version < 1) {
+      for (const sql of DbHelper.SCHEMA_V1) {
+        await store.executeSql(sql);
+      }
+    }
+    if (version >= 1 && version < 2) {
+      // v2：sync_state 增加 server_tag 列（外部修改检测基线）。
+      // 基线是缓存性质数据，直接重建，下次同步自动回填。
+      await store.executeSql('DROP TABLE IF EXISTS sync_state');
+      await store.executeSql(DbHelper.SCHEMA_V1[DbHelper.SCHEMA_V1.length - 1]);
+      LOG.info('sync_state rebuilt for v2 (server_tag column)');
     }
     try {
       await store.executeSql(DbHelper.FTS_V1);

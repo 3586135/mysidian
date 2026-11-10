@@ -28,6 +28,9 @@ export class SyncViewModel {
   private syncing: boolean = false;
   private static readonly STORE: string = 'mysidian_sync';
 
+  /** 同步完成后回调（由界面层设置，用于重建索引与刷新文件树）。 */
+  public onSyncComplete: (() => void) | null = null;
+
   /** 初始化并读取已保存的配置。 */
   public async init(context: common.Context): Promise<void> {
     this.context = context;
@@ -119,6 +122,9 @@ export class SyncViewModel {
       config.autoSync = this.autoSync;
       this.status = await this.engine.sync(vault, config, context);
       this.conflicts = this.engine.getConflicts();
+      if (this.onSyncComplete !== null && this.status.pendingDownloads > 0) {
+        this.onSyncComplete();
+      }
     } finally {
       this.syncing = false;
     }

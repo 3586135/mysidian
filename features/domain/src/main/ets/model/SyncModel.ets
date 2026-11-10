@@ -46,6 +46,8 @@ export class RemoteEntry {
   mtime: number = 0;
   /** 远端 ETag / 校验值 */
   etag: string = '';
+  /** 服务器原生版本标识（PROPFIND etag 或 mtime~size），用于检测清单之外的外部修改 */
+  serverTag: string = '';
 }
 
 /** 同步状态。 */

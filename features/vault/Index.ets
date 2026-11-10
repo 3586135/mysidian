@@ -6,7 +6,7 @@ export { LinkDao } from './src/main/ets/db/LinkDao';
 export { TagDao } from './src/main/ets/db/TagDao';
 export { PropDao } from './src/main/ets/db/PropDao';
 export { SearchDao } from './src/main/ets/db/SearchDao';
-export { SyncStateDao } from './src/main/ets/db/SyncStateDao';
+export { SyncStateDao, SyncBaseline } from './src/main/ets/db/SyncStateDao';
 
 export { VaultManager } from './src/main/ets/manager/VaultManager';
 export { VaultPath } from './src/main/ets/manager/VaultPath';

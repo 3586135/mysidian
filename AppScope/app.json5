@@ -2,9 +2,9 @@
   "app": {
     "bundleName": "com.mrs.mysidian",
     "vendor": "example",
-    "versionCode": 1,
-    "versionName": "0.0.1",
-    "buildVersion": "1",
+    "versionCode": 1000002,
+    "versionName": "0.1.0",
+    "buildVersion": "2",
     "icon": "$media:layered_image",
     "label": "$string:app_name"
   }

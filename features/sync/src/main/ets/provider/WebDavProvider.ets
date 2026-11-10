@@ -1,6 +1,7 @@
 import { http } from '@kit.NetworkKit';
 import { fileIo } from '@kit.CoreFileKit';
 import { util } from '@kit.ArkTS';
+import { BusinessError } from '@kit.BasicServicesKit';
 import { RemoteEntry, SyncConfig, SyncProvider } from '@ohos/domain';
 import { Logger } from '@ohos/common';
 
@@ -20,42 +21,102 @@ class WebDavFileRaw {
   size?: number = 0;
 }
 
+/** PROPFIND 多状态响应中的单个条目解析结果。 */
+class PropfindItem {
+  href: string = '';
+  isDir: boolean = false;
+  size: number = 0;
+  mtime: string = '';
+  etag: string = '';
+}
+
+/** BFS 枚举队列元素：待枚举的远端目录。 */
+class PropfindQueueDir {
+  dir: string = '';
+  depth: number = 0;
+}
+
+/** 单个远端目录的 PROPFIND 枚举结果。 */
+class PropfindDirResult {
+  subDirs: string[] = [];
+  files: RemoteEntry[] = [];
+}
+
 /**
  * WebDAV 同步供应方。
  *
- * 平台的 http 模块不支持 PROPFIND / MKCOL 自定义方法，
- * 因此采用「清单文件 + GET/PUT」协议：
+ * 清单的读写走 @ohos.http；目录真实枚举（用于发现清单之外的新文件与外部修改）
+ * 通过 PROPFIND 实现：http.RequestMethod 枚举运行时即字符串，此处单点受控扩展
+ * PROPFIND 方法（模拟器上 rcp 手动 Authorization 头会被丢弃导致 401，故弃用 rcp）。
  * 远端目录保存 mysidian-manifest.json 记录文件清单与哈希，
  * 笔记文件按相对路径直接存放。绝大多数 WebDAV 服务端可直接工作。
  */
 export class WebDavProvider implements SyncProvider {
   private static readonly MANIFEST: string = 'mysidian-manifest.json';
+  private static readonly MAX_PROPFIND_DEPTH: number = 8;
+  private static readonly PROPFIND_CONCURRENCY: number = 1;
+  /** 受控单点扩展：http.RequestMethod 枚举运行时即字符串，WebDAV 标准 PROPFIND 方法。 */
+  private static readonly PROPFIND_METHOD: http.RequestMethod = 'PROPFIND' as http.RequestMethod;
+  private static readonly PROPFIND_BODY: string =
+    '<?xml version="1.0" encoding="utf-8"?>' +
+    '<d:propfind xmlns:d="DAV:">' +
+    '<d:prop><d:resourcetype/><d:getcontentlength/><d:getlastmodified/><d:getetag/></d:prop>' +
+    '</d:propfind>';
   private config: SyncConfig = new SyncConfig();
-  private httpRequest: http.HttpRequest | null = null;
   private baseUrl: string = '';
 
   public async connect(config: SyncConfig): Promise<void> {
     this.config = config;
     this.baseUrl = WebDavProvider.buildBaseUrl(config.serverUrl, config.remoteRoot);
-    this.httpRequest = http.createHttp();
     LOG.info(`webdav connected: ${this.baseUrl}`);
   }
 
   public async list(remoteDir: string): Promise<RemoteEntry[]> {
-    const url: string = `${this.baseUrl}/${WebDavProvider.MANIFEST}`;
+    const manifestEntries: RemoteEntry[] = await this.listManifest();
+    const realEntries: RemoteEntry[] | null = await this.propfindEntries();
+    if (realEntries === null) {
+      return manifestEntries;
+    }
+    // 以 PROPFIND 的真实文件为准；清单提供已知哈希，用于三方比较。
+    const hashByPath: Map<string, string> = new Map<string, string>();
+    for (const entry of manifestEntries) {
+      hashByPath.set(entry.path, entry.etag);
+    }
+    const result: RemoteEntry[] = [];
+    const seen: Set<string> = new Set<string>();
+    for (const real of realEntries) {
+      const entry: RemoteEntry = new RemoteEntry();
+      entry.path = real.path;
+      const known: string | undefined = hashByPath.get(real.path);
+      entry.etag = known === undefined ? '' : known;
+      entry.size = real.size;
+      entry.mtime = real.mtime;
+      entry.isDir = false;
+      result.push(entry);
+      seen.add(real.path);
+    }
+    // 清单中记录但服务端已不存在的文件：保留原有行为（本地存在则重新上传）。
+    for (const manifest of manifestEntries) {
+      if (!seen.has(manifest.path)) {
+        result.push(manifest);
+      }
+    }
+    LOG.info(`webdav list: manifest=${manifestEntries.length}, real=${realEntries.length}`);
+    return result;
+  }
+
+  public async readRemote(path: string): Promise<string> {
+    const url: string = `${this.baseUrl}/${WebDavProvider.encodePath(path)}`;
     const response: http.HttpResponse = await this.request(url, http.RequestMethod.GET,
       http.HttpDataType.STRING);
-    if (response.responseCode === 404) {
-      return [];
-    }
     if (response.responseCode !== 200) {
-      throw new Error(WebDavProvider.describeCode(response.responseCode, 'webdav list'));
+      throw new Error(WebDavProvider.describeCode(response.responseCode, 'webdav readRemote'));
     }
     const payload: string | Object | ArrayBuffer = response.result;
     if (typeof payload !== 'string') {
-      throw new Error('webdav manifest response is not text');
+      throw new Error('webdav file response is not text');
     }
-    return WebDavProvider.parseManifest(payload);
+    return payload;
   }
 
   public async pull(entry: RemoteEntry, destPath: string): Promise<void> {
@@ -72,7 +133,7 @@ export class WebDavProvider implements SyncProvider {
     WebDavProvider.writeText(destPath, payload);
   }
 
-  public async push(localPath: string, entry: RemoteEntry): Promise<void> {
+  public async push(localPath: string, entry: RemoteEntry): Promise<string> {
     const url: string = `${this.baseUrl}/${WebDavProvider.encodePath(entry.path)}`;
     const content: string = WebDavProvider.readText(localPath);
     const response: http.HttpResponse = await this.request(url, http.RequestMethod.PUT,
@@ -83,6 +144,21 @@ export class WebDavProvider implements SyncProvider {
     if (response.responseCode < 200 || response.responseCode >= 300) {
       throw new Error(WebDavProvider.describeCode(response.responseCode, 'webdav push'));
     }
+    // 返回 PUT 响应中的 ETag，供同步引擎更新该文件的服务器版本基线。
+    const headerMap: Record<string, string> = response.header as Record<string, string>;
+    const etagValue: Object | undefined = headerMap['etag'];
+    if (typeof etagValue === 'string') {
+      return etagValue;
+    }
+    const etagValue2: Object | undefined = headerMap['Etag'];
+    if (typeof etagValue2 === 'string') {
+      return etagValue2;
+    }
+    const etagValue3: Object | undefined = headerMap['ETag'];
+    if (typeof etagValue3 === 'string') {
+      return etagValue3;
+    }
+    return '';
   }
 
   public async stat(path: string): Promise<RemoteEntry | null> {
@@ -120,35 +196,281 @@ export class WebDavProvider implements SyncProvider {
     }
   }
 
-  public async disconnect(): Promise<void> {
-    if (this.httpRequest !== null) {
-      this.httpRequest.destroy();
-      this.httpRequest = null;
+  /** 读取远端清单条目；清单不存在视为空。 */
+  private async listManifest(): Promise<RemoteEntry[]> {
+    const url: string = `${this.baseUrl}/${WebDavProvider.MANIFEST}`;
+    const response: http.HttpResponse = await this.request(url, http.RequestMethod.GET,
+      http.HttpDataType.STRING);
+    if (response.responseCode === 404) {
+      return [];
+    }
+    if (response.responseCode !== 200) {
+      throw new Error(WebDavProvider.describeCode(response.responseCode, 'webdav list'));
+    }
+    const payload: string | Object | ArrayBuffer = response.result;
+    if (typeof payload !== 'string') {
+      throw new Error('webdav manifest response is not text');
+    }
+    return WebDavProvider.parseManifest(payload);
+  }
+
+  /**
+   * 通过 PROPFIND 枚举远端真实 .md 文件（可发现清单之外的新文件与外部修改）。
+   * BFS 逐目录枚举（Depth:1）并并发请求（每批 8 个），visited 集合保证
+   * 每个目录只枚举一次、每个文件只收录一次（尾斜杠差异不会造成重复）。
+   * 服务端不支持或网络异常时返回 null，调用方回退清单协议。
+   */
+  private async propfindEntries(): Promise<RemoteEntry[] | null> {
+    try {
+      const queue: PropfindQueueDir[] = [];
+      const rootItem: PropfindQueueDir = new PropfindQueueDir();
+      queue.push(rootItem);
+      const visitedDirs: Set<string> = new Set<string>(['']);
+      const seenFiles: Set<string> = new Set<string>();
+      const files: RemoteEntry[] = [];
+      while (queue.length > 0) {
+        const take: number = Math.min(queue.length, WebDavProvider.PROPFIND_CONCURRENCY);
+        const batch: PropfindQueueDir[] = queue.splice(0, take);
+        const results: PropfindDirResult[] = await Promise.all(batch.map(
+          (item: PropfindQueueDir): Promise<PropfindDirResult> => {
+            return this.propfindOneDir(item);
+          }));
+        for (let r = 0; r < results.length; r++) {
+          const result: PropfindDirResult = results[r];
+          const parent: PropfindQueueDir = batch[r];
+          for (const sub of result.subDirs) {
+            if (!visitedDirs.has(sub)) {
+              visitedDirs.add(sub);
+              const next: PropfindQueueDir = new PropfindQueueDir();
+              next.dir = sub;
+              next.depth = parent.depth + 1;
+              queue.push(next);
+            }
+          }
+          for (const file of result.files) {
+            if (!seenFiles.has(file.path)) {
+              seenFiles.add(file.path);
+              files.push(file);
+            }
+          }
+        }
+      }
+      return files;
+    } catch (error) {
+      const err = error as BusinessError;
+      LOG.info(`propfind unavailable, fallback to manifest: ${err.message}`);
+      return null;
     }
   }
 
+  /** PROPFIND 单个远端目录（Depth:1），返回其子目录与 .md 文件。 */
+  private async propfindOneDir(item: PropfindQueueDir): Promise<PropfindDirResult> {
+    const result: PropfindDirResult = new PropfindDirResult();
+    if (item.depth > WebDavProvider.MAX_PROPFIND_DEPTH) {
+      return result;
+    }
+    const url: string = item.dir.length === 0 ? this.baseUrl
+      : `${this.baseUrl}/${WebDavProvider.encodePath(item.dir)}`;
+    const response: http.HttpResponse = await this.request(url, WebDavProvider.PROPFIND_METHOD,
+      http.HttpDataType.STRING, WebDavProvider.PROPFIND_BODY,
+      { 'Depth': '1', 'Content-Type': 'application/xml;charset=utf-8' });
+    if (response.responseCode !== 207 && response.responseCode !== 200) {
+      LOG.error(`propfind ${response.responseCode} on ${url}`);
+      throw new Error(`propfind failed with ${response.responseCode}`);
+    }
+    const payload: string | Object | ArrayBuffer = response.result;
+    if (typeof payload !== 'string') {
+      throw new Error('propfind response is not text');
+    }
+    const items: PropfindItem[] = WebDavProvider.parseMultistatus(payload);
+    for (const it of items) {
+      const rel: string | null = this.hrefToRelative(it.href);
+      if (rel === null || rel.length === 0) {
+        continue;
+      }
+      if (rel === item.dir) {
+        continue;
+      }
+      const name: string = WebDavProvider.lastNameOf(rel);
+      if (it.isDir) {
+        if (name.startsWith('.') || name === 'conflicts') {
+          continue;
+        }
+        result.subDirs.push(rel);
+        continue;
+      }
+      if (name.startsWith('.') || rel === WebDavProvider.MANIFEST) {
+        continue;
+      }
+      if (!rel.toLowerCase().endsWith('.md')) {
+        continue;
+      }
+      const entry: RemoteEntry = new RemoteEntry();
+      entry.path = rel;
+      entry.etag = '';
+      entry.size = it.size;
+      const parsedMtime: number = Date.parse(it.mtime);
+      entry.mtime = Number.isNaN(parsedMtime) ? 0 : parsedMtime;
+      entry.serverTag = it.etag.length > 0 ? it.etag : `${entry.mtime}~${entry.size}`;
+      entry.isDir = false;
+      result.files.push(entry);
+    }
+    return result;
+  }
+
+  /** 取路径最后一段名称。 */
+  private static lastNameOf(path: string): string {
+    const idx: number = path.lastIndexOf('/');
+    return idx < 0 ? path : path.substring(idx + 1);
+  }
+
+  /** 将 multistatus XML 中的 href 转为相对 baseUrl 的路径；无法映射时返回 null。 */
+  private hrefToRelative(href: string): string | null {
+    if (href.length === 0) {
+      return null;
+    }
+    const basePath: string = WebDavProvider.urlPathOf(this.baseUrl);
+    let decoded: string = '';
+    try {
+      decoded = decodeURIComponent(href);
+    } catch (error) {
+      decoded = href;
+    }
+    let path: string = decoded;
+    if (basePath.length > 0 && path.startsWith(basePath)) {
+      path = path.substring(basePath.length);
+    } else {
+      // 部分服务端返回相对 href：回退用远端根目录名定位。
+      const rootName: string = this.config.remoteRoot.trim();
+      const rootIdx: number = rootName.length > 0 ? path.indexOf(rootName) : 0;
+      if (rootIdx < 0) {
+        return null;
+      }
+      path = path.substring(rootIdx + rootName.length);
+    }
+    while (path.startsWith('/')) {
+      path = path.substring(1);
+    }
+    // 目录 href 通常带尾斜杠，与文件路径统一为无尾斜杠形式，
+    // 避免目录被误判为新子目录而重复递归枚举。
+    while (path.endsWith('/')) {
+      path = path.substring(0, path.length - 1);
+    }
+    return path;
+  }
+
+  /** 取 URL 的路径部分（不含协议与主机）。 */
+  private static urlPathOf(url: string): string {
+    const schemeIdx: number = url.indexOf('://');
+    let rest: string = schemeIdx < 0 ? url : url.substring(schemeIdx + 3);
+    const slashIdx: number = rest.indexOf('/');
+    return slashIdx < 0 ? '' : rest.substring(slashIdx);
+  }
+
+  /**
+   * XML 命名实体反转义。文件名中的 & 在 multistatus 响应中为 &amp;，
+   * 未反转义会导致 GET 路径与真实文件名不符（404）。&amp; 必须最后处理。
+   */
+  private static xmlUnescape(text: string): string {
+    let out: string = text;
+    out = out.replaceAll('&lt;', '<');
+    out = out.replaceAll('&gt;', '>');
+    out = out.replaceAll('&quot;', '"');
+    out = out.replaceAll('&apos;', "'");
+    out = out.replaceAll('&amp;', '&');
+    return out;
+  }
+
+  /**
+   * 解析 PROPFIND multistatus 响应。WebDAV 命名空间前缀不固定（D:/d:/无前缀），
+   * 采用对前缀不敏感的正则提取 response/href/collection/getcontentlength/getlastmodified。
+   */
+  private static parseMultistatus(text: string): PropfindItem[] {
+    const items: PropfindItem[] = [];
+    const responseRe: RegExp = /<(?:[A-Za-z0-9_.-]+:)?response(?:\s[^>]*)?>([\s\S]*?)<\/(?:[A-Za-z0-9_.-]+:)?response>/g;
+    let match: RegExpExecArray | null = responseRe.exec(text);
+    while (match !== null) {
+      const block: string = match[1];
+      const item: PropfindItem = new PropfindItem();
+      const hrefMatch: RegExpExecArray | null =
+        /<(?:[A-Za-z0-9_.-]+:)?href(?:\s[^>]*)?>([\s\S]*?)<\/(?:[A-Za-z0-9_.-]+:)?href>/.exec(block);
+      if (hrefMatch !== null) {
+        item.href = WebDavProvider.xmlUnescape(hrefMatch[1].trim());
+      }
+      item.isDir = /<(?:[A-Za-z0-9_.-]+:)?collection[\s/>]/.test(block);
+      const sizeMatch: RegExpExecArray | null =
+        /<(?:[A-Za-z0-9_.-]+:)?getcontentlength(?:\s[^>]*)?>([\s\S]*?)<\/(?:[A-Za-z0-9_.-]+:)?getcontentlength>/.exec(block);
+      if (sizeMatch !== null) {
+        const parsed: number = Number(sizeMatch[1].trim());
+        item.size = Number.isNaN(parsed) ? 0 : parsed;
+      }
+      const mtimeMatch: RegExpExecArray | null =
+        /<(?:[A-Za-z0-9_.-]+:)?getlastmodified(?:\s[^>]*)?>([\s\S]*?)<\/(?:[A-Za-z0-9_.-]+:)?getlastmodified>/.exec(block);
+      if (mtimeMatch !== null) {
+        item.mtime = mtimeMatch[1].trim();
+      }
+      const etagMatch: RegExpExecArray | null =
+        /<(?:[A-Za-z0-9_.-]+:)?getetag(?:\s[^>]*)?>([^<]*)<\/(?:[A-Za-z0-9_.-]+:)?getetag>/.exec(block);
+      if (etagMatch !== null) {
+        const etagText: string = WebDavProvider.xmlUnescape(etagMatch[1].trim());
+        // 部分服务器（如 fnOS）在 404 propstat 中返回空 getetag，视为无值。
+        if (etagText.length > 2 && etagText !== '""') {
+          item.etag = etagText;
+        }
+      }
+      if (item.href.length > 0) {
+        items.push(item);
+      }
+      match = responseRe.exec(text);
+    }
+    return items;
+  }
+
+  public async disconnect(): Promise<void> {
+    // 请求实例已按次创建/销毁，无长生命周期资源需要释放。
+  }
+
+  /**
+   * 发送单个 HTTP 请求。每次创建独立 HttpRequest 实例并在完成后销毁：
+   * 单实例并发在途请求会导致认证头竞态丢失（fnOS 返回 401），
+   * 独立实例可安全支撑 PROPFIND / 拉取的并发批处理。
+   */
   private async request(url: string, method: http.RequestMethod, expect: http.HttpDataType,
-    body?: string): Promise<http.HttpResponse> {
-    const request: http.HttpRequest | null = this.httpRequest;
-    if (request === null) {
+    body?: string, extraHeaders?: Record<string, string>): Promise<http.HttpResponse> {
+    if (this.baseUrl.length === 0) {
       throw new Error('webdav provider is not connected');
     }
-    const options: http.HttpRequestOptions = {
-      method: method,
-      expectDataType: expect,
-      header: this.buildHeaders(),
-      readTimeout: 30000,
-      connectTimeout: 15000
-    };
-    if (this.config.skipCertVerify) {
-      options.remoteValidation = 'skip';
-    } else if (this.config.caCertPath.length > 0) {
-      options.caPath = this.config.caCertPath;
+    const request: http.HttpRequest = http.createHttp();
+    try {
+      const headers: Record<string, string> = this.buildHeaders();
+      if (extraHeaders !== undefined) {
+        const keys: string[] = Object.keys(extraHeaders);
+        for (const key of keys) {
+          const value: string | undefined = extraHeaders[key];
+          if (value !== undefined) {
+            headers[key] = value;
+          }
+        }
+      }
+      const options: http.HttpRequestOptions = {
+        method: method,
+        expectDataType: expect,
+        header: headers,
+        readTimeout: 30000,
+        connectTimeout: 15000
+      };
+      if (this.config.skipCertVerify) {
+        options.remoteValidation = 'skip';
+      } else if (this.config.caCertPath.length > 0) {
+        options.caPath = this.config.caCertPath;
+      }
+      if (body !== undefined) {
+        options.extraData = body;
+      }
+      return await request.request(url, options);
+    } finally {
+      request.destroy();
     }
-    if (body !== undefined) {
-      options.extraData = body;
-    }
-    return await request.request(url, options);
   }
 
   /** 将 HTTP 状态码翻译为带排查建议的中文提示。 */
@@ -168,7 +490,7 @@ export class WebDavProvider implements SyncProvider {
     return `${action} failed with code ${code}`;
   }
 
-  private buildHeaders(): Object {
+  private buildHeaders(): Record<string, string> {
     const headers: Record<string, string> = {
       'Content-Type': 'text/plain; charset=utf-8'
     };

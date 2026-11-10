@@ -67,6 +67,10 @@ struct Index {
     this.syncVm.init(context).then((): void => {
       this.restartAutoSyncTimer();
     });
+    this.syncVm.onSyncComplete = (): void => {
+      // 同步拉取了新文件后重建索引并刷新文件树，使新笔记可见。
+      this.vm.rescanVault();
+    };
     this.commands = this.buildCommands();
     this.loadWindowInsets();
   }
