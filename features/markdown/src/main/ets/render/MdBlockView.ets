@@ -33,6 +33,10 @@ export struct MdBlockView {
   @Local dataTasks: DataViewTask[] = [];
   @Local dataLoaded: boolean = false;
   private dataViewQuery: DataViewQuery | null = null;
+  @Local dataViewTableRows: string[][] = [];
+  @Local dataViewListItems: string[] = [];
+  @Local dataViewTableLoaded: boolean = false;
+  @Local dataViewListLoaded: boolean = false;
 
   aboutToAppear(): void {
     if (this.block.type === MdBlockType.CODE && this.block.lang.trim().toLowerCase() === 'dataview') {
@@ -43,12 +47,20 @@ export struct MdBlockView {
           this.dataTasks = tasks;
           this.dataLoaded = true;
         });
+      } else if (query.isTableQuery() && query.parsedOk) {
+        this.dataViewQuery = query;
+        this.dataViewTableRows = query.tableRows;
+        this.dataViewTableLoaded = true;
+      } else if (query.isListQuery() && query.parsedOk) {
+        this.dataViewQuery = query;
+        this.dataViewListItems = query.listItems;
+        this.dataViewListLoaded = true;
       }
     }
   }
 
-  private isDataViewTask(): boolean {
-    return this.dataViewQuery !== null && this.dataViewQuery.isTaskQuery();
+  private isDataViewQuery(): boolean {
+    return this.dataViewQuery !== null;
   }
 
   build() {
@@ -69,8 +81,14 @@ export struct MdBlockView {
       } else if (this.block.type === MdBlockType.LIST) {
         this.listView()
       } else if (this.block.type === MdBlockType.CODE) {
-        if (this.isDataViewTask()) {
-          this.dataViewTaskView()
+        if (this.isDataViewQuery()) {
+          if (this.dataViewQuery !== null && this.dataViewQuery.isTableQuery()) {
+            this.dataViewTableView()
+          } else if (this.dataViewQuery !== null && this.dataViewQuery.isListQuery()) {
+            this.dataViewListView()
+          } else {
+            this.dataViewTaskView()
+          }
         } else {
           this.codeView()
         }
@@ -378,6 +396,102 @@ export struct MdBlockView {
         .width('100%')
         .alignItems(VerticalAlign.Top)
       }, (task: DataViewTask, index: number): string => `dv_${index}_${task.item.checked}`)
+    }
+    .width('100%')
+    .alignItems(HorizontalAlign.Start)
+    .padding(12)
+    .borderRadius(8)
+    .backgroundColor($r('sys.color.ohos_id_color_card_bg'))
+    .margin({ top: 6, bottom: 6 })
+  }
+
+  /** Dataview TABLE 查询结果：直接渲染解析后的表格数据。 */
+  @Builder
+  dataViewTableView() {
+    Column() {
+      if (this.dataViewTableLoaded && this.dataViewTableRows.length === 0) {
+        Text($r('app.string.md_dataview_empty'))
+          .fontSize(this.fontSize - 2)
+          .fontColor($r('sys.color.ohos_id_color_text_secondary'))
+      }
+      if (this.dataViewQuery !== null && this.dataViewQuery.tableColumns.length > 0) {
+        Row() {
+          ForEach(this.dataViewQuery.tableColumns, (col: string, colIndex: number) => {
+            MdInlineText({
+              segments: MdInlineFlattener.flatten(this.inlineParser.parse(col)),
+              fontSize: this.fontSize,
+              textAlignment: TextAlign.Center,
+              forceBold: true,
+              onOpenLink: (target: string, kind: string): void => {
+                this.onOpenLink(target, kind);
+              },
+              onOpenTag: (tag: string): void => {
+                this.onOpenTag(tag);
+              }
+            })
+              .layoutWeight(1)
+          }, (col: string, colIndex: number): string => `dvthead_${colIndex}`)
+        }
+        .width('100%')
+        .padding({ bottom: 4 })
+        Divider()
+          .color($r('sys.color.ohos_id_color_text_secondary'))
+      }
+      ForEach(this.dataViewTableRows, (row: string[], rowIndex: number) => {
+        Row() {
+          ForEach(row, (cell: string, cellIndex: number) => {
+            MdInlineText({
+              segments: MdInlineFlattener.flatten(this.inlineParser.parse(cell)),
+              fontSize: this.fontSize,
+              textAlignment: TextAlign.Start,
+              onOpenLink: (target: string, kind: string): void => {
+                this.onOpenLink(target, kind);
+              },
+              onOpenTag: (tag: string): void => {
+                this.onOpenTag(tag);
+              }
+            })
+              .layoutWeight(1)
+          }, (cell: string, cellIndex: number): string => `dvtbody_${rowIndex}_${cellIndex}`)
+        }
+        .width('100%')
+        .padding({ top: 4, bottom: 4 })
+      }, (row: string[], rowIndex: number): string => `dvtbody_${rowIndex}`)
+    }
+    .width('100%')
+    .alignItems(HorizontalAlign.Start)
+    .padding(12)
+    .borderRadius(8)
+    .backgroundColor($r('sys.color.ohos_id_color_card_bg'))
+    .margin({ top: 6, bottom: 6 })
+  }
+
+  /** Dataview LIST 查询结果：直接渲染条目列表。 */
+  @Builder
+  dataViewListView() {
+    Column() {
+      if (this.dataViewListLoaded && this.dataViewListItems.length === 0) {
+        Text($r('app.string.md_dataview_empty'))
+          .fontSize(this.fontSize - 2)
+          .fontColor($r('sys.color.ohos_id_color_text_secondary'))
+      }
+      ForEach(this.dataViewListItems, (item: string, index: number) => {
+        MdInlineText({
+          segments: MdInlineFlattener.flatten(this.inlineParser.parse(item)),
+          fontSize: this.fontSize,
+          onOpenLink: (target: string, kind: string): void => {
+            this.onOpenLink(target, kind);
+          },
+          onOpenTag: (tag: string): void => {
+            this.onOpenTag(tag);
+          }
+        })
+        if (index < this.dataViewListItems.length - 1) {
+          Divider()
+            .color($r('sys.color.ohos_id_color_text_secondary'))
+            .margin({ top: 2, bottom: 2 })
+        }
+      }, (item: string, index: number): string => `dvlist_${index}`)
     }
     .width('100%')
     .alignItems(HorizontalAlign.Start)

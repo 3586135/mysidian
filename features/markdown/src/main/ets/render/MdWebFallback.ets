@@ -7,7 +7,8 @@ import { webview } from '@kit.ArkWeb';
 @ComponentV2
 export struct MdWebFallback {
   @Param html: string = '';
-  @Param contentHeight: number = 220;
+  @Param contentHeight: number = 0;
+  private computedContentHeight: number = 220;
   private controller: webview.WebviewController = new webview.WebviewController();
 
   build() {
@@ -21,10 +22,29 @@ export struct MdWebFallback {
       .imageAccess(false)
       .onlineImageAccess(false)
       .width('100%')
-      .height(this.contentHeight)
+      .height(this.contentHeight > 0 ? this.contentHeight : this.computedContentHeight)
       .onControllerAttached(() => {
         this.controller.loadData(this.buildHtml(), 'text/html', 'UTF-8');
+        this.computedContentHeight = this.estimateHeight();
       })
+      .onVisibleAreaChange([0.0, 1.0], () => {})
+  }
+
+  /** 根据 HTML 内容估算渲染高度（不含脚本标签的纯文本行高法）。 */
+  private estimateHeight(): number {
+    const plain: string = this.html
+      .replace(/<script[\s\S]*?<\/script>/gi, '')
+      .replace(/<style[\s\S]*?<\/style>/gi, '')
+      .replace(/<[^>]+>/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+    if (plain.length === 0) {
+      return 220;
+    }
+    const charsPerLine: number = 40;
+    const lines: number = Math.ceil(plain.length / charsPerLine);
+    const pxPerLine: number = 24;
+    return Math.min(220 + lines * pxPerLine, 600);
   }
 
   private buildHtml(): string {

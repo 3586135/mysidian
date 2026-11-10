@@ -5,7 +5,7 @@
  * 参考 https://github.com/blacksmithgu/obsidian-dataview
  */
 export class DataViewQuery {
-  /** 查询类型：TASK / TABLE / LIST / CALCULATE。 */
+  /** 查询类型：TASK / TABLE / LIST。 */
   type: string = '';
   /** 过滤：仅已完成任务。 */
   requireCompleted: boolean = false;
@@ -19,10 +19,28 @@ export class DataViewQuery {
   excludeCurrent: boolean = false;
   /** 按来源笔记分组显示。 */
   groupByFile: boolean = false;
+  /** TABLE 查询列头（解析后）。 */
+  tableColumns: string[] = [];
+  /** TABLE 查询数据行（每行=列值数组）。 */
+  tableRows: string[][] = [];
+  /** LIST 查询条目列表。 */
+  listItems: string[] = [];
+  /** 解析是否成功（TABLE/LIST 用）。 */
+  parsedOk: boolean = false;
 
   /** 是否为可执行的任务查询。 */
   public isTaskQuery(): boolean {
     return this.type === 'TASK';
+  }
+
+  /** 是否为 TABLE 查询。 */
+  public isTableQuery(): boolean {
+    return this.type === 'TABLE';
+  }
+
+  /** 是否为 LIST 查询。 */
+  public isListQuery(): boolean {
+    return this.type === 'LIST';
   }
 
   /** 解析 dataview 查询文本。 */
@@ -48,6 +66,27 @@ export class DataViewQuery {
       }
       if (upper.startsWith('GROUP BY')) {
         query.groupByFile = true;
+        continue;
+      }
+      if (query.type === 'TABLE' && upper.startsWith('FROM')) {
+        query.parsedOk = true;
+        continue;
+      }
+      if (query.type === 'LIST') {
+        query.parsedOk = true;
+        query.listItems.push(line);
+        continue;
+      }
+      if (query.type === 'TABLE' && !query.parsedOk) {
+        const headerLine: string = line.replace(/^\|/, '').replace(/\|$/, '').trim();
+        query.tableColumns = headerLine.split('|').map((s: string) => s.trim());
+        query.parsedOk = true;
+        continue;
+      }
+      if (query.type === 'TABLE' && query.parsedOk) {
+        const rowValues: string = line.replace(/^\|/, '').replace(/\|$/, '').trim();
+        const cells: string[] = rowValues.split('|').map((s: string) => s.trim());
+        query.tableRows.push(cells);
         continue;
       }
     }

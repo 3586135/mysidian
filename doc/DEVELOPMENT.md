@@ -1,6 +1,6 @@
 # 开发状态与设计决策
 
-> 最后更新：2026-11-09。本文档记录各里程碑的功能实现、关键设计决策、验证状态与已知问题，供后续开发（含 AI 协作）快速接续。
+> 最后更新：2026-11-10。本文档记录各里程碑的功能实现、关键设计决策、验证状态与已知问题，供后续开发（含 AI 协作）快速接续。
 
 ## 里程碑历史（git 提交）
 
@@ -11,8 +11,28 @@
 | M2 | ArkTS Markdown 引擎：block/inline/frontmatter 解析器、原生渲染器、12 个单测 |
 | M3 | 源码编辑器（TextArea）、增量索引管线（block/link/tag/prop）、大纲/反链/标签/属性面板 |
 | M5-M6 | WebDAV 同步引擎（manifest 协议 + 冲突副本）、FTS 搜索、快速切换器、命令面板、设置、ArkWeb HTML 兜底、懒加载文件树 |
+| v0.2.0 | 引导页重构（新建/导入/WebDAV 三入口）、新建仓库同时配置 WebDAV、首个仓库预填示例笔记、Dataview TABLE/LIST 查询、编辑格式工具栏 |
 
-## 近期变更（未提交部分）
+## 近期变更（v0.2.0，已发布）
+
+### 引导页与首次体验（2026-11-10）
+
+- **引导页**（`emptyVaultView` 重构）：欢迎徽章偏上布局（修复图标过靠下），下方三行操作卡片——新建仓库 / 导入仓库 / 配置 WebDAV 同步（已配置时显示"WebDAV 已配置"）。
+- **新建仓库 + WebDAV 一步完成**：新建对话框新增"同时配置 WebDAV 同步"开关（默认开、预填已有配置），展开服务器/用户名/密码/远端目录四项；点「创建」后保存配置、开启自动同步并触发首次同步（`applyCreateSyncConfig`）。
+- **首个仓库预填示例笔记**：`DemoVaultContent`（欢迎 / Markdown 语法示例 / 任务清单，含 frontmatter、标签、wiki 链接、dataview 任务查询）；`VaultViewModel.createVault` 判断 `vaults.length === 0` 走 `createDemoVault`，之后新建均为空仓库；对话框名称预填"示例仓库"。
+- **流程**：全新安装 → 引导页 → 点"新建仓库" → 进入预填示例内容的仓库（Nova 14 真机验证）。
+
+### Dataview TABLE/LIST 查询（2026-11-10）
+
+- `DataViewQuery` 解析 TABLE（`FROM` 后列头 `|a|b|` + 数据行）与 LIST（逐行条目）；`parsedOk` 区分可执行查询。
+- `MdBlockView` 新增 `dataViewTableView` / `dataViewListView` 渲染；TASK 查询行为不变。
+- `MdWebFallback` 高度改为内容估算（`estimateHeight`，220-600vp 封顶），不再固定 220。
+
+### 编辑格式工具栏（2026-11-10）
+
+- 编辑模式底部工具栏（`editToolbar`）：标题/加粗/列表/任务/有序列表/分隔线快捷插入；TextArea 聚焦显示、失焦隐藏。
+
+## v0.1.x 设计要点（历史参考）
 
 ### 响应式布局改造（适配 Mate X7 折叠屏）
 
@@ -80,7 +100,7 @@ raw → FrontmatterParser → BlockParser（块级：标题/列表/任务/代码
 1. **单测无法 CLI 运行**：hypium 测试只在 DevEco Studio 内可跑；`features/markdown/src/test/LocalUnit.test.ets` 含 Markdown 引擎 12 测 + DataViewQuery 3 测。
 2. `devecocli check arkts` 资源引用误报（见 AGENTS.md）。
 3. `C:\Users\song\.local\bin\deveco.exe` 可能被 WDAC 拦截，用 Temp 副本 workaround（见 AGENTS.md）。
-4. Dataview 目前仅支持 TASK 查询；TABLE/LIST 查询未实现（按代码块显示）。
+4. Dataview TABLE/LIST 为静态解析渲染（不联动索引数据）；TASK 查询仍为唯一可交互查询类型。
 5. Dataview 勾选后任务不实时从列表消失（本地翻转保留显示；重启或重渲染后按查询条件刷新）——与 Obsidian live query 行为略有差异，属有意取舍。
 6. 真机验证遗留：`2026-10-15.md` Gemini OAuth 任务曾被勾选、`Hermes记录.md` 有一行误插 `验证任务A`，待用户在应用内手动处理（用户数据，非代码问题）。
 

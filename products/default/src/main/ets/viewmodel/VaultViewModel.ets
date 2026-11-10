@@ -619,7 +619,7 @@ export class VaultViewModel {
     await this.openNote(path);
   }
 
-  /** 新建空仓库。 */
+  /** 新建空仓库；首个仓库（引导页新建）预填示例笔记。 */
   public async createVault(name: string): Promise<void> {
     const manager: VaultManager | null = this.manager;
     if (manager === null) {
@@ -627,7 +627,10 @@ export class VaultViewModel {
     }
     this.busy = true;
     try {
-      const vault: VaultInfo = await manager.createVault(name);
+      const firstVault: boolean = this.vaults.length === 0;
+      const vault: VaultInfo = firstVault
+        ? await manager.createDemoVault(name)
+        : await manager.createVault(name);
       await this.refreshVaults();
       await this.selectVault(vault);
     } finally {

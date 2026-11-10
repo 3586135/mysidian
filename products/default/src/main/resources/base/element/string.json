@@ -265,6 +265,58 @@
       "value": "导入一个 Obsidian 仓库压缩包，或新建一个空仓库开始记录"
     },
     {
+      "name": "welcome_title",
+      "value": "欢迎使用 mysidian"
+    },
+    {
+      "name": "welcome_desc",
+      "value": "本地优先的 Markdown 笔记应用，支持 WebDAV 多端同步"
+    },
+    {
+      "name": "onboard_create_title",
+      "value": "新建仓库"
+    },
+    {
+      "name": "onboard_create_desc",
+      "value": "创建新仓库，可同时配置 WebDAV 同步"
+    },
+    {
+      "name": "onboard_import_title",
+      "value": "导入仓库"
+    },
+    {
+      "name": "onboard_import_desc",
+      "value": "从 zip 压缩包导入现有 Obsidian 仓库"
+    },
+    {
+      "name": "onboard_sync_title",
+      "value": "配置 WebDAV 同步"
+    },
+    {
+      "name": "onboard_sync_desc",
+      "value": "连接 WebDAV 服务器，在多设备间同步笔记"
+    },
+    {
+      "name": "onboard_sync_done",
+      "value": "WebDAV 已配置，点击查看或修改"
+    },
+    {
+      "name": "dialog_create",
+      "value": "创建"
+    },
+    {
+      "name": "dialog_create_with_sync",
+      "value": "同时配置 WebDAV 同步"
+    },
+    {
+      "name": "dialog_create_with_sync_desc",
+      "value": "创建仓库后自动保存并启用同步"
+    },
+    {
+      "name": "msg_sync_config_saved",
+      "value": "WebDAV 同步配置已保存"
+    },
+    {
       "name": "note_empty_title",
       "value": "未选择笔记"
     },
@@ -431,6 +483,10 @@
     {
       "name": "recent_notes_empty",
       "value": "还没有访问记录"
+    },
+    {
+      "name": "md_dataview_empty",
+      "value": "无匹配数据"
     }
   ]
 }

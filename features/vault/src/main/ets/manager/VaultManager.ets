@@ -8,6 +8,7 @@ import { NoteDao } from '../db/NoteDao';
 import { VaultDao } from '../db/VaultDao';
 import { VaultPath } from './VaultPath';
 import { ZipTransfer } from './ZipTransfer';
+import { DemoNote, DemoVaultContent } from './DemoVaultContent';
 
 const LOG: Logger = new Logger('MySidianVault');
 
@@ -63,6 +64,18 @@ export class VaultManager {
     info.id = await VaultDao.insert(this.context, info);
     LOG.info(`created vault ${info.name} at ${root}`);
     return info;
+  }
+
+  /** 创建预填示例笔记的仓库（引导页首次新建仓库时调用）。 */
+  public async createDemoVault(name: string): Promise<VaultInfo> {
+    const vault: VaultInfo = await this.createVault(name.length > 0 ? name : '示例仓库');
+    const notes: DemoNote[] = DemoVaultContent.notes();
+    for (const note of notes) {
+      await this.writeNote(vault, note.path, note.content);
+    }
+    await this.scanVault(vault);
+    LOG.info('seeded demo vault');
+    return vault;
   }
 
   /** 导入 zip 仓库。 */

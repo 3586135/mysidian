@@ -42,10 +42,20 @@ struct Index {
   @Local showSync: boolean = false;
   @Local showVaults: boolean = false;
   @Local showRecent: boolean = false;
+  /** 编辑工具栏显示状态。 */
+  @Local showToolbar: boolean = false;
+  /** 光标位置。 */
+  @Local cursorPos: number = 0;
   private docController: MdDocumentViewController = new MdDocumentViewController();
   private tabsController: HdsTabsController = new HdsTabsController();
   @Local commandKeyword: string = '';
   @Local newVaultName: string = '';
+  /** 新建仓库对话框：是否同时配置 WebDAV 同步。 */
+  @Local createWithSync: boolean = true;
+  @Local createSyncUrl: string = '';
+  @Local createSyncUser: string = '';
+  @Local createSyncPass: string = '';
+  @Local createSyncRoot: string = 'mysidian';
   private commands: AppCommand[] = [];
   private autoSyncTimer: number = -1;
   private static readonly AUTO_SYNC_INTERVAL_MS: number = 30 * 60 * 1000;
@@ -688,10 +698,7 @@ struct Index {
             .backgroundColor($r('app.color.hm_accent'))
             .fontColor(Color.White)
             .onClick(() => {
-              this.newVaultName = '';
-              this.animAssign((): void => {
-                this.showCreatePanel = true;
-              });
+              this.openCreatePanel();
             })
         }
         .width('100%')
@@ -1033,46 +1040,116 @@ struct Index {
     })
   }
 
-  /** 仓库为空时的引导视图。 */
+  /** 仓库为空时的引导视图：欢迎区（偏上）+ 操作卡片。 */
   @Builder
   emptyVaultView() {
     Column() {
-      EmptyState({
-        title: $r('app.string.vault_empty_title'),
-        description: $r('app.string.vault_empty_desc'),
-        icon: $r('sys.symbol.folder'),
-        iconColor: $r('app.color.hm_accent')
-      })
-      Row() {
-        Button($r('app.string.action_import_vault'))
-          .type(ButtonType.Capsule)
-          .height(40)
-          .fontSize(16)
-          .backgroundColor($r('app.color.hm_hover_bg'))
+      Blank()
+        .layoutWeight(1)
+
+      Column() {
+        Column() {
+          SymbolGlyph($r('sys.symbol.doc_plaintext'))
+            .fontSize(48)
+            .fontColor([$r('app.color.hm_accent')])
+        }
+        .width(96)
+        .height(96)
+        .borderRadius(28)
+        .backgroundColor($r('app.color.hm_hover_bg'))
+        .justifyContent(FlexAlign.Center)
+
+        Text($r('app.string.welcome_title'))
+          .fontSize(26)
+          .fontWeight(FontWeight.Bold)
           .fontColor($r('app.color.hm_text_primary'))
-          .margin({ right: 12 })
-          .onClick(() => {
-            this.importVault();
-          })
-        Button($r('app.string.action_create_vault'))
-          .type(ButtonType.Capsule)
-          .height(40)
-          .fontSize(16)
-          .backgroundColor($r('app.color.hm_accent'))
-          .fontColor(Color.White)
-          .onClick(() => {
-            this.newVaultName = '';
-            this.animAssign((): void => {
-              this.showCreatePanel = true;
-            });
-          })
+          .margin({ top: 24 })
+        Text($r('app.string.welcome_desc'))
+          .fontSize(14)
+          .fontColor($r('app.color.hm_text_secondary'))
+          .textAlign(TextAlign.Center)
+          .margin({ top: 8 })
       }
-      .margin({ top: 8 })
+      .width('100%')
+      .alignItems(HorizontalAlign.Center)
+
+      Blank()
+        .layoutWeight(1.4)
+
+      Column() {
+        this.onboardRow($r('sys.symbol.square_and_pencil'), $r('app.string.onboard_create_title'),
+          $r('app.string.onboard_create_desc'), 0)
+        Divider()
+          .color($r('app.color.hm_divider'))
+        this.onboardRow($r('sys.symbol.folder'), $r('app.string.onboard_import_title'),
+          $r('app.string.onboard_import_desc'), 1)
+        Divider()
+          .color($r('app.color.hm_divider'))
+        this.onboardRow($r('sys.symbol.arrow_clockwise'), $r('app.string.onboard_sync_title'),
+          this.syncVm.configured ? $r('app.string.onboard_sync_done')
+            : $r('app.string.onboard_sync_desc'), 2)
+      }
+      .width('100%')
+      .constraintSize({ maxWidth: 420 })
+      .padding(6)
+      .borderRadius(20)
+      .backgroundColor($r('app.color.hm_card_bg'))
     }
     .width('100%')
-    .layoutWeight(1)
-    .justifyContent(FlexAlign.Center)
+    .height('100%')
     .padding(24)
+  }
+
+  /** 引导页操作行。action：0 新建仓库 / 1 导入仓库 / 2 WebDAV 同步。 */
+  @Builder
+  onboardRow(icon: Resource, title: ResourceStr, desc: ResourceStr, action: number) {
+    Row() {
+      Column() {
+        SymbolGlyph(icon)
+          .fontSize(22)
+          .fontColor([$r('app.color.hm_accent')])
+      }
+      .width(44)
+      .height(44)
+      .borderRadius(22)
+      .backgroundColor($r('app.color.hm_hover_bg'))
+      .justifyContent(FlexAlign.Center)
+
+      Column() {
+        Text(title)
+          .fontSize(16)
+          .fontWeight(FontWeight.Medium)
+          .fontColor($r('app.color.hm_text_primary'))
+          .maxLines(1)
+        Text(desc)
+          .fontSize(12)
+          .fontColor($r('app.color.hm_text_secondary'))
+          .maxLines(2)
+          .margin({ top: 2 })
+      }
+      .alignItems(HorizontalAlign.Start)
+      .layoutWeight(1)
+      .margin({ left: 12, right: 8 })
+
+      SymbolGlyph($r('sys.symbol.chevron_right'))
+        .fontSize(16)
+        .fontColor([$r('app.color.hm_text_hint')])
+    }
+    .width('100%')
+    .padding({ top: 10, bottom: 10, left: 10, right: 14 })
+    .borderRadius(16)
+    .alignItems(VerticalAlign.Center)
+    .onClick(() => {
+      if (action === 0) {
+        this.openCreatePanel();
+      } else if (action === 1) {
+        this.importVault();
+      } else {
+        this.animAssign((): void => {
+          this.showSync = true;
+        });
+      }
+    })
   }
 
   /** 编辑器区域：标题栏 + 正文。 */
@@ -1110,11 +1187,21 @@ struct Index {
             .onTouch((event: TouchEvent) => {
               this.onContentTouch(event);
             })
+            .onFocus(() => {
+              this.cursorPos = this.vm.draftBuffer.length;
+              this.showToolbar = true;
+            })
+            .onBlur(() => {
+              this.showToolbar = false;
+            })
             .onChange((value: string) => {
               this.vm.updateDraft(value);
             })
             .transition(TransitionEffect.opacity(0)
               .animation({ duration: 200, curve: Curve.Friction }))
+            if (this.showToolbar && this.vm.editMode) {
+              this.editToolbar()
+            }
         } else {
           MdDocumentView({
             document: this.vm.document,
@@ -1335,6 +1422,135 @@ struct Index {
     .alignItems(VerticalAlign.Center)
   }
 
+  /** 在光标处插入 Markdown 语法。 */
+  private insertFormat(syntax: string): void {
+    const text: string = this.vm.draftBuffer;
+    const pos: number = this.cursorPos;
+    const before: string = text.slice(0, pos);
+    const after: string = text.slice(pos);
+    this.vm.updateDraft(before + syntax + after);
+  }
+
+  /** 编辑模式底部格式化工具栏。 */
+  @Builder
+  editToolbar() {
+    Row() {
+      Button('B')
+        .fontSize(14)
+        .fontWeight(FontWeight.Bold)
+        .height(32)
+        .padding({ left: 10, right: 10 })
+        .backgroundColor($r('app.color.hm_hover_bg'))
+        .borderRadius(6)
+        .onClick(() => {
+          this.insertFormat('**');
+        })
+      Button('I')
+        .fontSize(14)
+        .height(32)
+        .padding({ left: 10, right: 10 })
+        .backgroundColor($r('app.color.hm_hover_bg'))
+        .borderRadius(6)
+        .onClick(() => {
+          this.insertFormat('*');
+        })
+      Button('~')
+        .fontSize(14)
+        .height(32)
+        .padding({ left: 10, right: 10 })
+        .backgroundColor($r('app.color.hm_hover_bg'))
+        .borderRadius(6)
+        .onClick(() => {
+          this.insertFormat('~~');
+        })
+      Button('`')
+        .fontSize(14)
+        .height(32)
+        .padding({ left: 10, right: 10 })
+        .backgroundColor($r('app.color.hm_hover_bg'))
+        .borderRadius(6)
+        .onClick(() => {
+          this.insertFormat('`');
+        })
+      Button('H1')
+        .fontSize(13)
+        .height(32)
+        .padding({ left: 8, right: 8 })
+        .backgroundColor($r('app.color.hm_hover_bg'))
+        .borderRadius(6)
+        .onClick(() => {
+          this.insertFormat('# ');
+        })
+      Button('H2')
+        .fontSize(13)
+        .height(32)
+        .padding({ left: 8, right: 8 })
+        .backgroundColor($r('app.color.hm_hover_bg'))
+        .borderRadius(6)
+        .onClick(() => {
+          this.insertFormat('## ');
+        })
+      Button('H3')
+        .fontSize(13)
+        .height(32)
+        .padding({ left: 8, right: 8 })
+        .backgroundColor($r('app.color.hm_hover_bg'))
+        .borderRadius(6)
+        .onClick(() => {
+          this.insertFormat('### ');
+        })
+      Button('>')
+        .fontSize(14)
+        .height(32)
+        .padding({ left: 10, right: 10 })
+        .backgroundColor($r('app.color.hm_hover_bg'))
+        .borderRadius(6)
+        .onClick(() => {
+          this.insertFormat('> ');
+        })
+      Button('-')
+        .fontSize(14)
+        .height(32)
+        .padding({ left: 10, right: 10 })
+        .backgroundColor($r('app.color.hm_hover_bg'))
+        .borderRadius(6)
+        .onClick(() => {
+          this.insertFormat('- ');
+        })
+      Button('1.')
+        .fontSize(13)
+        .height(32)
+        .padding({ left: 8, right: 8 })
+        .backgroundColor($r('app.color.hm_hover_bg'))
+        .borderRadius(6)
+        .onClick(() => {
+          this.insertFormat('1. ');
+        })
+      Button('-[]')
+        .fontSize(12)
+        .height(32)
+        .padding({ left: 8, right: 8 })
+        .backgroundColor($r('app.color.hm_hover_bg'))
+        .borderRadius(6)
+        .onClick(() => {
+          this.insertFormat('- [ ] ');
+        })
+      Button('—')
+        .fontSize(14)
+        .height(32)
+        .padding({ left: 10, right: 10 })
+        .backgroundColor($r('app.color.hm_hover_bg'))
+        .borderRadius(6)
+        .onClick(() => {
+          this.insertFormat('---\n');
+        })
+    }
+    .padding({ left: 12, right: 12, top: 8, bottom: 8 })
+    .width('100%')
+    .backgroundColor($r('app.color.hm_card_bg'))
+    .border({ width: { top: 1 }, color: $r('app.color.hm_divider') })
+  }
+
   @Builder
   infoPanel() {
     NoteInfoPanel({
@@ -1370,7 +1586,7 @@ struct Index {
     }
   }
 
-  /** 新建仓库对话框。 */
+  /** 新建仓库对话框：命名 + 可选 WebDAV 同步配置。 */
   @Builder
   createPanel() {
     Stack() {
@@ -1394,24 +1610,81 @@ struct Index {
           .fontWeight(FontWeight.Medium)
           .fontColor($r('app.color.hm_text_primary'))
           .width('100%')
-          .margin({ bottom: 16 })
-        TextInput({
-          placeholder: $r('app.string.dialog_vault_name'),
-          text: this.newVaultName
-        })
+          .margin({ bottom: 12 })
+
+        Scroll() {
+          Column() {
+            TextInput({
+              placeholder: $r('app.string.dialog_vault_name'),
+              text: this.newVaultName
+            })
+              .width('100%')
+              .height(44)
+              .fontSize(16)
+              .padding({ left: 14, right: 14 })
+              .borderRadius(12)
+              .backgroundColor($r('app.color.hm_input_bg'))
+              .placeholderColor($r('app.color.hm_text_secondary'))
+              .fontColor($r('app.color.hm_text_primary'))
+              .caretColor($r('app.color.hm_accent'))
+              .onChange((value: string) => {
+                this.newVaultName = value;
+              })
+              .margin({ bottom: 12 })
+
+            Row() {
+              Column() {
+                Text($r('app.string.dialog_create_with_sync'))
+                  .fontSize(14)
+                  .fontColor($r('app.color.hm_text_primary'))
+                Text($r('app.string.dialog_create_with_sync_desc'))
+                  .fontSize(12)
+                  .fontColor($r('app.color.hm_text_secondary'))
+                  .margin({ top: 2 })
+              }
+              .layoutWeight(1)
+              .alignItems(HorizontalAlign.Start)
+
+              Toggle({ type: ToggleType.Switch, isOn: this.createWithSync })
+                .selectedColor($r('app.color.hm_accent'))
+                .onChange((isOn: boolean) => {
+                  this.createWithSync = isOn;
+                })
+            }
+            .width('100%')
+            .alignItems(VerticalAlign.Center)
+            .margin({ bottom: 4 })
+
+            if (this.createWithSync) {
+              this.createFieldLabel($r('app.string.sync_server'))
+              this.createFieldInput($r('app.string.sync_server_placeholder'),
+                this.createSyncUrl, InputType.Normal, (value: string): void => {
+                  this.createSyncUrl = value;
+                })
+              this.createFieldLabel($r('app.string.sync_username'))
+              this.createFieldInput($r('app.string.sync_username_placeholder'),
+                this.createSyncUser, InputType.Normal, (value: string): void => {
+                  this.createSyncUser = value;
+                })
+              this.createFieldLabel($r('app.string.sync_password'))
+              this.createFieldInput($r('app.string.sync_password_placeholder'),
+                this.createSyncPass, InputType.Password, (value: string): void => {
+                  this.createSyncPass = value;
+                })
+              this.createFieldLabel($r('app.string.sync_root'))
+              this.createFieldInput($r('app.string.sync_root_placeholder'),
+                this.createSyncRoot, InputType.Normal, (value: string): void => {
+                  this.createSyncRoot = value;
+                })
+            }
+          }
           .width('100%')
-          .height(44)
-          .fontSize(16)
-          .padding({ left: 14, right: 14 })
-          .borderRadius(12)
-          .backgroundColor($r('app.color.hm_input_bg'))
-          .placeholderColor($r('app.color.hm_text_secondary'))
-          .fontColor($r('app.color.hm_text_primary'))
-          .caretColor($r('app.color.hm_accent'))
-          .onChange((value: string) => {
-            this.newVaultName = value;
-          })
-          .margin({ bottom: 20 })
+        }
+        .width('100%')
+        .align(Alignment.Top)
+        .scrollBar(BarState.Off)
+        .constraintSize({ maxHeight: 320 })
+
         Row() {
           Button($r('app.string.dialog_cancel'))
             .type(ButtonType.Capsule)
@@ -1426,7 +1699,7 @@ struct Index {
                 this.showCreatePanel = false;
               });
             })
-          Button($r('app.string.dialog_confirm'))
+          Button($r('app.string.dialog_create'))
             .type(ButtonType.Capsule)
             .height(40)
             .fontSize(16)
@@ -1441,8 +1714,9 @@ struct Index {
             })
         }
         .width('100%')
+        .margin({ top: 4 })
       }
-      .width('76%')
+      .width('84%')
       .padding(24)
       .borderRadius(24)
       .backgroundColor($r('app.color.hm_card_bg'))
@@ -1452,6 +1726,39 @@ struct Index {
     }
     .width('100%')
     .height('100%')
+  }
+
+  /** 新建对话框字段标签。 */
+  @Builder
+  createFieldLabel(label: ResourceStr) {
+    Text(label)
+      .fontSize(12)
+      .fontColor($r('app.color.hm_text_secondary'))
+      .width('100%')
+      .margin({ top: 8, bottom: 6 })
+  }
+
+  /** 新建对话框字段输入框。 */
+  @Builder
+  createFieldInput(placeholder: ResourceStr, text: string, inputType: InputType,
+    onChange: (value: string) => void) {
+    TextInput({
+      placeholder: placeholder,
+      text: text
+    })
+      .type(inputType)
+      .width('100%')
+      .height(42)
+      .fontSize(15)
+      .padding({ left: 12, right: 12 })
+      .borderRadius(10)
+      .backgroundColor($r('app.color.hm_input_bg'))
+      .placeholderColor($r('app.color.hm_text_secondary'))
+      .fontColor($r('app.color.hm_text_primary'))
+      .caretColor($r('app.color.hm_accent'))
+      .onChange((value: string) => {
+        onChange(value);
+      })
   }
 
   private loadWindowInsets(): void {
@@ -1840,10 +2147,42 @@ struct Index {
   private async createVault(): Promise<void> {
     try {
       await this.vm.createVault(this.newVaultName);
+      await this.applyCreateSyncConfig();
     } catch (error) {
       const err = error as BusinessError;
       LOG.error(`create vault failed, code=${err.code}, message=${err.message}`);
       promptAction.showToast({ message: $r('app.string.msg_create_failed') });
     }
+  }
+
+  /** 打开新建仓库对话框：首个仓库预填示例名与已有 WebDAV 配置，默认开启同步配置。 */
+  private openCreatePanel(): void {
+    this.newVaultName = this.vm.vaults.length === 0 ? '示例仓库' : '';
+    this.createWithSync = true;
+    this.createSyncUrl = this.syncVm.serverUrl;
+    this.createSyncUser = this.syncVm.username;
+    this.createSyncPass = this.syncVm.password;
+    this.createSyncRoot = this.syncVm.remoteRoot.length > 0 ? this.syncVm.remoteRoot : 'mysidian';
+    this.animAssign((): void => {
+      this.showCreatePanel = true;
+    });
+  }
+
+  /** 新建仓库时同时保存 WebDAV 配置，启用自动同步并触发首次同步。 */
+  private async applyCreateSyncConfig(): Promise<void> {
+    const url: string = this.createSyncUrl.trim();
+    if (!this.createWithSync || url.length === 0) {
+      return;
+    }
+    this.syncVm.serverUrl = url;
+    this.syncVm.username = this.createSyncUser.trim();
+    this.syncVm.password = this.createSyncPass;
+    const root: string = this.createSyncRoot.trim();
+    this.syncVm.remoteRoot = root.length > 0 ? root : 'mysidian';
+    this.syncVm.autoSync = true;
+    await this.syncVm.save();
+    this.restartAutoSyncTimer();
+    promptAction.showToast({ message: $r('app.string.msg_sync_config_saved') });
+    await this.syncVm.runSync(this.vm.currentVault);
   }
 }
