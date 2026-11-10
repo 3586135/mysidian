@@ -1,12 +1,15 @@
 import { ConfigurationConstant, UIAbility } from '@kit.AbilityKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
-import { window } from '@kit.ArkUI';
+import { KeyboardAvoidMode, window } from '@kit.ArkUI';
+import { AbilityContextHolder } from './AbilityContextHolder';
 
 const DOMAIN = 0x0000;
 
 export default class DefaultAbility extends UIAbility {
   onCreate(): void {
     hilog.info(DOMAIN, 'testTag', '%{public}s', 'Ability onCreate');
+    // 注册 Ability 上下文，供视图模型启动外部链接（系统浏览器）。
+    AbilityContextHolder.context = this.context;
   }
 
   onDestroy(): void {
@@ -23,6 +26,8 @@ export default class DefaultAbility extends UIAbility {
         return;
       }
       hilog.info(DOMAIN, 'testTag', 'Succeeded in loading the content.');
+      // 键盘避让改为压缩模式：键盘弹出时页面压缩，编辑工具栏动态显示在输入法上方
+      windowStage.getMainWindowSync().getUIContext().setKeyboardAvoidMode(KeyboardAvoidMode.RESIZE);
     });
 
     try {

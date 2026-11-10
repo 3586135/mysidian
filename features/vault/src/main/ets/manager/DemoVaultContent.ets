@@ -121,6 +121,20 @@ export class DemoVaultContent {
       'WHERE !completed AND contains(tags, "#task")',
       '```',
       '',
+      '## 笔记索引查询',
+      '',
+      'LIST / TABLE 查询会联动整个仓库的笔记索引（frontmatter 标签与属性）：',
+      '',
+      '```dataview',
+      'LIST',
+      'FROM #示例',
+      '```',
+      '',
+      '```dataview',
+      'TABLE author, tags',
+      'FROM #欢迎',
+      '```',
+      '',
       '#任务'
     ].join('\n');
 

@@ -14,8 +14,17 @@ export interface SyncProvider {
   /** 拉取远端文件到本地沙箱路径 */
   pull(entry: RemoteEntry, destPath: string): Promise<void>;
 
+  /** 拉取远端二进制文件（图片等附件）到本地沙箱路径 */
+  pullBinary(entry: RemoteEntry, destPath: string): Promise<void>;
+
   /** 推送本地文件到远端，返回上传后的服务器版本标识（未知时为空串） */
   push(localPath: string, entry: RemoteEntry): Promise<string>;
+
+  /** 推送本地二进制文件（图片等附件），返回上传后的服务器版本标识 */
+  pushBinary(localPath: string, entry: RemoteEntry): Promise<string>;
+
+  /** 在远端创建目录（幂等：目录已存在时视为成功） */
+  mkdirRemote(remoteDir: string): Promise<void>;
 
   /** 查询远端单个文件元信息，不存在时返回 null */
   stat(path: string): Promise<RemoteEntry | null>;

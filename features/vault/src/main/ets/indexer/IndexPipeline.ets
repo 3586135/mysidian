@@ -1,6 +1,7 @@
 import { common } from '@kit.AbilityKit';
 import { relationalStore } from '@kit.ArkData';
-import { LinkKind, LinkRef, MdBlock, MdDocument, MdInline, MdInlineType, NoteRow } from '@ohos/domain';
+import { LinkKind, LinkRef, MdBlock, MdDocument, MdInline, MdInlineType, MdListItem, NoteRow }
+  from '@ohos/domain';
 import { BlockDao } from '../db/BlockDao';
 import { DbHelper } from '../db/DbHelper';
 import { LinkDao } from '../db/LinkDao';
@@ -93,8 +94,24 @@ export class IndexPipeline {
       for (const inline of block.inlines) {
         IndexPipeline.collectInlineLinks(inline, context, resolver, links);
       }
+      // 列表项里的链接同样必须建索引：列表是双链最常见的载体，
+      // 漏掉会导致反向链接查不到、改名后无法自动重写引用。
+      for (const item of block.items) {
+        IndexPipeline.collectItemLinks(item, context, resolver, links);
+      }
     }
     return links;
+  }
+
+  /** 递归收集列表项（含子项）中的链接。 */
+  private static collectItemLinks(item: MdListItem, context: string,
+    resolver: Map<string, string>, links: LinkRef[]): void {
+    for (const inline of item.inlines) {
+      IndexPipeline.collectInlineLinks(inline, context, resolver, links);
+    }
+    for (const child of item.children) {
+      IndexPipeline.collectItemLinks(child, context, resolver, links);
+    }
   }
 
   private static collectInlineLinks(inline: MdInline, context: string,
@@ -165,6 +182,13 @@ export class IndexPipeline {
     let text: string = '';
     for (const inline of block.inlines) {
       text += IndexPipeline.inlineText(inline);
+    }
+    if (text.length === 0 && block.items.length > 0) {
+      // 列表块：取首个列表项文本作为上下文。
+      const items: MdListItem[] = block.items;
+      for (const inline of items[0].inlines) {
+        text += IndexPipeline.inlineText(inline);
+      }
     }
     if (text.length === 0) {
       return block.rawContent;

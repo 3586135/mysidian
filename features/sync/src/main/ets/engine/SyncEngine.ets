@@ -1,8 +1,8 @@
 import { fileIo, hash } from '@kit.CoreFileKit';
 import { common } from '@kit.AbilityKit';
 import { BusinessError } from '@kit.BasicServicesKit';
-import { RemoteEntry, SyncConfig, SyncConflict, SyncProvider, SyncState, SyncStatus, VaultInfo }
-  from '@ohos/domain';
+import { RemoteEntry, SyncConfig, SyncConflict, SyncFileFilter, SyncProvider, SyncState, SyncStatus,
+  VaultInfo } from '@ohos/domain';
 import { Logger } from '@ohos/common';
 import { SyncBaseline, SyncStateDao } from '@ohos/vault';
 import { ConflictResolver } from './ConflictResolver';
@@ -97,7 +97,12 @@ export class SyncEngine {
             remote.serverTag.length > 0 && unhashedBaseline.serverTag === remote.serverTag) {
             continue;
           }
-          // 否则按内容判断是否一致。
+          // 否则按内容判断是否一致（二进制附件无法按文本比对，直接以本地为准）。
+          if (!SyncFileFilter.isMarkdown(local.path)) {
+            LOG.info(`sync conflict (unhashed binary): ${local.path}`);
+            await this.resolveConflict(provider, vault, local, remote, serverTagMap);
+            continue;
+          }
           const remoteText: string = await provider.readRemote(local.path);
           const localAbs: string = `${vault.rootPath}/${local.path}`;
           const localText: string = fileIo.readTextSync(localAbs);
@@ -183,7 +188,7 @@ export class SyncEngine {
     return this.status;
   }
 
-  /** 收集本地可同步文件（Markdown 文本文件）。 */
+  /** 收集本地可同步文件（Markdown 笔记与图片附件）。 */
   private async collectLocalEntries(vault: VaultInfo): Promise<RemoteEntry[]> {
     const entries: RemoteEntry[] = [];
     this.collectFiles(vault.rootPath, '', entries);
@@ -195,7 +200,12 @@ export class SyncEngine {
       item.path = entry.path;
       item.size = stat.size;
       item.mtime = stat.mtime;
-      item.etag = await hash.hash(absolute, 'sha256');
+      // 二进制附件用 mtime~size 粗比对，避免大图每次全量计算 sha256。
+      if (SyncFileFilter.isMarkdown(entry.path)) {
+        item.etag = await hash.hash(absolute, 'sha256');
+      } else {
+        item.etag = `${stat.mtime}~${stat.size}`;
+      }
       item.isDir = false;
       result.push(item);
     }
@@ -217,7 +227,7 @@ export class SyncEngine {
         this.collectFiles(childFull, childRelative, output);
         continue;
       }
-      if (!name.toLowerCase().endsWith('.md')) {
+      if (!SyncFileFilter.isSyncable(name)) {
         continue;
       }
       const entry: RemoteEntry = new RemoteEntry();
@@ -230,7 +240,12 @@ export class SyncEngine {
   private async pushEntry(provider: SyncProvider, vault: VaultInfo, entry: RemoteEntry,
     serverTagMap: Map<string, string>): Promise<void> {
     const absolute: string = `${vault.rootPath}/${entry.path}`;
-    const tag: string = await provider.push(absolute, entry);
+    let tag: string = '';
+    if (SyncFileFilter.isMarkdown(entry.path)) {
+      tag = await provider.push(absolute, entry);
+    } else {
+      tag = await provider.pushBinary(absolute, entry);
+    }
     if (tag.length > 0) {
       serverTagMap.set(entry.path, tag);
     }
@@ -255,11 +270,22 @@ export class SyncEngine {
     if (!fileIo.accessSync(folder)) {
       fileIo.mkdirSync(folder, true);
     }
-    await provider.pull(entry, absolute);
+    if (SyncFileFilter.isMarkdown(entry.path)) {
+      await provider.pull(entry, absolute);
+      return;
+    }
+    await provider.pullBinary(entry, absolute);
   }
 
   private async resolveConflict(provider: SyncProvider, vault: VaultInfo, local: RemoteEntry,
     remote: RemoteEntry, serverTagMap: Map<string, string>): Promise<void> {
+    // 二进制附件不做冲突合并：直接以本地为准覆盖远端（local-wins）。
+    if (!SyncFileFilter.isMarkdown(local.path)) {
+      LOG.info(`sync conflict (binary, local wins): ${local.path}`);
+      await this.pushEntry(provider, vault, local, serverTagMap);
+      this.status.pendingUploads++;
+      return;
+    }
     const conflict: SyncConflict = new SyncConflict();
     conflict.path = local.path;
     conflict.localHash = local.etag;

@@ -115,9 +115,64 @@ export class BacklinkItem {
   context: string = '';
 }
 
+/** 未链接提及：正文出现笔记标题但未建立双链。 */
+export class UnlinkedMention {
+  /** 来源笔记相对路径。 */
+  path: string = '';
+  /** 来源笔记标题。 */
+  title: string = '';
+  /** 命中的上下文片段。 */
+  context: string = '';
+}
+
 /** 索引进度。 */
 export class IndexProgress {
   total: number = 0;
   processed: number = 0;
   running: boolean = false;
+}
+
+/** 日历中的某一天。 */
+export class CalendarDay {
+  /** 日期（1-31）。 */
+  day: number = 0;
+  /** 日期键（YYYY-MM-DD）。 */
+  date: string = '';
+  /** 是否已有日记。 */
+  hasNote: boolean = false;
+  /** 未完成任务数量。 */
+  openTasks: number = 0;
+  /** 是否为今天。 */
+  today: boolean = false;
+}
+
+/** 关系图谱节点。 */
+export class GraphNode {
+  /** 笔记相对路径。 */
+  path: string = '';
+  /** 显示标题。 */
+  title: string = '';
+  /** 距当前笔记的跳数。 */
+  depth: number = 0;
+  /** 是否为当前笔记。 */
+  root: boolean = false;
+  /** 布局坐标（vp）。 */
+  x: number = 0;
+  y: number = 0;
+  /** 节点半径（vp）。 */
+  radius: number = 0;
+}
+
+/** 关系图谱连线。 */
+export class GraphEdge {
+  /** 起点路径。 */
+  from: string = '';
+  /** 终点路径。 */
+  to: string = '';
+}
+
+/** 关系图谱数据。 */
+export class GraphData {
+  nodes: GraphNode[] = [];
+  edges: GraphEdge[] = [];
 }

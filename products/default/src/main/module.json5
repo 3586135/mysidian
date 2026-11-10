@@ -51,6 +51,43 @@
             "resource": "$profile:backup_config"
           }
         ],
+      },
+      {
+        "name": "FormExtensionAbility",
+        "srcEntry": "./ets/form/FormExtensionAbility.ets",
+        "description": "$string:ability_desc",
+        "icon": "$media:layered_image",
+        "label": "$string:form_card_title",
+        "exported": true,
+        "type": "form",
+        "metadata": [
+          {
+            "name": "ohos.extension.form",
+            "resource": "$profile:form_config"
+          },
+          {
+            "name": "ohos.extension.form.form_configurable"
+          }
+        ]
+      },
+      {
+        "name": "ShareExtensionAbility",
+        "srcEntry": "./ets/share/ShareExtensionAbility.ets",
+        "description": "$string:ability_desc",
+        "icon": "$media:layered_image",
+        "label": "$string:ability_label",
+        "exported": true,
+        "type": "share",
+        "skills": [
+          {
+            "entities": [
+              "entity.system.share"
+            ],
+            "actions": [
+              "ohos.want.action.sendData"
+            ]
+          }
+        ]
       }
     ]
   }

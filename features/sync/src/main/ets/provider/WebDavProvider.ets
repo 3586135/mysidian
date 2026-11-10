@@ -2,7 +2,7 @@ import { http } from '@kit.NetworkKit';
 import { fileIo } from '@kit.CoreFileKit';
 import { util } from '@kit.ArkTS';
 import { BusinessError } from '@kit.BasicServicesKit';
-import { RemoteEntry, SyncConfig, SyncProvider } from '@ohos/domain';
+import { RemoteEntry, SyncConfig, SyncFileFilter, SyncProvider } from '@ohos/domain';
 import { Logger } from '@ohos/common';
 
 const LOG: Logger = new Logger('MySidianWebDav');
@@ -57,6 +57,8 @@ export class WebDavProvider implements SyncProvider {
   private static readonly PROPFIND_CONCURRENCY: number = 1;
   /** 受控单点扩展：http.RequestMethod 枚举运行时即字符串，WebDAV 标准 PROPFIND 方法。 */
   private static readonly PROPFIND_METHOD: http.RequestMethod = 'PROPFIND' as http.RequestMethod;
+  /** 受控单点扩展：http.RequestMethod 枚举运行时即字符串，WebDAV 标准 MKCOL 方法。 */
+  private static readonly MKCOL_METHOD: http.RequestMethod = 'MKCOL' as http.RequestMethod;
   private static readonly PROPFIND_BODY: string =
     '<?xml version="1.0" encoding="utf-8"?>' +
     '<d:propfind xmlns:d="DAV:">' +
@@ -159,6 +161,66 @@ export class WebDavProvider implements SyncProvider {
       return etagValue3;
     }
     return '';
+  }
+
+  /** 拉取远端二进制文件（图片等附件）到本地沙箱路径。 */
+  public async pullBinary(entry: RemoteEntry, destPath: string): Promise<void> {
+    const url: string = `${this.baseUrl}/${WebDavProvider.encodePath(entry.path)}`;
+    const response: http.HttpResponse = await this.request(url, http.RequestMethod.GET,
+      http.HttpDataType.ARRAY_BUFFER);
+    if (response.responseCode !== 200) {
+      throw new Error(WebDavProvider.describeCode(response.responseCode, 'webdav pullBinary'));
+    }
+    const buffer: ArrayBuffer | null = WebDavProvider.toArrayBuffer(response.result);
+    if (buffer === null) {
+      throw new Error('webdav binary response is not binary');
+    }
+    WebDavProvider.writeBytes(destPath, buffer);
+  }
+
+  /** 推送本地二进制文件（图片等附件），返回上传后的服务器版本标识。 */
+  public async pushBinary(localPath: string, entry: RemoteEntry): Promise<string> {
+    const url: string = `${this.baseUrl}/${WebDavProvider.encodePath(entry.path)}`;
+    const data: ArrayBuffer = WebDavProvider.readBytes(localPath);
+    const response: http.HttpResponse = await this.requestBinary(url, http.RequestMethod.PUT, data);
+    if (response.responseCode === 404 || response.responseCode === 409) {
+      // 父目录不存在：先建目录再重试一次。
+      const dir: string = WebDavProvider.dirnameOf(entry.path);
+      if (dir.length > 0) {
+        await this.mkdirRemote(dir);
+        const retry: http.HttpResponse = await this.requestBinary(url, http.RequestMethod.PUT, data);
+        if (retry.responseCode >= 200 && retry.responseCode < 300) {
+          return WebDavProvider.etagOf(retry);
+        }
+        if (retry.responseCode === 409) {
+          throw new Error(`远端目录不存在(409)，请先在 WebDAV 服务端创建目录: ${this.baseUrl}`);
+        }
+        throw new Error(WebDavProvider.describeCode(retry.responseCode, 'webdav pushBinary'));
+      }
+      throw new Error(`远端目录不存在(409)，请先在 WebDAV 服务端创建目录: ${this.baseUrl}`);
+    }
+    if (response.responseCode < 200 || response.responseCode >= 300) {
+      throw new Error(WebDavProvider.describeCode(response.responseCode, 'webdav pushBinary'));
+    }
+    return WebDavProvider.etagOf(response);
+  }
+
+  /** 在远端创建目录（幂等：已存在视为成功）。 */
+  public async mkdirRemote(remoteDir: string): Promise<void> {
+    const trimmed: string = remoteDir.replace(/^\/+/, '').replace(/\/+$/, '');
+    if (trimmed.length === 0) {
+      return;
+    }
+    const url: string = `${this.baseUrl}/${WebDavProvider.encodePath(trimmed)}`;
+    const response: http.HttpResponse = await this.request(url, WebDavProvider.MKCOL_METHOD,
+      http.HttpDataType.STRING);
+    // 405（已存在）与 301（已存在）视为幂等成功。
+    if (response.responseCode === 405 || response.responseCode === 301) {
+      return;
+    }
+    if (response.responseCode < 200 || response.responseCode >= 300) {
+      throw new Error(WebDavProvider.describeCode(response.responseCode, 'webdav mkdir'));
+    }
   }
 
   public async stat(path: string): Promise<RemoteEntry | null> {
@@ -302,7 +364,7 @@ export class WebDavProvider implements SyncProvider {
       if (name.startsWith('.') || rel === WebDavProvider.MANIFEST) {
         continue;
       }
-      if (!rel.toLowerCase().endsWith('.md')) {
+      if (!SyncFileFilter.isSyncable(name)) {
         continue;
       }
       const entry: RemoteEntry = new RemoteEntry();
@@ -444,7 +506,7 @@ export class WebDavProvider implements SyncProvider {
    * 独立实例可安全支撑 PROPFIND / 拉取的并发批处理。
    */
   private async request(url: string, method: http.RequestMethod, expect: http.HttpDataType,
-    body?: string, extraHeaders?: Record<string, string>): Promise<http.HttpResponse> {
+    body?: string | ArrayBuffer, extraHeaders?: Record<string, string>): Promise<http.HttpResponse> {
     if (this.baseUrl.length === 0) {
       throw new Error('webdav provider is not connected');
     }
@@ -575,6 +637,66 @@ export class WebDavProvider implements SyncProvider {
     } finally {
       fileIo.closeSync(file);
     }
+  }
+
+  /** 写入二进制内容到沙箱文件。 */
+  private static writeBytes(path: string, data: ArrayBuffer): void {
+    const file = fileIo.openSync(path,
+      fileIo.OpenMode.READ_WRITE | fileIo.OpenMode.CREATE | fileIo.OpenMode.TRUNC);
+    try {
+      fileIo.writeSync(file.fd, data);
+    } finally {
+      fileIo.closeSync(file);
+    }
+  }
+
+  /** 读取沙箱文件的二进制内容。 */
+  private static readBytes(path: string): ArrayBuffer {
+    const source = fileIo.openSync(path, fileIo.OpenMode.READ_ONLY);
+    const stat = fileIo.statSync(path);
+    const buffer: ArrayBuffer = new ArrayBuffer(stat.size);
+    try {
+      fileIo.readSync(source.fd, buffer);
+    } finally {
+      fileIo.closeSync(source);
+    }
+    return buffer;
+  }
+
+  /** 把 HTTP 响应体收敛为 ArrayBuffer，非二进制时返回 null。 */
+  private static toArrayBuffer(payload: string | Object | ArrayBuffer): ArrayBuffer | null {
+    if (typeof payload === 'string') {
+      return null;
+    }
+    if (payload instanceof ArrayBuffer) {
+      return payload;
+    }
+    return null;
+  }
+
+  /** 提取响应头中的 ETag（大小写不敏感）。 */
+  private static etagOf(response: http.HttpResponse): string {
+    const headerMap: Record<string, string> = response.header as Record<string, string>;
+    const keys: string[] = ['etag', 'Etag', 'ETag'];
+    for (const key of keys) {
+      const value: string | undefined = headerMap[key];
+      if (value !== undefined && typeof value === 'string') {
+        return value;
+      }
+    }
+    return '';
+  }
+
+  /** 取相对路径的目录部分（不含末尾分隔符）。 */
+  private static dirnameOf(path: string): string {
+    const index: number = path.lastIndexOf('/');
+    return index <= 0 ? '' : path.substring(0, index);
+  }
+
+  /** 发送二进制请求体（PUT/POST 上传附件）。 */
+  private async requestBinary(url: string, method: http.RequestMethod,
+    data: ArrayBuffer): Promise<http.HttpResponse> {
+    return this.request(url, method, http.HttpDataType.STRING, data);
   }
 
   private static readText(path: string): string {

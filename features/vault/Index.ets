@@ -8,10 +8,14 @@ export { PropDao } from './src/main/ets/db/PropDao';
 export { SearchDao } from './src/main/ets/db/SearchDao';
 export { SyncStateDao, SyncBaseline } from './src/main/ets/db/SyncStateDao';
 
-export { VaultManager } from './src/main/ets/manager/VaultManager';
+export { VaultManager, FileStatInfo } from './src/main/ets/manager/VaultManager';
 export { VaultPath } from './src/main/ets/manager/VaultPath';
 export { ZipTransfer } from './src/main/ets/manager/ZipTransfer';
 export { NoteResolver } from './src/main/ets/manager/NoteResolver';
+export { LinkRewriter } from './src/main/ets/manager/LinkRewriter';
+export { AttachmentResolver } from './src/main/ets/manager/AttachmentResolver';
+export { TemplateEngine, TemplateRenderResult } from './src/main/ets/manager/TemplateEngine';
+export { FileHistory, HistorySnapshot, DiffLine } from './src/main/ets/manager/FileHistory';
 export { FuzzyMatcher } from './src/main/ets/manager/FuzzyMatcher';
 
 export { IndexPipeline } from './src/main/ets/indexer/IndexPipeline';

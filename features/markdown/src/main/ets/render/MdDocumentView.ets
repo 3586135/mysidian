@@ -1,4 +1,4 @@
-import { DataViewTask, MdBlock, MdDocument } from '@ohos/domain';
+import { DataViewResult, DataViewTask, MdBlock, MdDocument } from '@ohos/domain';
 import { MdBlockView } from './MdBlockView';
 
 /** 文档滚动控制器：由 MdDocumentView 注册实现，供外部滚动到指定块。 */
@@ -21,10 +21,16 @@ export struct MdDocumentView {
   @Event onOpenTag: (tag: string) => void = (tag: string): void => {};
   @Event onToggleTask: (rawLine: string, checked: boolean) => void =
     (rawLine: string, checked: boolean): void => {};
-  @Event onLoadDataView: (query: string, onResult: (tasks: DataViewTask[]) => void) => void =
-    (query: string, onResult: (tasks: DataViewTask[]) => void): void => {};
+  @Event onLoadDataView: (query: string, onResult: (result: DataViewResult) => void) => void =
+    (query: string, onResult: (result: DataViewResult) => void): void => {};
   @Event onToggleDataViewTask: (task: DataViewTask, checked: boolean) => void =
     (task: DataViewTask, checked: boolean): void => {};
+  /** 加载嵌入笔记正文。 */
+  @Event onLoadEmbed: (target: string, onResult: (text: string) => void) => void =
+    (target: string, onResult: (text: string) => void): void => {};
+  /** 解析图片资源 URI。 */
+  @Event onResolveAsset: (target: string, onResult: (uri: string) => void) => void =
+    (target: string, onResult: (uri: string) => void): void => {};
   private scroller: Scroller = new Scroller();
 
   aboutToAppear(): void {
@@ -51,11 +57,17 @@ export struct MdDocumentView {
             onToggleTask: (rawLine: string, checked: boolean): void => {
               this.onToggleTask(rawLine, checked);
             },
-            onLoadDataView: (query: string, onResult: (tasks: DataViewTask[]) => void): void => {
+            onLoadDataView: (query: string, onResult: (result: DataViewResult) => void): void => {
               this.onLoadDataView(query, onResult);
             },
             onToggleDataViewTask: (task: DataViewTask, checked: boolean): void => {
               this.onToggleDataViewTask(task, checked);
+            },
+            onLoadEmbed: (target: string, onResult: (text: string) => void): void => {
+              this.onLoadEmbed(target, onResult);
+            },
+            onResolveAsset: (target: string, onResult: (uri: string) => void): void => {
+              this.onResolveAsset(target, onResult);
             }
           })
         }

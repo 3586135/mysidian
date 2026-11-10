@@ -21,6 +21,11 @@ devecocli run --skip-build               # 装机运行（必须先 build 成功
 - 新克隆/换机后：复制 `build-profile.signed.json5` 覆盖 `build-profile.json5` 并重设 skip-worktree；或在 DevEco Studio（File → Project Structure → Signing Configs）重新自动签名。
 - 无签名配置时 `devecocli build` 只产出 `default-default-unsigned.hap`（无法装机），必须带签名材料构建。
 
+### 发布约定
+
+- 发布新版本时，GitHub Release 上传**未签名**安装包（`default-default-unsigned.hap`，重命名为 `mysidian-x.y.z-unsigned.hap`），不再上传 signed hap（v0.2.0 是最后一个附带签名包的版本）。
+- 创建 Release 走 GitHub REST API：`git credential fill`（输入需 LF 文件重定向，PowerShell 管道 CRLF 会报错）取 token；body 用 `[System.IO.File]::ReadAllText` 读入（PS 5.1 的 `Get-Content` 字符串带 PSPath 属性导致 422）。
+
 ## 测试设备环境
 
 | 设备 | 连接 | 说明 |

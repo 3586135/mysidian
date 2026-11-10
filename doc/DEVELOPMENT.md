@@ -1,6 +1,6 @@
 # 开发状态与设计决策
 
-> 最后更新：2026-11-10。本文档记录各里程碑的功能实现、关键设计决策、验证状态与已知问题，供后续开发（含 AI 协作）快速接续。
+> 最后更新：2026-11-11。本文档记录各里程碑的功能实现、关键设计决策、验证状态与已知问题，供后续开发（含 AI 协作）快速接续。
 
 ## 里程碑历史（git 提交）
 
@@ -31,6 +31,20 @@
 ### 编辑格式工具栏（2026-11-10）
 
 - 编辑模式底部工具栏（`editToolbar`）：标题/加粗/列表/任务/有序列表/分隔线快捷插入；TextArea 聚焦显示、失焦隐藏。
+
+## 近期变更（未发布）
+
+### Dataview live TABLE/LIST + 勾选实时消失（2026-11-10，TODO #4/#5 完成）
+
+- TABLE/LIST 查询由静态解析升级为**联动索引数据**：`DataViewQuery` 解析列/条件，`VaultViewModel` 基于索引实时求值（不依赖 Web 兜底）。
+- Dataview 任务**勾选后实时从列表消失**（符合查询条件即重新求值），对齐 Obsidian live query 行为。
+- `LocalUnit.test.ets` 扩至 32 测（DataViewQuery 相关 8 测）；5559 验证 TABLE/LIST 渲染与勾选实时消失通过。
+
+### 编辑工具栏两项修复（2026-11-10）
+
+- **输入法遮挡修复**：`DefaultAbility` 在 loadContent 后设置 `setKeyboardAvoidMode(KeyboardAvoidMode.RESIZE)`（官方 FAQ faqs-arkui-53 推荐做法）。键盘弹出时页面整体压缩，编辑工具栏自然贴在键盘上方，不再被遮挡。
+- **insertFormat 失效修复**：`draftBuffer` 非响应式导致程序化更新不触发 TextArea 重渲染，且 `cursorPos` 仅在 onFocus 时记录（过期）。改为 Index.ets 持有 `TextAreaController`，`insertFormat` 用 `getCaretOffset().index` 取实时光标 + `addText(syntax, {offset: caret})` 原生插入；保留 `updateDraft` 拼接兜底防 draftBuffer 失同步。
+- 三台模拟器验证通过：5559 窄屏（含保存落盘 + 文件内容复核）、5557 宽屏平板、5555 折叠屏（真实仓库上以插入后取消方式验证，未触碰用户数据）。
 
 ## v0.1.x 设计要点（历史参考）
 
@@ -71,6 +85,39 @@
 - **信息面板右滑呼出**：宽屏从屏幕右缘右滑打开信息面板。
 - **导航栏**：NavRail（宽屏侧栏）+ 底部 Tabs（窄屏）双形态。
 
+### 四大功能批次 + P1/P2 增强（2026-11-11，未发布）
+
+**A 文件树管理**：新建文件夹 / 重命名 / 移动到… / 移入回收站 / 清空回收站（`.trash` + 时间戳防重名，可恢复）；`NoteDao.updatePath/removeByPath/listByPathPrefix`（保 id，不 delete+insert）；`LinkRewriter`（`[[旧名]]`、`|别名`、`#锚点` 精确重写，lookahead 匹配）；`AttachmentResolver`。
+
+**B 双链闭环与嵌入**：锚点链接（`[[笔记#标题]]`）可点击跳转（`openLink` 拆锚点 + 360ms `scrollToBlock`）；外链走 `AbilityContextHolder` + `startAbility(Want{uri})` 拉起浏览器；`![[笔记]]` 嵌入块递归渲染（depth ≤ 2，只读）。
+
+**C 图片附件全链路**：`![[x.png]]` / `![](path)` 独占行识别为图片块（支持 `|300` 像素宽）；`![[笔记]]` 为嵌入块；工具栏 IMG → PhotoViewPicker → 拷入 `attachments/` → 插入引用；同步层新增 `pushBinary/pullBinary/mkdirRemote`，WebDAV 支持二进制与 MKCOL，`SyncFileFilter` 分流，冲突 local-wins。
+
+**D 编辑器生产力**：Wiki 补全浮层（光标跟随 + 候选过滤）、列表续行、撤销/重做（600ms 合并、50 步上限、`expectedText` 守卫防 onChange 递归）、工具栏 ↶ ↷ IMG。
+
+**P1**：模板系统（`TemplateEngine`：`{{title}}/{{date}}/{{date:FMT}}/{{time}}/{{week}}/{{cursor}}`，支持默认/日记/周报模板）；属性面板交互式编辑（BOOLEAN→Toggle、LIST→标签胶囊增删、日期→日期选择器、标量→行内编辑，回写并重索引）；Dataview `SORT field ASC|DESC` / `LIMIT n` / 日期比较（`due` vs `today`/`now()`）；Callout 折叠（`> [!NOTE]- 标题`）；原生 LaTeX 渲染（`MathRenderer.toPlain`，Unicode 上下标）与原生 Mermaid 渲染（`MermaidFlow` 分层布局 + Canvas 绘图）；文件历史（`.history/` 快照 ≤ 20、LCS 行级 Diff、回滚）；日历面板（月历网格、有日记圆点、未完成角标、本周周报、日记创建）。
+
+**P2**：局部图谱（1~2 跳 outgoing+backlinks，力导向布局，信息面板第 5 页签）；分屏双开（宽屏第二栏只读预览 + 关闭按钮）；服务卡片（`FormExtensionAbility` + `form_config.json`）；分享面板（`ShareExtensionAbility`，外部 Markdown 转笔记）；手写速记（Canvas 采集 → PixelMap → PNG → `attachments/` → 插入引用）；反链面板增加「未链接提及」与一键转双链。
+
+### 验证阶段修复的缺陷（2026-11-11）
+
+1. **Mermaid 解析崩溃（App 闪退）**：`MermaidFlow.parse` 正则捕获组编号错位（`edge[3]` 当作 label、`edge[4]` 当作目标节点），目标节点为 `undefined` → `node.label` 为 `undefined` → `.length` 抛 TypeError，含 Mermaid 图的笔记一打开即崩。已修正捕获组并捕获两端节点形状，另加 `try/catch` 兜底降级为展示源码。
+2. **数学公式渲染空白**：块级公式走 ArkWeb（`loadData` 未生效）渲染为空盒；行内公式只剥离 `$` 不排版。改为原生渲染：`MathRenderer.toPlain` 输出 Unicode 上下标文本（`a²`、`E = mc²`、`(1)/(2)`、`√(x)`），块级居中显示、行内走 `MdInlineFlattener`。
+3. **列表型属性之后的键被丢弃**：`FrontmatterParser` 在解析列表属性后仍自增游标，导致 `tags:` 之后的 `due:` 等属性既不显示也会在属性回写时丢失。已修正游标推进逻辑并补单测。
+4. **外部改动不入索引**：应用只索引「无 block 的笔记」，被外部修改（同步 / 手动覆盖）的笔记其属性、大纲、反链长期为旧值。新增 `VaultViewModel.syncIndex()`：按 mtime + size 增量比对，仅重建变化笔记（启动与同步完成后调用）。
+5. **宽屏缺少笔记级菜单**：平板/折叠宽屏布局没有笔记列表头部，重命名/回收站/日历/模板/历史/分屏双开等入口不可达。已在编辑器标题栏补 `sys.symbol.more` 按钮（`bindMenu(moreMenuBuilder)`），分屏时自动收起右侧信息面板。
+6. **改名后反链未重写**：`IndexPipeline.collectLinks` 只遍历 `block.inlines`，漏掉列表项中的链接。已补 `collectItemLinks` 递归列表项，并在 `renameNote` 保留文件扫描兜底 `rewriteLinksByScan`。
+
+### 三机验证记录（2026-11-11）
+
+| 设备 | 形态 | 验证内容 | 结果 |
+|---|---|---|---|
+| 127.0.0.1:5559 | 窄屏手机 1280×2832 | 改名→双链自动重写、回收站、日历、属性面板、局部图谱、Callout/数学/Mermaid/Dataview SORT+LIMIT | 通过（测试仓库已还原为空） |
+| 127.0.0.1:5557 | 宽屏平板 2880×1920 | 三栏布局、笔记级菜单、分屏双开第二栏 | 通过 |
+| 127.0.0.1:5555 | 折叠屏 2210×2416 | 宽屏布局、笔记级菜单入口 | 通过 |
+
+> 5555 / 5557 为用户真实仓库，验证仅只读（打开笔记、切换面板、进入菜单），未写入任何内容。
+
 ## 关键架构决策
 
 ### 存储与索引
@@ -92,17 +139,23 @@ raw → FrontmatterParser → BlockParser（块级：标题/列表/任务/代码
 ### 状态管理约定
 
 - ViewModels（VaultViewModel/SearchViewModel/SyncViewModel）用 `@ObservedV2` + `@Trace`。
-- 页面 Index.ets 为 V1 `@Component`（历史原因），通过事件回调与 V2 组件（MdBlockView、NoteInfoPanel 等）交互。
-- 跨层异步数据用回调式事件（如 `onLoadDataView(query, onResult)`），避免 V1/V2 观察模型混用。
+- 页面 Index.ets 及 products/default 下全部组件均为 V2（`@ComponentV2` + `@Local/@Param/@Event` 等），通过事件回调与子组件交互。
+- 跨层异步数据用回调式事件（如 `onLoadDataView(query, onResult)`）。
+- `VaultViewModel.draftBuffer` 刻意保持非响应式（非 `@Trace`），避免输入时重建 TextArea 造成光标跳动；程序化更新须走 `TextAreaController`（见"编辑格式工具栏"）。
 
 ## 已知问题与 TODO
 
-1. **单测无法 CLI 运行**：hypium 测试只在 DevEco Studio 内可跑；`features/markdown/src/test/LocalUnit.test.ets` 含 Markdown 引擎 12 测 + DataViewQuery 3 测。
+1. **单测无法 CLI 运行**：hypium 测试只在 DevEco Studio 内可跑；`features/markdown/src/test/LocalUnit.test.ets` 现含 32 测（Markdown 引擎 + DataViewQuery）。
 2. `devecocli check arkts` 资源引用误报（见 AGENTS.md）。
 3. `C:\Users\song\.local\bin\deveco.exe` 可能被 WDAC 拦截，用 Temp 副本 workaround（见 AGENTS.md）。
-4. Dataview TABLE/LIST 为静态解析渲染（不联动索引数据）；TASK 查询仍为唯一可交互查询类型。
-5. Dataview 勾选后任务不实时从列表消失（本地翻转保留显示；重启或重渲染后按查询条件刷新）——与 Obsidian live query 行为略有差异，属有意取舍。
+4. ~~Dataview TABLE/LIST 为静态解析渲染~~ → 已完成 live 化（见"近期变更"）。
+5. ~~Dataview 勾选后任务不实时从列表消失~~ → 已完成实时消失（见"近期变更"）。
 6. 真机验证遗留：`2026-10-15.md` Gemini OAuth 任务曾被勾选、`Hermes记录.md` 有一行误插 `验证任务A`，待用户在应用内手动处理（用户数据，非代码问题）。
+7. 5555（折叠屏模拟器）UI 自动化偶发 a11y 树与实际渲染不一致、Toggle 点击不生效（"设置→仓库管理→新建"对话框），根因未明；屏幕熄灭也会导致点击失效（先 `power-shell wakeup; power-shell setmode 602`）。
+8. **服务卡片为静态视图**：本 SDK 卡片应用禁 `@StorageLink/@StorageProp`（`'StorageLink' can't support form application`）且未提供 `FormComponent`，卡片页无法取动态数据；真实数据由 `formProvider.updateForm` 发布（卡片侧渲染未验证）。可在设置里手动添加卡片。
+9. **分享面板**已注册为 `entity.system.share` 扩展（`skills`），需从第三方应用分享 Markdown 才会触发；系统分享面板的实测触发路径未覆盖。
+10. **数学公式为 Unicode 近似**：分数渲染为 `(a)/(b)`（非堆叠），复杂公式（矩阵、多行对齐）不支持；如需专业排版需引入 KaTeX/Web 方案。
+11. **宽屏分屏时右侧信息面板自动收起**：分屏 + 信息面板同时展开会把正文挤得过窄，故分屏时优先收起信息面板（可手动再打开）。
 
 ## 验证环境备注
 

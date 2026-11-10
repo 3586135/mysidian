@@ -487,6 +487,250 @@
     {
       "name": "md_dataview_empty",
       "value": "无匹配数据"
+    },
+    {
+      "name": "action_new_folder",
+      "value": "新建文件夹"
+    },
+    {
+      "name": "action_rename",
+      "value": "重命名"
+    },
+    {
+      "name": "action_move",
+      "value": "移动到…"
+    },
+    {
+      "name": "action_trash",
+      "value": "移入回收站"
+    },
+    {
+      "name": "action_empty_trash",
+      "value": "清空回收站"
+    },
+    {
+      "name": "dialog_rename_title",
+      "value": "重命名笔记"
+    },
+    {
+      "name": "dialog_rename_hint",
+      "value": "新的笔记名称"
+    },
+    {
+      "name": "dialog_folder_title",
+      "value": "新建文件夹"
+    },
+    {
+      "name": "dialog_folder_hint",
+      "value": "文件夹名称"
+    },
+    {
+      "name": "dialog_move_title",
+      "value": "移动到目录"
+    },
+    {
+      "name": "dialog_move_root",
+      "value": "仓库根目录"
+    },
+    {
+      "name": "dialog_trash_title",
+      "value": "移入回收站"
+    },
+    {
+      "name": "dialog_trash_msg",
+      "value": "笔记将被移入回收站，可在「清空回收站」前恢复。"
+    },
+    {
+      "name": "dialog_empty_trash_title",
+      "value": "清空回收站"
+    },
+    {
+      "name": "dialog_empty_trash_msg",
+      "value": "回收站中的笔记将被永久删除，此操作不可撤销。"
+    },
+    {
+      "name": "msg_no_note_selected",
+      "value": "请先选择一篇笔记"
+    },
+    {
+      "name": "msg_rename_done",
+      "value": "重命名完成，相关链接已同步更新"
+    },
+    {
+      "name": "msg_rename_failed",
+      "value": "重命名失败：同名笔记已存在"
+    },
+    {
+      "name": "msg_folder_done",
+      "value": "文件夹已创建"
+    },
+    {
+      "name": "msg_folder_failed",
+      "value": "创建文件夹失败：同名目录已存在"
+    },
+    {
+      "name": "msg_move_done",
+      "value": "已移动"
+    },
+    {
+      "name": "msg_move_failed",
+      "value": "移动失败：目标位置已存在同名笔记"
+    },
+    {
+      "name": "msg_trash_done",
+      "value": "已移入回收站"
+    },
+    {
+      "name": "msg_trash_failed",
+      "value": "移入回收站失败"
+    },
+    {
+      "name": "msg_empty_trash_done",
+      "value": "回收站已清空"
+    },
+    {
+      "name": "msg_image_done",
+      "value": "图片已插入"
+    },
+    {
+      "name": "msg_image_failed",
+      "value": "图片导入失败"
+    },
+    {
+      "name": "tab_graph",
+      "value": "图谱"
+    },
+    {
+      "name": "backlinks_linked",
+      "value": "已链接提及"
+    },
+    {
+      "name": "backlinks_unlinked",
+      "value": "未链接提及"
+    },
+    {
+      "name": "backlinks_link_it",
+      "value": "转为双链"
+    },
+    {
+      "name": "props_new_item",
+      "value": "新增标签"
+    },
+    {
+      "name": "props_add",
+      "value": "添加"
+    },
+    {
+      "name": "props_save",
+      "value": "保存"
+    },
+    {
+      "name": "props_pick_date",
+      "value": "选日期"
+    },
+    {
+      "name": "graph_empty",
+      "value": "暂无关联笔记"
+    },
+    {
+      "name": "calendar_today",
+      "value": "今天"
+    },
+    {
+      "name": "calendar_weekly",
+      "value": "本周周报"
+    },
+    {
+      "name": "action_calendar",
+      "value": "日历"
+    },
+    {
+      "name": "action_history",
+      "value": "历史版本"
+    },
+    {
+      "name": "action_template",
+      "value": "套用模板"
+    },
+    {
+      "name": "action_split",
+      "value": "分屏双开"
+    },
+    {
+      "name": "action_share",
+      "value": "快速闪念"
+    },
+    {
+      "name": "action_handwrite",
+      "value": "手写速记"
+    },
+    {
+      "name": "history_title",
+      "value": "历史版本"
+    },
+    {
+      "name": "history_empty",
+      "value": "暂无历史快照"
+    },
+    {
+      "name": "history_rollback",
+      "value": "回滚"
+    },
+    {
+      "name": "history_diff",
+      "value": "与当前内容的差异"
+    },
+    {
+      "name": "template_title",
+      "value": "选择模板"
+    },
+    {
+      "name": "template_empty",
+      "value": "仓库 Templates 目录中没有模板"
+    },
+    {
+      "name": "share_title",
+      "value": "快速闪念"
+    },
+    {
+      "name": "share_hint",
+      "value": "记录一条闪念"
+    },
+    {
+      "name": "share_save",
+      "value": "保存"
+    },
+    {
+      "name": "handwrite_title",
+      "value": "手写速记"
+    },
+    {
+      "name": "handwrite_clear",
+      "value": "清空"
+    },
+    {
+      "name": "handwrite_save",
+      "value": "插入笔记"
+    },
+    {
+      "name": "form_card_title",
+      "value": "MySidian 速记"
+    },
+    {
+      "name": "msg_history_rolled_back",
+      "value": "已回滚到所选版本"
+    },
+    {
+      "name": "msg_template_applied",
+      "value": "已套用模板"
+    },
+    {
+      "name": "msg_share_saved",
+      "value": "闪念已保存"
+    },
+    {
+      "name": "msg_handwrite_saved",
+      "value": "手写内容已插入笔记"
     }
   ]
 }

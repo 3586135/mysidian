@@ -192,7 +192,9 @@ export class InlineParser {
       targetPart = targetPart.substring(0, caret);
     }
     node.target = targetPart.trim();
-    node.text = node.alias.length > 0 ? node.alias : node.target;
+    // 本页锚点 [[#标题]] 的 target 为空，此时以标题文本作为显示名。
+    node.text = node.alias.length > 0 ? node.alias
+      : (node.target.length > 0 ? node.target : node.heading);
 
     result.node = node;
     result.next = close + 2;

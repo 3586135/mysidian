@@ -1,9 +1,13 @@
-import { DataViewTask, MdBlock, MdBlockType, MdInlineSegment, MdListItem } from '@ohos/domain';
+import { DataViewEntry, DataViewResult, DataViewTask, MdBlock, MdBlockType, MdInlineSegment,
+  MdListItem } from '@ohos/domain';
 import { BusinessError, pasteboard } from '@kit.BasicServicesKit';
+import { BlockParser } from '../parser/BlockParser';
 import { DataViewQuery } from '../parser/DataViewQuery';
 import { InlineParser } from '../parser/InlineParser';
+import { MathRenderer } from './MathRenderer';
 import { MdInlineFlattener } from './MdInlineFlattener';
 import { MdInlineText } from './MdInlineText';
+import { MdMermaidView } from './MdMermaidView';
 import { MdWebFallback } from './MdWebFallback';
 
 /** 任务元数据标签。 */
@@ -17,8 +21,12 @@ class TaskChip {
  */
 @ComponentV2
 export struct MdBlockView {
+  /** 嵌入渲染的最大递归深度，超过后显示占位提示。 */
+  private static readonly MAX_EMBED_DEPTH: number = 2;
   @Param block: MdBlock = new MdBlock();
   @Param fontSize: number = 16;
+  /** 嵌入深度：0 表示顶层文档。 */
+  @Param embedDepth: number = 0;
   @Local copied: boolean = false;
   private inlineParser: InlineParser = new InlineParser();
   @Event onOpenLink: (target: string, kind: string) => void =
@@ -26,10 +34,16 @@ export struct MdBlockView {
   @Event onOpenTag: (tag: string) => void = (tag: string): void => {};
   @Event onToggleTask: (rawLine: string, checked: boolean) => void =
     (rawLine: string, checked: boolean): void => {};
-  @Event onLoadDataView: (query: string, onResult: (tasks: DataViewTask[]) => void) => void =
-    (query: string, onResult: (tasks: DataViewTask[]) => void): void => {};
+  @Event onLoadDataView: (query: string, onResult: (result: DataViewResult) => void) => void =
+    (query: string, onResult: (result: DataViewResult) => void): void => {};
   @Event onToggleDataViewTask: (task: DataViewTask, checked: boolean) => void =
     (task: DataViewTask, checked: boolean): void => {};
+  /** 加载嵌入笔记正文（只读渲染）。 */
+  @Event onLoadEmbed: (target: string, onResult: (text: string) => void) => void =
+    (target: string, onResult: (text: string) => void): void => {};
+  /** 解析图片资源为可加载的 URI。 */
+  @Event onResolveAsset: (target: string, onResult: (uri: string) => void) => void =
+    (target: string, onResult: (uri: string) => void): void => {};
   @Local dataTasks: DataViewTask[] = [];
   @Local dataLoaded: boolean = false;
   private dataViewQuery: DataViewQuery | null = null;
@@ -37,30 +51,101 @@ export struct MdBlockView {
   @Local dataViewListItems: string[] = [];
   @Local dataViewTableLoaded: boolean = false;
   @Local dataViewListLoaded: boolean = false;
+  /** 图片资源 URI（解析完成后填充）。 */
+  @Local assetUri: string = '';
+  /** 嵌入笔记解析后的块。 */
+  @Local embedBlocks: MdBlock[] = [];
+  @Local embedReady: boolean = false;
+  /** Callout 是否展开（可折叠）。 */
+  @Local calloutOpen: boolean = true;
 
   aboutToAppear(): void {
+    if (this.block.type === MdBlockType.CALLOUT) {
+      this.calloutOpen = !this.block.calloutFolded;
+    }
+    if (this.block.type === MdBlockType.IMAGE) {
+      this.onResolveAsset(this.block.target, (uri: string): void => {
+        this.assetUri = uri;
+      });
+    } else if (this.block.type === MdBlockType.EMBED) {
+      this.onLoadEmbed(this.block.target, (text: string): void => {
+        this.embedBlocks = new BlockParser().parse(text.split('\n'));
+        this.embedReady = true;
+      });
+    }
     if (this.block.type === MdBlockType.CODE && this.block.lang.trim().toLowerCase() === 'dataview') {
       const query: DataViewQuery = DataViewQuery.parse(this.block.rawContent);
       if (query.isTaskQuery()) {
         this.dataViewQuery = query;
-        this.onLoadDataView(this.block.rawContent, (tasks: DataViewTask[]): void => {
-          this.dataTasks = tasks;
+        this.onLoadDataView(this.block.rawContent, (result: DataViewResult): void => {
+          this.dataTasks = result.tasks;
           this.dataLoaded = true;
         });
       } else if (query.isTableQuery() && query.parsedOk) {
         this.dataViewQuery = query;
-        this.dataViewTableRows = query.tableRows;
-        this.dataViewTableLoaded = true;
+        if (query.live) {
+          this.onLoadDataView(this.block.rawContent, (result: DataViewResult): void => {
+            this.dataViewTableRows = this.buildEntryRows(result.entries);
+            this.dataViewTableLoaded = true;
+          });
+        } else {
+          this.dataViewTableRows = query.tableRows;
+          this.dataViewTableLoaded = true;
+        }
       } else if (query.isListQuery() && query.parsedOk) {
         this.dataViewQuery = query;
-        this.dataViewListItems = query.listItems;
-        this.dataViewListLoaded = true;
+        if (query.live) {
+          this.onLoadDataView(this.block.rawContent, (result: DataViewResult): void => {
+            this.dataViewListItems = this.buildEntryListItems(result.entries);
+            this.dataViewListLoaded = true;
+          });
+        } else {
+          this.dataViewListItems = query.listItems;
+          this.dataViewListLoaded = true;
+        }
       }
     }
   }
 
+  /** live TABLE 条目转显示行：首列文件链接（WITHOUT ID 除外）+ 属性值。 */
+  private buildEntryRows(entries: DataViewEntry[]): string[][] {
+    const rows: string[][] = [];
+    const withoutFile: boolean = this.dataViewQuery !== null && this.dataViewQuery.withoutId;
+    for (const entry of entries) {
+      const row: string[] = [];
+      if (!withoutFile) {
+        row.push(`[[${entry.fileName}]]`);
+      }
+      for (const cell of entry.cells) {
+        row.push(cell);
+      }
+      rows.push(row);
+    }
+    return rows;
+  }
+
+  /** live LIST 条目转显示条目：文件链接（带属性时附 → 属性值）。 */
+  private buildEntryListItems(entries: DataViewEntry[]): string[] {
+    const items: string[] = [];
+    const listProp: string = this.dataViewQuery !== null ? this.dataViewQuery.listProp : '';
+    for (const entry of entries) {
+      let item: string = `[[${entry.fileName}]]`;
+      if (listProp.length > 0 && entry.cells.length > 0 && entry.cells[0].length > 0) {
+        item = `${item} → ${entry.cells[0]}`;
+      }
+      items.push(item);
+    }
+    return items;
+  }
+
   private isDataViewQuery(): boolean {
     return this.dataViewQuery !== null;
+  }
+
+  /** 是否为 Mermaid 代码块。 */
+  private isMermaid(): boolean {
+    return this.block.type === MdBlockType.CODE &&
+      this.block.lang.trim().toLowerCase() === 'mermaid';
   }
 
   build() {
@@ -89,9 +174,13 @@ export struct MdBlockView {
           } else {
             this.dataViewTaskView()
           }
+        } else if (this.isMermaid()) {
+          this.mermaidView()
         } else {
           this.codeView()
         }
+      } else if (this.block.type === MdBlockType.MATH) {
+        this.mathView()
       } else if (this.block.type === MdBlockType.QUOTE) {
         this.quoteView()
       } else if (this.block.type === MdBlockType.CALLOUT) {
@@ -108,6 +197,10 @@ export struct MdBlockView {
           contentHeight: this.htmlHeight()
         })
         .width('100%')
+      } else if (this.block.type === MdBlockType.IMAGE) {
+        this.imageView()
+      } else if (this.block.type === MdBlockType.EMBED) {
+        this.embedView()
       } else {
         this.rawView()
       }
@@ -510,12 +603,22 @@ export struct MdBlockView {
     return this.dataTasks[index].fileName !== prev.fileName;
   }
 
-  /** 本地翻转勾选状态（即时反馈）并通知宿主回写。 */
+  /** 本地翻转勾选状态（即时反馈）并通知宿主回写；翻转后不再满足查询条件的任务实时移除。 */
   private toggleDataViewTask(task: DataViewTask): void {
     const next: boolean = !task.item.checked;
     task.item.checked = next;
-    this.dataTasks = this.dataTasks.slice();
     this.onToggleDataViewTask(task, next);
+    if (this.dataViewQuery !== null && !this.dataViewQuery.matchesItem(task.item)) {
+      const kept: DataViewTask[] = [];
+      for (const candidate of this.dataTasks) {
+        if (candidate !== task) {
+          kept.push(candidate);
+        }
+      }
+      this.dataTasks = kept;
+      return;
+    }
+    this.dataTasks = this.dataTasks.slice();
   }
 
   @Builder
@@ -545,17 +648,31 @@ export struct MdBlockView {
 
   @Builder
   calloutView() {
-    Row() {
-      Text(this.calloutIcon())
-        .fontSize(this.fontSize)
-        .fontWeight(FontWeight.Bold)
-        .fontColor($r('sys.color.ohos_id_color_emphasize'))
-        .width(24)
-      Column() {
-        Text(this.block.calloutType)
+    Column() {
+      Row() {
+        SymbolGlyph(this.calloutOpen ? $r('sys.symbol.chevron_down') : $r('sys.symbol.chevron_right'))
+          .fontSize(12)
+          .fontColor([$r('sys.color.ohos_id_color_text_secondary')])
+          .width(18)
+        Text(this.calloutTitle())
           .fontSize(this.fontSize)
           .fontWeight(FontWeight.Bold)
           .fontColor($r('sys.color.ohos_id_color_text_primary'))
+          .maxLines(2)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+          .layoutWeight(1)
+        Text(this.block.calloutType)
+          .fontSize(this.fontSize - 4)
+          .fontColor($r('sys.color.ohos_id_color_text_secondary'))
+          .margin({ left: 6 })
+      }
+      .width('100%')
+      .alignItems(VerticalAlign.Center)
+      .onClick(() => {
+        this.calloutOpen = !this.calloutOpen;
+      })
+
+      if (this.calloutOpen) {
         MdInlineText({
           segments: MdInlineFlattener.flatten(this.block.inlines),
           fontSize: this.fontSize,
@@ -566,15 +683,53 @@ export struct MdBlockView {
             this.onOpenTag(tag);
           }
         })
+        .width('100%')
+        .margin({ top: 4 })
       }
-      .layoutWeight(1)
-      .alignItems(HorizontalAlign.Start)
     }
     .width('100%')
+    .alignItems(HorizontalAlign.Start)
     .padding(12)
     .borderRadius(8)
     .backgroundColor($r('sys.color.ohos_id_color_component_activated'))
+    .border({ width: { left: 3 }, color: $r('sys.color.ohos_id_color_emphasize') })
     .margin({ top: 6, bottom: 6 })
+  }
+
+  /** Callout 标题：优先使用显式标题，其次为类型名。 */
+  private calloutTitle(): string {
+    if (this.block.calloutTitle.length > 0) {
+      return this.block.calloutTitle;
+    }
+    return this.block.calloutType;
+  }
+
+  /** 数学公式块：原生 LaTeX 子集渲染（Unicode 近似，不依赖 Web 引擎）。 */
+  @Builder
+  mathView() {
+    Column() {
+      Text(MathRenderer.toPlain(this.block.rawContent))
+        .fontSize(17)
+        .fontFamily('serif')
+        .fontColor($r('app.color.hm_text_primary'))
+        .textAlign(TextAlign.Center)
+        .width('100%')
+    }
+    .width('100%')
+    .alignItems(HorizontalAlign.Center)
+    .padding(12)
+    .borderRadius(8)
+    .backgroundColor($r('sys.color.ohos_id_color_card_bg'))
+    .margin({ top: 6, bottom: 6 })
+  }
+
+  /** Mermaid 流程图：原生 Canvas 渲染。 */
+  @Builder
+  mermaidView() {
+    MdMermaidView({
+      source: this.block.rawContent
+    })
+    .width('100%')
   }
 
   @Builder
@@ -652,6 +807,89 @@ export struct MdBlockView {
     .borderRadius(8)
     .backgroundColor($r('sys.color.ohos_id_color_card_bg'))
     .margin({ top: 6, bottom: 6 })
+  }
+
+  /** 图片块渲染：解析成功则显示图片，否则显示占位提示。 */
+  @Builder
+  imageView() {
+    Column() {
+      if (this.assetUri.length > 0) {
+        Image(this.assetUri)
+          .width(this.imageWidth())
+          .objectFit(ImageFit.Contain)
+          .borderRadius(8)
+      } else {
+        Text($r('app.string.md_image_missing'))
+          .fontSize(this.fontSize - 2)
+          .fontColor($r('sys.color.ohos_id_color_text_secondary'))
+      }
+      if (this.block.alt.length > 0) {
+        Text(this.block.alt)
+          .fontSize(this.fontSize - 3)
+          .fontColor($r('sys.color.ohos_id_color_text_secondary'))
+          .margin({ top: 4 })
+      }
+    }
+    .width('100%')
+    .alignItems(HorizontalAlign.Start)
+    .margin({ top: 6, bottom: 6 })
+  }
+
+  /** 嵌入块渲染：递归渲染目标笔记内容（只读，任务勾选不生效）。 */
+  @Builder
+  embedView() {
+    Column() {
+      if (this.embedDepth >= MdBlockView.MAX_EMBED_DEPTH) {
+        Text($r('app.string.md_embed_too_deep'))
+          .fontSize(this.fontSize - 2)
+          .fontColor($r('sys.color.ohos_id_color_text_secondary'))
+      } else if (!this.embedReady) {
+        Text($r('app.string.md_embed_loading'))
+          .fontSize(this.fontSize - 2)
+          .fontColor($r('sys.color.ohos_id_color_text_secondary'))
+      } else {
+        ForEach(this.embedBlocks, (block: MdBlock, index: number) => {
+          MdBlockView({
+            block: block,
+            fontSize: this.fontSize,
+            embedDepth: this.embedDepth + 1,
+            onOpenLink: (target: string, kind: string): void => {
+              this.onOpenLink(target, kind);
+            },
+            onOpenTag: (tag: string): void => {
+              this.onOpenTag(tag);
+            },
+            onToggleTask: (rawLine: string, checked: boolean): void => {
+            },
+            onLoadDataView: (query: string, onResult: (result: DataViewResult) => void): void => {
+            },
+            onToggleDataViewTask: (task: DataViewTask, checked: boolean): void => {
+            },
+            onLoadEmbed: (target: string, onResult: (text: string) => void): void => {
+              this.onLoadEmbed(target, onResult);
+            },
+            onResolveAsset: (target: string, onResult: (uri: string) => void): void => {
+              this.onResolveAsset(target, onResult);
+            }
+          })
+        }, (block: MdBlock, index: number): string =>
+          `embed_${this.embedDepth}_${index}_${block.type}`)
+      }
+    }
+    .width('100%')
+    .alignItems(HorizontalAlign.Start)
+    .padding(10)
+    .borderRadius(8)
+    .backgroundColor($r('sys.color.ohos_id_color_card_bg'))
+    .margin({ top: 6, bottom: 6 })
+  }
+
+  /** 图片宽度：指定像素宽度时按像素，否则撑满容器。 */
+  private imageWidth(): Length {
+    if (this.block.imageWidth > 0) {
+      return this.block.imageWidth;
+    }
+    return '100%';
   }
 
   private htmlHeight(): number {

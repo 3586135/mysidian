@@ -57,10 +57,14 @@ export class FrontmatterParser {
       const value: string = trimmed.substring(separator + 1).trim();
       const property: MdProperty = new MdProperty();
       property.key = key;
+      let listBranch: boolean = false;
       if (value.length === 0) {
         property.type = MdPropType.LIST;
         property.listValue = FrontmatterParser.collectListItems(lines, index + 1);
+        // 列表分支把游标推进到下一个键所在行，循环末尾不能再自增，
+        // 否则列表之后的属性会被整条跳过（属性丢失）。
         index = FrontmatterParser.skipListItems(lines, index + 1);
+        listBranch = true;
       } else if (value.startsWith('[') && value.endsWith(']')) {
         property.type = MdPropType.LIST;
         property.listValue = FrontmatterParser.splitInlineList(value);
@@ -79,7 +83,9 @@ export class FrontmatterParser {
           }
         }
       }
-      index++;
+      if (!listBranch) {
+        index++;
+      }
     }
     frontmatter.raw = rawLines.join('\n');
     return frontmatter;

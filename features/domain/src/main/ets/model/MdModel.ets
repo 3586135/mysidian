@@ -103,6 +103,10 @@ export class MdBlock {
   items: MdListItem[] = [];
   /** Callout 类型（NOTE / TIP / WARNING ...） */
   calloutType: string = '';
+  /** Callout 标题（`> [!NOTE]- 标题` 中的标题）。 */
+  calloutTitle: string = '';
+  /** Callout 是否折叠（`[!NOTE]-` 折叠、`[!NOTE]+` 展开）。 */
+  calloutFolded: boolean = false;
   /** 表格表头 */
   headers: string[] = [];
   /** 表格数据行 */
@@ -111,6 +115,10 @@ export class MdBlock {
   aligns: string[] = [];
   /** 嵌入目标（embed / image） */
   target: string = '';
+  /** 图片说明文本（image 块）。 */
+  alt: string = '';
+  /** 图片宽度（像素，0 表示自适应撑满容器）。 */
+  imageWidth: number = 0;
 }
 
 /** 单条属性。 */
@@ -151,6 +159,22 @@ export class DataViewTask {
   fileName: string = '';
   /** 任务项。 */
   item: MdListItem = new MdListItem();
+}
+
+/** Dataview TABLE/LIST 查询结果条目（笔记级，联动索引）。 */
+export class DataViewEntry {
+  /** 来源笔记路径。 */
+  path: string = '';
+  /** 来源笔记显示名（不含扩展名）。 */
+  fileName: string = '';
+  /** 属性列值（与查询列顺序一致）。 */
+  cells: string[] = [];
+}
+
+/** Dataview 查询结果：TASK 任务或 TABLE/LIST 笔记条目。 */
+export class DataViewResult {
+  tasks: DataViewTask[] = [];
+  entries: DataViewEntry[] = [];
 }
 
 /** 解析后的整篇文档。 */

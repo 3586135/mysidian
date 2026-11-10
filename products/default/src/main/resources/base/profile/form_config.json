@@ -1,0 +1,24 @@
+{
+  "forms": [
+    {
+      "name": "MySidianCard",
+      "description": "今日日记与待办任务速览",
+      "src": "./ets/form/cards/FormCard.ets",
+      "uiSyntax": "arkts",
+      "window": {
+        "designWidth": 360
+      },
+      "isDefault": true,
+      "updateEnabled": true,
+      "defaultDimension": "2*2",
+      "supportDimensions": [
+        "1*2",
+        "2*2",
+        "2*4",
+        "4*4"
+      ],
+      "updateDuration": 30,
+      "scheduledUpdateTime": "00:30"
+    }
+  ]
+}

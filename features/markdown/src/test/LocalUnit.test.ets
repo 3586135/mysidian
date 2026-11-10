@@ -3,6 +3,9 @@ import { MdBlockType, MdInlineType, MdListItem } from '@ohos/domain';
 import { MarkdownParser } from '../main/ets/parser/MarkdownParser';
 import { DataViewQuery } from '../main/ets/parser/DataViewQuery';
 import { TaskMetadata } from '../main/ets/parser/TaskMetadata';
+import { MdInlineFlattener } from '../main/ets/render/MdInlineFlattener';
+import { MermaidFlow } from '../main/ets/render/MermaidFlow';
+import { MathRenderer } from '../main/ets/render/MathRenderer';
 
 export default function markdownParserTest() {
   describe('MarkdownParserTest', () => {
@@ -37,9 +40,60 @@ export default function markdownParserTest() {
     });
 
     it('parsesEmbed', 0, () => {
-      const document = MarkdownParser.parse('![[image.png]]');
-      expect(document.blocks[0].inlines[0].type).assertEqual(MdInlineType.EMBED);
-      expect(document.blocks[0].inlines[0].target).assertEqual('image.png');
+      // 独占一行的 ![[image.png]] 现在解析为图片块（见 parsesImageBlock）。
+      const document = MarkdownParser.parse('正文 ![[image.png]] 结尾');
+      expect(document.blocks[0].type).assertEqual(MdBlockType.PARAGRAPH);
+      expect(document.blocks[0].inlines[1].type).assertEqual(MdInlineType.EMBED);
+      expect(document.blocks[0].inlines[1].target).assertEqual('image.png');
+    });
+
+    it('parsesImageBlock', 0, () => {
+      const document = MarkdownParser.parse('![[photo.png]]');
+      expect(document.blocks.length).assertEqual(1);
+      expect(document.blocks[0].type).assertEqual(MdBlockType.IMAGE);
+      expect(document.blocks[0].target).assertEqual('photo.png');
+    });
+
+    it('parsesImageBlockWithWidth', 0, () => {
+      const document = MarkdownParser.parse('![[photo.png|300]]');
+      expect(document.blocks[0].type).assertEqual(MdBlockType.IMAGE);
+      expect(document.blocks[0].target).assertEqual('photo.png');
+      expect(document.blocks[0].imageWidth).assertEqual(300);
+    });
+
+    it('parsesMarkdownImageBlock', 0, () => {
+      const document = MarkdownParser.parse('![说明](attachments/a.png)');
+      expect(document.blocks.length).assertEqual(1);
+      expect(document.blocks[0].type).assertEqual(MdBlockType.IMAGE);
+      expect(document.blocks[0].target).assertEqual('attachments/a.png');
+    });
+
+    it('parsesEmbedBlockForNote', 0, () => {
+      const document = MarkdownParser.parse('![[另一篇笔记]]');
+      expect(document.blocks.length).assertEqual(1);
+      expect(document.blocks[0].type).assertEqual(MdBlockType.EMBED);
+      expect(document.blocks[0].target).assertEqual('另一篇笔记');
+    });
+
+    it('keepsInlineImageInsideParagraph', 0, () => {
+      const document = MarkdownParser.parse('前缀 ![[photo.png]] 后缀');
+      expect(document.blocks[0].type).assertEqual(MdBlockType.PARAGRAPH);
+      expect(document.blocks[0].inlines[1].type).assertEqual(MdInlineType.EMBED);
+    });
+
+    it('flattensWikiLinkWithAnchor', 0, () => {
+      const document = MarkdownParser.parse('see [[Target Note]] and [[Other#Section|alias]]');
+      const first = MdInlineFlattener.flatten(document.blocks[0].inlines);
+      expect(first[1].linkTarget).assertEqual('Target Note');
+      expect(first[1].linkKind).assertEqual('wiki');
+      // 锚点被拼回目标串，上层再拆分解析。
+      expect(first[3].linkTarget).assertEqual('Other#Section');
+    });
+
+    it('flattensSamePageAnchor', 0, () => {
+      const document = MarkdownParser.parse('[[#小节标题]]');
+      const segments = MdInlineFlattener.flatten(document.blocks[0].inlines);
+      expect(segments[0].linkTarget).assertEqual('#小节标题');
     });
 
     it('parsesTag', 0, () => {
@@ -235,6 +289,98 @@ export default function markdownParserTest() {
     it('parsesDataViewNonTaskQueryAsCode', 0, () => {
       const query = DataViewQuery.parse('TABLE file.size\nWHERE file.ext = "md"');
       expect(query.isTaskQuery()).assertFalse();
+    });
+
+    it('parsesDataViewLiveTableQuery', 0, () => {
+      const query = DataViewQuery.parse('TABLE author, tags\nFROM #欢迎\nWHERE contains(tags, "指南")');
+      expect(query.isTableQuery()).assertTrue();
+      expect(query.live).assertTrue();
+      expect(query.parsedOk).assertTrue();
+      expect(query.fromTag).assertEqual('欢迎');
+      expect(query.tableProps.length).assertEqual(2);
+      expect(query.tableProps[0]).assertEqual('author');
+      expect(query.tableColumns.length).assertEqual(3);
+      expect(query.tableColumns[0]).assertEqual('File');
+      expect(query.tableColumns[1]).assertEqual('author');
+      expect(query.requiredTags.length).assertEqual(1);
+      expect(query.requiredTags[0]).assertEqual('指南');
+      expect(query.matchesPage('---\ntags: [欢迎, 指南]\n---\n正文', ['欢迎', '指南'], '欢迎.md', ''))
+        .assertTrue();
+      expect(query.matchesPage('正文 #欢迎', ['欢迎'], '欢迎.md', '')).assertFalse();
+    });
+
+    it('parsesDataViewLiveListQueryFromFolder', 0, () => {
+      const query = DataViewQuery.parse('LIST\nFROM "示例"\nWHERE file.name != this.file.name');
+      expect(query.isListQuery()).assertTrue();
+      expect(query.live).assertTrue();
+      expect(query.parsedOk).assertTrue();
+      expect(query.fromFolder).assertEqual('示例');
+      expect(query.excludeCurrent).assertTrue();
+      expect(query.matchesPage('x', [], '示例/a.md', '')).assertTrue();
+      expect(query.matchesPage('x', [], '其他/a.md', '')).assertFalse();
+      expect(query.matchesPage('x', [], '示例/a.md', '示例/a.md')).assertFalse();
+    });
+
+    it('parsesDataViewListWithPropAndInlineFrom', 0, () => {
+      const query = DataViewQuery.parse('LIST status FROM #任务');
+      expect(query.live).assertTrue();
+      expect(query.listProp).assertEqual('status');
+      expect(query.fromTag).assertEqual('任务');
+    });
+
+    it('parsesDataViewTableWithoutId', 0, () => {
+      const query = DataViewQuery.parse('TABLE WITHOUT ID author FROM #x');
+      expect(query.withoutId).assertTrue();
+      expect(query.tableColumns.length).assertEqual(1);
+      expect(query.tableColumns[0]).assertEqual('author');
+    });
+
+    it('keepsStaticTableFallbackWithoutFrom', 0, () => {
+      const query = DataViewQuery.parse('TABLE\n| a | b |\n| 1 | 2 |');
+      expect(query.live).assertFalse();
+      expect(query.parsedOk).assertTrue();
+      expect(query.tableColumns.length).assertEqual(2);
+      expect(query.tableRows.length).assertEqual(1);
+      expect(query.tableRows[0][0]).assertEqual('1');
+    });
+
+    it('parsesMermaidGraphWithoutCrash', 0, () => {
+      const graph = MermaidFlow.parse('graph TD\nA[开始] --> B[处理]\nB --> C[结束]');
+      expect(graph.valid).assertTrue();
+      expect(graph.nodes.length).assertEqual(3);
+      expect(graph.nodes[0].label).assertEqual('开始');
+      expect(graph.nodes[1].label).assertEqual('处理');
+      expect(graph.edges.length).assertEqual(2);
+    });
+
+    it('keepsMermaidInvalidSourceSafe', 0, () => {
+      const graph = MermaidFlow.parse('not a graph');
+      expect(graph.valid).assertFalse();
+      expect(graph.nodes.length).assertEqual(0);
+    });
+
+    it('rendersMathToPlainText', 0, () => {
+      expect(MathRenderer.toPlain('a^2 + b^2 = c^2')).assertEqual('a² + b² = c²');
+      expect(MathRenderer.toPlain('\\frac{1}{2}')).assertEqual('(1)/(2)');
+      expect(MathRenderer.toPlain('\\sqrt{x}')).assertEqual('√(x)');
+      expect(MathRenderer.toPlain('\\alpha + \\beta')).assertEqual('α + β');
+    });
+
+    it('flattensInlineMath', 0, () => {
+      const document = MarkdownParser.parse('inline $x^2$ here');
+      const segments = MdInlineFlattener.flatten(document.blocks[0].inlines);
+      expect(segments[1].text).assertEqual('x²');
+    });
+
+    it('keepsFrontmatterKeysAfterListProperty', 0, () => {
+      const document = MarkdownParser.parse(
+        '---\nstatus: 进行中\ntags:\n  - 功能验证\ndue: 2026-11-20\n---\n\n# 标题');
+      const properties = document.frontmatter.properties;
+      expect(properties.length).assertEqual(3);
+      expect(properties[0].key).assertEqual('status');
+      expect(properties[1].key).assertEqual('tags');
+      expect(properties[2].key).assertEqual('due');
+      expect(properties[2].value).assertEqual('2026-11-20');
     });
   });
 }

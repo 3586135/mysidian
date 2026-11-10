@@ -3,6 +3,18 @@
     {
       "name": "md_dataview_empty",
       "value": "无匹配任务"
+    },
+    {
+      "name": "md_image_missing",
+      "value": "[图片未找到]"
+    },
+    {
+      "name": "md_embed_loading",
+      "value": "嵌入内容加载中…"
+    },
+    {
+      "name": "md_embed_too_deep",
+      "value": "[嵌入层数超限]"
     }
   ]
 }

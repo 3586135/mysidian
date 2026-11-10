@@ -8,6 +8,8 @@ import { webview } from '@kit.ArkWeb';
 export struct MdWebFallback {
   @Param html: string = '';
   @Param contentHeight: number = 0;
+  /** 追加的自定义样式（数学公式等场景使用）。 */
+  @Param extraStyle: string = '';
   private computedContentHeight: number = 220;
   private controller: webview.WebviewController = new webview.WebviewController();
 
@@ -52,6 +54,7 @@ export struct MdWebFallback {
     return '<!DOCTYPE html><html><head><meta name="viewport" content="width=device-width, ' +
       'initial-scale=1"><style>body{margin:0;padding:8px;font-size:15px;line-height:1.6;' +
       'font-family:sans-serif;}img{max-width:100%;}@media (prefers-color-scheme: dark){' +
-      'body{color:#e6e6e6;background:#1b1b1b;}}</style></head><body>' + safe + '</body></html>';
+      'body{color:#e6e6e6;background:#1b1b1b;}}' + this.extraStyle + '</style></head><body>' +
+      safe + '</body></html>';
   }
 }

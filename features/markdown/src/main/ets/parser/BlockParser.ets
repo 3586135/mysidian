@@ -31,6 +31,18 @@ export class BlockParser {
         index = result.next;
         continue;
       }
+      const media: RegExpExecArray | null = /^!\[\[([^\]]+)\]\]$/.exec(trimmed);
+      if (media !== null) {
+        blocks.push(BlockParser.parseMediaBlock(media[1]));
+        index++;
+        continue;
+      }
+      const mdImage: RegExpExecArray | null = /^!\[[^\]]*\]\(([^)]+)\)$/.exec(trimmed);
+      if (mdImage !== null) {
+        blocks.push(BlockParser.parseMediaBlock(mdImage[1]));
+        index++;
+        continue;
+      }
       const heading: RegExpExecArray | null = /^#{1,6}\s+(.*)$/.exec(trimmed);
       if (heading !== null) {
         const block: MdBlock = new MdBlock();
@@ -132,13 +144,17 @@ export class BlockParser {
       index++;
     }
     let content: string = body.join('\n');
-    const callout: RegExpExecArray | null = /^\[!([A-Za-z]+)\]\s*(.*)$/.exec(body.length > 0 ? body[0] : '');
+    const callout: RegExpExecArray | null =
+      /^\[!([A-Za-z]+)\]([+-]?)\s*(.*)$/.exec(body.length > 0 ? body[0] : '');
     if (callout !== null) {
       block.type = MdBlockType.CALLOUT;
       block.calloutType = callout[1].toUpperCase();
+      // Obsidian 折叠语法：`> [!NOTE]-` 折叠、`> [!NOTE]+` 展开。
+      block.calloutFolded = callout[2] === '-';
+      block.calloutTitle = callout[3].trim();
       const rest: string[] = [];
-      if (callout[2].length > 0) {
-        rest.push(callout[2]);
+      if (block.calloutTitle.length > 0) {
+        rest.push(block.calloutTitle);
       }
       for (let i: number = 1; i < body.length; i++) {
         rest.push(body[i]);
@@ -331,7 +347,58 @@ export class BlockParser {
     if (this.isListItem(trimmed)) {
       return true;
     }
+    if (trimmed.startsWith('!')) {
+      return BlockParser.isMediaLine(trimmed);
+    }
     return false;
+  }
+
+  /** 是否为独占一行的图片 / 嵌入写法。 */
+  private static isMediaLine(trimmed: string): boolean {
+    return /^!\[\[[^\]]+\]\]$/.test(trimmed) || /^!\[[^\]]*\]\([^)]+\)$/.test(trimmed);
+  }
+
+  /**
+   * 解析独占一行的图片 / 嵌入块：![[x.png]] / ![[笔记]] / ![说明](路径)。
+   * 图片按扩展名判定；其余 wiki 目标视为笔记嵌入。
+   */
+  private static parseMediaBlock(spec: string): MdBlock {
+    const block: MdBlock = new MdBlock();
+    let target: string = spec.trim();
+    let alias: string = '';
+    const pipe: number = target.indexOf('|');
+    if (pipe >= 0) {
+      alias = target.substring(pipe + 1).trim();
+      target = target.substring(0, pipe).trim();
+    }
+    block.target = target;
+    block.alt = alias;
+    if (!BlockParser.isImageTarget(target)) {
+      block.type = MdBlockType.EMBED;
+      return block;
+    }
+    block.type = MdBlockType.IMAGE;
+    // Obsidian 风格 ![[x.png|300]] 中的数字为像素宽度。
+    if (alias.length > 0) {
+      const width: number = Number(alias);
+      if (!Number.isNaN(width) && width > 0) {
+        block.imageWidth = width;
+        block.alt = '';
+      }
+    }
+    return block;
+  }
+
+  /** 目标是否为图片（按扩展名判定）。 */
+  private static isImageTarget(target: string): boolean {
+    const lower: string = target.toLowerCase();
+    const index: number = lower.lastIndexOf('.');
+    if (index < 0) {
+      return false;
+    }
+    const ext: string = lower.substring(index + 1);
+    return ext === 'png' || ext === 'jpg' || ext === 'jpeg' || ext === 'gif' ||
+      ext === 'webp' || ext === 'bmp' || ext === 'svg';
   }
 
   private countFenceChars(text: string, fenceChar: string): number {

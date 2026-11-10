@@ -1,4 +1,5 @@
 import { MdInline, MdInlineSegment, MdInlineType } from '@ohos/domain';
+import { MathRenderer } from './MathRenderer';
 
 /**
  * 把行内节点树拍平为带样式的片段列表。
@@ -28,7 +29,8 @@ export class MdInlineFlattener {
         continue;
       }
       const segment: MdInlineSegment = new MdInlineSegment();
-      segment.text = inline.text;
+      segment.text = inline.type === MdInlineType.MATH
+        ? MathRenderer.toPlain(inline.text) : inline.text;
       segment.bold = bold;
       segment.italic = italic;
       segment.strike = strike;
@@ -37,7 +39,10 @@ export class MdInlineFlattener {
         segment.linkTarget = inline.url;
         segment.linkKind = 'url';
       } else if (inline.type === MdInlineType.WIKI_LINK) {
-        segment.linkTarget = inline.target;
+        // 锚点拼回目标串：[[笔记#标题]] → linkTarget = "笔记#标题"，
+        // 由上层拆分解析，渲染层的事件签名保持不变。
+        segment.linkTarget = inline.heading.length > 0
+          ? `${inline.target}#${inline.heading}` : inline.target;
         segment.linkKind = 'wiki';
       } else if (inline.type === MdInlineType.EMBED) {
         segment.linkTarget = inline.target;

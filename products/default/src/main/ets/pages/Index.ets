@@ -1,20 +1,26 @@
 import { promptAction, window } from '@kit.ArkUI';
 import { picker } from '@kit.CoreFileKit';
 import { BusinessError } from '@kit.BasicServicesKit';
+import { photoAccessHelper } from '@kit.MediaLibraryKit';
 import { HdsBarStyle, HdsTabs, HdsTabsController, hdsMaterial } from '@kit.UIDesignKit';
 import { EmptyState, FileTreeView, Logger } from '@ohos/common';
-import { MdDocumentView, MdDocumentViewController } from '@ohos/markdown';
-import { DataViewTask, OutlineEntry, VaultInfo } from '@ohos/domain';
+import { MdDocumentView, MdDocumentViewController, MdInlineFlattener } from '@ohos/markdown';
+import { CalendarDay, DataViewResult, DataViewTask, GraphData, MdBlock, MdBlockType, OutlineEntry,
+  VaultInfo } from '@ohos/domain';
+import { DiffLine, HistorySnapshot } from '@ohos/vault';
 import { NoteInfoPanel } from '../view/NoteInfoPanel';
 import { SearchOverlay } from '../view/SearchOverlay';
 import { QuickSwitcher } from '../view/QuickSwitcher';
 import { RecentNotesPanel } from '../view/RecentNotesPanel';
 import { CommandPalette } from '../view/CommandPalette';
 import { SyncSettings } from '../view/SyncSettings';
+import { CalendarPanel } from '../view/CalendarPanel';
+import { HandwritePanel } from '../view/HandwritePanel';
 import { AppCommand } from '../viewmodel/AppCommand';
 import { SearchViewModel } from '../viewmodel/SearchViewModel';
 import { SyncViewModel } from '../viewmodel/SyncViewModel';
 import { VaultViewModel } from '../viewmodel/VaultViewModel';
+import { CompletionCandidate, EditorTextUtils, ListContinuation } from '../viewmodel/EditorTextUtils';
 
 const LOG: Logger = new Logger('MySidianPage');
 
@@ -44,10 +50,54 @@ struct Index {
   @Local showRecent: boolean = false;
   /** 编辑工具栏显示状态。 */
   @Local showToolbar: boolean = false;
-  /** 光标位置。 */
-  @Local cursorPos: number = 0;
+  /** wiki 链接补全浮层。 */
+  @Local showCompletion: boolean = false;
+  @Local completionItems: CompletionCandidate[] = [];
+  @Local completionX: number = 0;
+  @Local completionY: number = 0;
+  /** 撤销 / 重做栈深度（工具栏禁用态）。 */
+  @Local undoDepth: number = 0;
+  @Local redoDepth: number = 0;
+  /** 重命名对话框。 */
+  @Local showRenamePanel: boolean = false;
+  @Local renameText: string = '';
+  /** 新建文件夹对话框。 */
+  @Local showFolderPanel: boolean = false;
+  @Local folderName: string = '';
+  /** 移动目标目录选择面板。 */
+  @Local showMovePanel: boolean = false;
+  @Local moveDirs: string[] = [];
+  /** 日历面板。 */
+  @Local showCalendar: boolean = false;
+  @Local calendarDays: CalendarDay[] = [];
+  @Local calendarYear: number = 2026;
+  @Local calendarMonth: number = 1;
+  /** 历史版本面板。 */
+  @Local showHistory: boolean = false;
+  @Local historyList: HistorySnapshot[] = [];
+  @Local historyDiff: DiffLine[] = [];
+  @Local historySelected: string = '';
+  /** 模板选择面板。 */
+  @Local showTemplates: boolean = false;
+  @Local templateList: string[] = [];
+  /** 快速闪念面板。 */
+  @Local showQuickNote: boolean = false;
+  @Local quickNoteText: string = '';
+  /** 手写速记面板。 */
+  @Local showHandwrite: boolean = false;
+  /** 快速切换器是否处于「选择分屏笔记」模式。 */
+  private splitPickMode: boolean = false;
+  /** 编辑器控制器：用于工具栏在光标处插入语法。 */
+  private textEditorController: TextAreaController = new TextAreaController();
   private docController: MdDocumentViewController = new MdDocumentViewController();
+  private secondaryDocController: MdDocumentViewController = new MdDocumentViewController();
   private tabsController: HdsTabsController = new HdsTabsController();
+  /** 程序化编辑的期望文本：用于识别控制器修改引起的 onChange 回调。 */
+  private expectedText: string = '';
+  /** 撤销 / 重做栈。 */
+  private undoStack: string[] = [];
+  private redoStack: string[] = [];
+  private lastUndoPushAt: number = 0;
   @Local commandKeyword: string = '';
   @Local newVaultName: string = '';
   /** 新建仓库对话框：是否同时配置 WebDAV 同步。 */
@@ -73,6 +123,9 @@ struct Index {
     }
     this.searchVm.setContext(context);
     this.vm.attachUi(this.getUIContext());
+    this.vm.onScrollToHeading = (heading: string): void => {
+      this.scrollToHeading(heading);
+    };
     this.vm.init(context);
     this.syncVm.init(context).then((): void => {
       this.restartAutoSyncTimer();
@@ -163,6 +216,30 @@ struct Index {
       if (this.showCreatePanel) {
         this.createPanel()
       }
+      if (this.showRenamePanel) {
+        this.renamePanel()
+      }
+      if (this.showFolderPanel) {
+        this.folderPanel()
+      }
+      if (this.showMovePanel) {
+        this.movePanel()
+      }
+      if (this.showCalendar) {
+        this.calendarOverlay()
+      }
+      if (this.showHistory) {
+        this.historyOverlay()
+      }
+      if (this.showTemplates) {
+        this.templateOverlay()
+      }
+      if (this.showQuickNote) {
+        this.quickNoteOverlay()
+      }
+      if (this.showHandwrite) {
+        this.handwriteOverlay()
+      }
       if (this.showSearch) {
         SearchOverlay({
           hits: this.searchVm.hits,
@@ -204,6 +281,17 @@ struct Index {
             this.animAssign((): void => {
               this.showQuick = false;
             });
+            if (this.splitPickMode) {
+              this.splitPickMode = false;
+              this.vm.openSecondary(path);
+              // 分屏时收起右侧信息面板，给正文与预览留出宽度。
+              if (this.isWide) {
+                this.animAssign((): void => {
+                  this.showRightPanel = false;
+                });
+              }
+              return;
+            }
             this.openNoteFrom(path);
           },
           onClose: (): void => {
@@ -525,6 +613,9 @@ struct Index {
               },
               onToggle: (path: string): void => {
                 this.vm.toggleDir(path);
+              },
+              onMoveNote: (path: string, destDir: string): void => {
+                this.moveNoteTo(path, destDir);
               }
             })
           }
@@ -541,6 +632,18 @@ struct Index {
           .borderRadius(16)
           .margin({ top: 12, bottom: 12, right: this.showFixedInfoPanel() ? 0 : 12 })
           .clip(true)
+
+          if (this.vm.secondaryPath.length > 0) {
+            Column() {
+              this.secondaryArea()
+            }
+            .layoutWeight(1)
+            .height('100%')
+            .backgroundColor($r('app.color.hm_card_bg'))
+            .borderRadius(16)
+            .margin({ top: 12, bottom: 12, right: this.showFixedInfoPanel() ? 0 : 12 })
+            .clip(true)
+          }
 
           if (this.showFixedInfoPanel()) {
             Column() {
@@ -611,6 +714,9 @@ struct Index {
               },
               onToggle: (path: string): void => {
                 this.vm.toggleDir(path);
+              },
+              onMoveNote: (path: string, destDir: string): void => {
+                this.moveNoteTo(path, destDir);
               }
             })
           }
@@ -1006,6 +1112,50 @@ struct Index {
         .onClick(() => {
           this.createNote();
         })
+      MenuItem({ content: $r('app.string.action_new_folder') })
+        .onClick(() => {
+          this.openFolderPanel();
+        })
+      MenuItem({ content: $r('app.string.action_rename') })
+        .onClick(() => {
+          this.openRenamePanel();
+        })
+      MenuItem({ content: $r('app.string.action_move') })
+        .onClick(() => {
+          this.openMovePanel();
+        })
+      MenuItem({ content: $r('app.string.action_trash') })
+        .onClick(() => {
+          this.confirmTrashNote();
+        })
+      MenuItem({ content: $r('app.string.action_empty_trash') })
+        .onClick(() => {
+          this.confirmEmptyTrash();
+        })
+      MenuItem({ content: $r('app.string.action_calendar') })
+        .onClick(() => {
+          this.openCalendar();
+        })
+      MenuItem({ content: $r('app.string.action_template') })
+        .onClick(() => {
+          this.openTemplates();
+        })
+      MenuItem({ content: $r('app.string.action_history') })
+        .onClick(() => {
+          this.openHistory();
+        })
+      MenuItem({ content: $r('app.string.action_split') })
+        .onClick(() => {
+          this.openSplitPicker();
+        })
+      MenuItem({ content: $r('app.string.action_share') })
+        .onClick(() => {
+          this.openQuickNote();
+        })
+      MenuItem({ content: $r('app.string.action_handwrite') })
+        .onClick(() => {
+          this.openHandwrite();
+        })
       MenuItem({ content: $r('app.string.action_import_vault') })
         .onClick(() => {
           this.importVault();
@@ -1152,6 +1302,48 @@ struct Index {
     })
   }
 
+  /** 分屏第二栏：只读预览参考笔记（平板 / 折叠屏宽态）。 */
+  @Builder
+  secondaryArea() {
+    Column() {
+      Row() {
+        Text(this.vm.secondaryPath)
+          .fontSize(15)
+          .fontWeight(FontWeight.Medium)
+          .fontColor($r('app.color.hm_text_primary'))
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+          .layoutWeight(1)
+        SymbolGlyph($r('sys.symbol.xmark'))
+          .fontSize(16)
+          .fontColor([$r('app.color.hm_text_secondary')])
+          .width(32)
+          .height(32)
+          .onClick(() => {
+            this.vm.closeSecondary();
+          })
+      }
+      .width('100%')
+      .height(44)
+      .padding({ left: 14, right: 6 })
+      .alignItems(VerticalAlign.Center)
+
+      MdDocumentView({
+        document: this.vm.secondaryDocument,
+        docKey: this.vm.secondaryPath,
+        fontSize: this.vm.fontSize,
+        controller: this.secondaryDocController,
+        onOpenLink: (target: string, kind: string): void => {
+          this.vm.openLink(target, kind);
+        }
+      })
+      .layoutWeight(1)
+      .padding({ left: 16, right: 16 })
+    }
+    .width('100%')
+    .height('100%')
+  }
+
   /** 编辑器区域：标题栏 + 正文。 */
   @Builder
   editorArea() {
@@ -1172,36 +1364,43 @@ struct Index {
       } else {
         this.editorHeader()
         if (this.vm.editMode) {
-          TextArea({
-            placeholder: $r('app.string.editor_placeholder'),
-            text: this.vm.draftBuffer
-          })
-            .fontSize(16)
-            .width('100%')
-            .layoutWeight(1)
-            .backgroundColor(Color.Transparent)
-            .fontColor($r('app.color.hm_text_primary'))
-            .placeholderColor($r('app.color.hm_text_secondary'))
-            .caretColor($r('app.color.hm_accent'))
-            .padding({ left: 20, right: 20, top: 8, bottom: 8 })
-            .onTouch((event: TouchEvent) => {
-              this.onContentTouch(event);
+          Stack({ alignContent: Alignment.TopStart }) {
+            TextArea({
+              placeholder: $r('app.string.editor_placeholder'),
+              text: this.vm.draftBuffer,
+              controller: this.textEditorController
             })
-            .onFocus(() => {
-              this.cursorPos = this.vm.draftBuffer.length;
-              this.showToolbar = true;
-            })
-            .onBlur(() => {
-              this.showToolbar = false;
-            })
-            .onChange((value: string) => {
-              this.vm.updateDraft(value);
-            })
-            .transition(TransitionEffect.opacity(0)
-              .animation({ duration: 200, curve: Curve.Friction }))
-            if (this.showToolbar && this.vm.editMode) {
-              this.editToolbar()
+              .fontSize(16)
+              .width('100%')
+              .height('100%')
+              .backgroundColor(Color.Transparent)
+              .fontColor($r('app.color.hm_text_primary'))
+              .placeholderColor($r('app.color.hm_text_secondary'))
+              .caretColor($r('app.color.hm_accent'))
+              .padding({ left: 20, right: 20, top: 8, bottom: 8 })
+              .onTouch((event: TouchEvent) => {
+                this.onContentTouch(event);
+              })
+              .onFocus(() => {
+                this.showToolbar = true;
+              })
+              .onBlur(() => {
+                this.showToolbar = false;
+              })
+              .onChange((value: string) => {
+                this.onEditorChange(value);
+              })
+              .transition(TransitionEffect.opacity(0)
+                .animation({ duration: 200, curve: Curve.Friction }))
+            if (this.showCompletion && this.completionItems.length > 0) {
+              this.completionPopup()
             }
+          }
+          .width('100%')
+          .layoutWeight(1)
+          if (this.showToolbar && this.vm.editMode) {
+            this.editToolbar()
+          }
         } else {
           MdDocumentView({
             document: this.vm.document,
@@ -1220,15 +1419,23 @@ struct Index {
               });
             },
             onLoadDataView: (query: string,
-              onResult: (tasks: DataViewTask[]) => void): void => {
-              this.vm.runDataViewQuery(query).then((tasks: DataViewTask[]): void => {
-                onResult(tasks);
+              onResult: (result: DataViewResult) => void): void => {
+              this.vm.runDataViewQuery(query).then((result: DataViewResult): void => {
+                onResult(result);
               });
             },
             onToggleDataViewTask: (task: DataViewTask, checked: boolean): void => {
               this.vm.toggleTaskInNote(task, checked).then((): void => {
                 this.syncNowIfAuto();
               });
+            },
+            onLoadEmbed: (target: string, onResult: (text: string) => void): void => {
+              this.vm.loadEmbed(target).then((text: string): void => {
+                onResult(text);
+              });
+            },
+            onResolveAsset: (target: string, onResult: (uri: string) => void): void => {
+              onResult(this.vm.resolveAsset(target));
             }
           })
           .layoutWeight(1)
@@ -1357,6 +1564,16 @@ struct Index {
         .maxLines(1)
         .textOverflow({ overflow: TextOverflow.Ellipsis })
         .layoutWeight(1)
+      if (!this.vm.editMode && this.vm.selectedPath.length > 0) {
+        // 宽屏布局没有笔记列表头部，笔记级操作（重命名 / 回收站 / 分屏双开等）由此进入。
+        SymbolGlyph($r('sys.symbol.more'))
+          .fontSize(20)
+          .fontColor([$r('app.color.hm_text_primary')])
+          .width(36)
+          .height(36)
+          .margin({ left: 4 })
+          .bindMenu(this.moreMenuBuilder)
+      }
       if (this.vm.editMode) {
         Text($r('app.string.action_cancel'))
           .fontSize(15)
@@ -1424,11 +1641,158 @@ struct Index {
 
   /** 在光标处插入 Markdown 语法。 */
   private insertFormat(syntax: string): void {
+    const caret: number = this.textEditorController.getCaretOffset().index;
+    this.textEditorController.addText(syntax, { offset: caret });
+    // addText 未触发 onChange 时的兜底：手动同步缓冲区（draftBuffer 非响应式，不影响显示）。
     const text: string = this.vm.draftBuffer;
-    const pos: number = this.cursorPos;
-    const before: string = text.slice(0, pos);
-    const after: string = text.slice(pos);
+    const before: string = text.slice(0, caret);
+    const after: string = text.slice(caret);
     this.vm.updateDraft(before + syntax + after);
+  }
+
+  /** wiki 链接补全浮层：跟随光标位置展示候选。 */
+  @Builder
+  completionPopup() {
+    Column() {
+      ForEach(this.completionItems, (item: CompletionCandidate, index: number) => {
+        Row() {
+          SymbolGlyph($r('sys.symbol.doc_plaintext'))
+            .fontSize(14)
+            .fontColor([$r('app.color.hm_text_secondary')])
+            .width(18)
+          Text(item.title)
+            .fontSize(14)
+            .fontColor($r('app.color.hm_text_primary'))
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+            .layoutWeight(1)
+        }
+        .width('100%')
+        .height(32)
+        .padding({ left: 10, right: 10 })
+        .onClick(() => {
+          this.applyCompletion(item);
+        })
+      }, (item: CompletionCandidate, index: number): string => `ac_${index}_${item.title}`)
+    }
+    .width(210)
+    .borderRadius(10)
+    .backgroundColor($r('app.color.hm_card_bg'))
+    .shadow({ radius: 12, color: '#33000000', offsetY: 2 })
+    .position({ x: this.completionX, y: this.completionY + 20 })
+    .zIndex(10)
+  }
+
+  /** 编辑器内容变化：处理列表续行、撤销栈与 wiki 补全。 */
+  private onEditorChange(value: string): void {
+    if (this.expectedText.length > 0 && value === this.expectedText) {
+      // 控制器程序化修改引起的回调：只同步缓冲区，不参与续行与撤销。
+      this.expectedText = '';
+      this.vm.updateDraft(value);
+      return;
+    }
+    this.expectedText = '';
+    const prev: string = this.vm.draftBuffer;
+    const caret: number = this.textEditorController.getCaretOffset().index;
+    const continuation: ListContinuation | null =
+      EditorTextUtils.computeListContinuation(prev, value, caret - 1);
+    if (continuation !== null) {
+      const next: string = value.substring(0, continuation.deleteFrom) + continuation.insertText +
+        value.substring(continuation.deleteTo);
+      this.replaceEditorText(next, continuation.deleteFrom + continuation.insertText.length);
+      this.recordUndo(prev);
+      this.updateCompletion(value, caret);
+      return;
+    }
+    this.recordUndo(prev);
+    this.vm.updateDraft(value);
+    this.updateCompletion(value, caret);
+  }
+
+  /** 用控制器整体替换编辑器内容，并同步草稿缓冲区。 */
+  private replaceEditorText(text: string, caret: number): void {
+    const current: string = this.vm.draftBuffer;
+    this.expectedText = text;
+    if (current.length > 0) {
+      this.textEditorController.deleteText({ start: 0, end: current.length });
+    }
+    if (text.length > 0) {
+      this.textEditorController.addText(text, { offset: 0 });
+    }
+    this.textEditorController.setTextSelection(caret, caret);
+    this.vm.updateDraft(text);
+  }
+
+  /** 记录撤销快照：600ms 内的连续输入合并为一次快照。 */
+  private recordUndo(prevText: string): void {
+    const now: number = Date.now();
+    if (now - this.lastUndoPushAt < 600) {
+      return;
+    }
+    this.lastUndoPushAt = now;
+    this.undoStack.push(prevText);
+    if (this.undoStack.length > 50) {
+      this.undoStack.shift();
+    }
+    this.undoDepth = this.undoStack.length;
+    this.redoStack = [];
+    this.redoDepth = 0;
+  }
+
+  /** 撤销一步。 */
+  private undoEdit(): void {
+    const popped: string | undefined = this.undoStack.pop();
+    if (popped === undefined) {
+      return;
+    }
+    this.redoStack.push(this.vm.draftBuffer);
+    this.undoDepth = this.undoStack.length;
+    this.redoDepth = this.redoStack.length;
+    this.replaceEditorText(popped, popped.length);
+  }
+
+  /** 重做一步。 */
+  private redoEdit(): void {
+    const popped: string | undefined = this.redoStack.pop();
+    if (popped === undefined) {
+      return;
+    }
+    this.undoStack.push(this.vm.draftBuffer);
+    this.undoDepth = this.undoStack.length;
+    this.redoDepth = this.redoStack.length;
+    this.replaceEditorText(popped, popped.length);
+  }
+
+  /** 更新 wiki 链接补全浮层。 */
+  private updateCompletion(text: string, caret: number): void {
+    if (caret < 0) {
+      this.showCompletion = false;
+      return;
+    }
+    const candidates: CompletionCandidate[] =
+      EditorTextUtils.getWikiCompletionCandidates(text, caret, this.vm.noteTitles());
+    if (candidates.length === 0) {
+      this.showCompletion = false;
+      this.completionItems = [];
+      return;
+    }
+    const offset: CaretOffset = this.textEditorController.getCaretOffset();
+    this.completionItems = candidates;
+    this.completionX = this.getUIContext().px2vp(offset.x);
+    this.completionY = this.getUIContext().px2vp(offset.y);
+    this.showCompletion = true;
+  }
+
+  /** 选中补全候选：在光标处补全标题并闭合链接。 */
+  private applyCompletion(item: CompletionCandidate): void {
+    const caret: number = this.textEditorController.getCaretOffset().index;
+    if (caret < 0) {
+      return;
+    }
+    const text: string = this.vm.draftBuffer;
+    const next: string = text.substring(0, caret) + item.insertText + text.substring(caret);
+    this.replaceEditorText(next, caret + item.insertText.length);
+    this.showCompletion = false;
   }
 
   /** 编辑模式底部格式化工具栏。 */
@@ -1544,6 +1908,35 @@ struct Index {
         .onClick(() => {
           this.insertFormat('---\n');
         })
+      Button('↶')
+        .fontSize(15)
+        .height(32)
+        .padding({ left: 10, right: 10 })
+        .backgroundColor($r('app.color.hm_hover_bg'))
+        .borderRadius(6)
+        .opacity(this.undoDepth > 0 ? 1 : 0.4)
+        .onClick(() => {
+          this.undoEdit();
+        })
+      Button('↷')
+        .fontSize(15)
+        .height(32)
+        .padding({ left: 10, right: 10 })
+        .backgroundColor($r('app.color.hm_hover_bg'))
+        .borderRadius(6)
+        .opacity(this.redoDepth > 0 ? 1 : 0.4)
+        .onClick(() => {
+          this.redoEdit();
+        })
+      Button('IMG')
+        .fontSize(12)
+        .height(32)
+        .padding({ left: 8, right: 8 })
+        .backgroundColor($r('app.color.hm_hover_bg'))
+        .borderRadius(6)
+        .onClick(() => {
+          this.pickAndInsertImage();
+        })
     }
     .padding({ left: 12, right: 12, top: 8, bottom: 8 })
     .width('100%')
@@ -1556,11 +1949,18 @@ struct Index {
     NoteInfoPanel({
       outlineEntries: this.vm.outline,
       backlinks: this.vm.backlinks,
+      unlinked: this.vm.unlinked,
       tags: this.vm.noteTags,
       properties: this.vm.noteProperties,
+      graph: this.vm.graph,
       currentTab: this.vm.infoTabIndex,
       onTabChange: (index: number): void => {
         this.vm.setInfoTab(index);
+        if (index === 1) {
+          this.vm.loadUnlinked();
+        } else if (index === 4) {
+          this.vm.loadGraph();
+        }
       },
       onOpenNote: (path: string): void => {
         this.openNoteFrom(path);
@@ -1570,6 +1970,15 @@ struct Index {
       },
       onOutlineClick: (entry: OutlineEntry): void => {
         this.scrollToOutlineEntry(entry);
+      },
+      onUpdateProperty: (key: string, value: string, listValue: string[]): void => {
+        this.vm.updateProperty(key, value, listValue);
+      },
+      onLinkMention: (path: string, title: string): void => {
+        this.vm.linkMention(path, title);
+      },
+      onOpenGraphNode: (path: string): void => {
+        this.openNoteFrom(path);
       }
     })
   }
@@ -1728,6 +2137,596 @@ struct Index {
     .height('100%')
   }
 
+  /** 重命名笔记对话框。 */
+  @Builder
+  renamePanel() {
+    Stack() {
+      Column() {
+      }
+      .width('100%')
+      .height('100%')
+      .backgroundColor($r('app.color.hm_mask'))
+      .backgroundBlurStyle(BlurStyle.Thin)
+      .onClick(() => {
+        this.closeRenamePanel();
+      })
+
+      Column() {
+        Text($r('app.string.dialog_rename_title'))
+          .fontSize(18)
+          .fontWeight(FontWeight.Medium)
+          .fontColor($r('app.color.hm_text_primary'))
+          .width('100%')
+          .margin({ bottom: 12 })
+
+        TextInput({
+          placeholder: $r('app.string.dialog_rename_hint'),
+          text: this.renameText
+        })
+          .width('100%')
+          .height(42)
+          .fontSize(15)
+          .padding({ left: 12, right: 12 })
+          .borderRadius(10)
+          .backgroundColor($r('app.color.hm_input_bg'))
+          .placeholderColor($r('app.color.hm_text_secondary'))
+          .fontColor($r('app.color.hm_text_primary'))
+          .onChange((value: string) => {
+            this.renameText = value;
+          })
+
+        Row() {
+          Button($r('app.string.dialog_cancel'))
+            .type(ButtonType.Capsule)
+            .height(40)
+            .fontSize(16)
+            .backgroundColor($r('app.color.hm_hover_bg'))
+            .fontColor($r('app.color.hm_text_primary'))
+            .layoutWeight(1)
+            .margin({ right: 12 })
+            .onClick(() => {
+              this.closeRenamePanel();
+            })
+          Button($r('app.string.dialog_create'))
+            .type(ButtonType.Capsule)
+            .height(40)
+            .fontSize(16)
+            .backgroundColor($r('app.color.hm_accent'))
+            .fontColor(Color.White)
+            .layoutWeight(1)
+            .onClick(() => {
+              this.confirmRename();
+            })
+        }
+        .width('100%')
+        .margin({ top: 16 })
+      }
+      .width('84%')
+      .padding(24)
+      .borderRadius(24)
+      .backgroundColor($r('app.color.hm_card_bg'))
+      .transition(TransitionEffect.scale({ x: 0.9, y: 0.9 })
+        .combine(TransitionEffect.opacity(0))
+        .animation({ duration: 220, curve: Curve.Friction }))
+    }
+    .width('100%')
+    .height('100%')
+  }
+
+  /** 新建文件夹对话框。 */
+  @Builder
+  folderPanel() {
+    Stack() {
+      Column() {
+      }
+      .width('100%')
+      .height('100%')
+      .backgroundColor($r('app.color.hm_mask'))
+      .backgroundBlurStyle(BlurStyle.Thin)
+      .onClick(() => {
+        this.closeFolderPanel();
+      })
+
+      Column() {
+        Text($r('app.string.dialog_folder_title'))
+          .fontSize(18)
+          .fontWeight(FontWeight.Medium)
+          .fontColor($r('app.color.hm_text_primary'))
+          .width('100%')
+          .margin({ bottom: 12 })
+
+        TextInput({
+          placeholder: $r('app.string.dialog_folder_hint'),
+          text: this.folderName
+        })
+          .width('100%')
+          .height(42)
+          .fontSize(15)
+          .padding({ left: 12, right: 12 })
+          .borderRadius(10)
+          .backgroundColor($r('app.color.hm_input_bg'))
+          .placeholderColor($r('app.color.hm_text_secondary'))
+          .fontColor($r('app.color.hm_text_primary'))
+          .onChange((value: string) => {
+            this.folderName = value;
+          })
+
+        Row() {
+          Button($r('app.string.dialog_cancel'))
+            .type(ButtonType.Capsule)
+            .height(40)
+            .fontSize(16)
+            .backgroundColor($r('app.color.hm_hover_bg'))
+            .fontColor($r('app.color.hm_text_primary'))
+            .layoutWeight(1)
+            .margin({ right: 12 })
+            .onClick(() => {
+              this.closeFolderPanel();
+            })
+          Button($r('app.string.dialog_create'))
+            .type(ButtonType.Capsule)
+            .height(40)
+            .fontSize(16)
+            .backgroundColor($r('app.color.hm_accent'))
+            .fontColor(Color.White)
+            .layoutWeight(1)
+            .onClick(() => {
+              this.confirmCreateFolder();
+            })
+        }
+        .width('100%')
+        .margin({ top: 16 })
+      }
+      .width('84%')
+      .padding(24)
+      .borderRadius(24)
+      .backgroundColor($r('app.color.hm_card_bg'))
+      .transition(TransitionEffect.scale({ x: 0.9, y: 0.9 })
+        .combine(TransitionEffect.opacity(0))
+        .animation({ duration: 220, curve: Curve.Friction }))
+    }
+    .width('100%')
+    .height('100%')
+  }
+
+  /** 移动目标目录选择面板。 */
+  @Builder
+  movePanel() {
+    Stack() {
+      Column() {
+      }
+      .width('100%')
+      .height('100%')
+      .backgroundColor($r('app.color.hm_mask'))
+      .backgroundBlurStyle(BlurStyle.Thin)
+      .onClick(() => {
+        this.closeMovePanel();
+      })
+
+      Column() {
+        Text($r('app.string.dialog_move_title'))
+          .fontSize(18)
+          .fontWeight(FontWeight.Medium)
+          .fontColor($r('app.color.hm_text_primary'))
+          .width('100%')
+          .margin({ bottom: 12 })
+
+        Scroll() {
+          Column() {
+            this.moveTargetRow($r('app.string.dialog_move_root'), '')
+            ForEach(this.moveDirs, (dir: string, index: number) => {
+              this.moveTargetRow(dir, dir)
+            }, (dir: string, index: number): string => `move_${index}_${dir}`)
+          }
+          .width('100%')
+        }
+        .width('100%')
+        .align(Alignment.Top)
+        .scrollBar(BarState.Off)
+        .constraintSize({ maxHeight: 280 })
+
+        Row() {
+          Button($r('app.string.dialog_cancel'))
+            .type(ButtonType.Capsule)
+            .height(40)
+            .fontSize(16)
+            .backgroundColor($r('app.color.hm_hover_bg'))
+            .fontColor($r('app.color.hm_text_primary'))
+            .layoutWeight(1)
+            .onClick(() => {
+              this.closeMovePanel();
+            })
+        }
+        .width('100%')
+        .margin({ top: 16 })
+      }
+      .width('84%')
+      .padding(24)
+      .borderRadius(24)
+      .backgroundColor($r('app.color.hm_card_bg'))
+      .transition(TransitionEffect.scale({ x: 0.9, y: 0.9 })
+        .combine(TransitionEffect.opacity(0))
+        .animation({ duration: 220, curve: Curve.Friction }))
+    }
+    .width('100%')
+    .height('100%')
+  }
+
+  /** 移动目标目录条目。 */
+  @Builder
+  moveTargetRow(label: ResourceStr, dir: string) {
+    Row() {
+      SymbolGlyph($r('sys.symbol.folder'))
+        .fontSize(16)
+        .fontColor([$r('app.color.hm_text_secondary')])
+        .width(20)
+      Text(label)
+        .fontSize(15)
+        .fontColor($r('app.color.hm_text_primary'))
+        .layoutWeight(1)
+    }
+    .width('100%')
+    .height(40)
+    .padding({ left: 6, right: 6 })
+    .onClick(() => {
+      this.confirmMoveTo(dir);
+    })
+  }
+
+  /** 日历浮层。 */
+  @Builder
+  calendarOverlay() {
+    Stack() {
+      Column() {
+      }
+      .width('100%')
+      .height('100%')
+      .backgroundColor($r('app.color.hm_mask'))
+      .backgroundBlurStyle(BlurStyle.Thin)
+      .onClick(() => {
+        this.closeCalendar();
+      })
+      Column() {
+        CalendarPanel({
+          days: this.calendarDays,
+          year: this.calendarYear,
+          month: this.calendarMonth,
+          onPrevMonth: (): void => {
+            this.shiftCalendar(-1);
+          },
+          onNextMonth: (): void => {
+            this.shiftCalendar(1);
+          },
+          onToday: (): void => {
+            this.openCalendarToday();
+          },
+          onOpenWeekly: (): void => {
+            this.closeCalendar();
+            this.vm.openWeeklyNote();
+          },
+          onOpenDay: (date: string): void => {
+            this.closeCalendar();
+            this.openDailyByDate(date);
+          },
+          onClose: (): void => {
+            this.closeCalendar();
+          }
+        })
+      }
+      .width('88%')
+      .constraintSize({ maxWidth: 420 })
+      .padding(16)
+      .borderRadius(24)
+      .backgroundColor($r('app.color.hm_card_bg'))
+      .shadow({ radius: 24, color: '#40000000', offsetY: 6 })
+    }
+    .width('100%')
+    .height('100%')
+  }
+
+  /** 历史版本浮层。 */
+  @Builder
+  historyOverlay() {
+    Stack() {
+      Column() {
+      }
+      .width('100%')
+      .height('100%')
+      .backgroundColor($r('app.color.hm_mask'))
+      .backgroundBlurStyle(BlurStyle.Thin)
+      .onClick(() => {
+        this.closeHistory();
+      })
+      Column() {
+        Text($r('app.string.history_title'))
+          .fontSize(18)
+          .fontWeight(FontWeight.Medium)
+          .fontColor($r('app.color.hm_text_primary'))
+          .width('100%')
+          .margin({ bottom: 8 })
+        if (this.historyList.length === 0) {
+          Text($r('app.string.history_empty'))
+            .fontSize(13)
+            .fontColor($r('app.color.hm_text_secondary'))
+        } else {
+          Scroll() {
+            Column() {
+              ForEach(this.historyList, (item: HistorySnapshot, index: number) => {
+                this.historyRow(item, index)
+              }, (item: HistorySnapshot, index: number): string => `hist_${item.name}`)
+            }
+            .width('100%')
+          }
+          .width('100%')
+          .layoutWeight(1)
+          .align(Alignment.Top)
+          .scrollBar(BarState.Off)
+          .constraintSize({ maxHeight: 320 })
+        }
+        Row() {
+          Button($r('app.string.dialog_cancel'))
+            .type(ButtonType.Capsule)
+            .height(40)
+            .fontSize(16)
+            .backgroundColor($r('app.color.hm_hover_bg'))
+            .fontColor($r('app.color.hm_text_primary'))
+            .layoutWeight(1)
+            .onClick(() => {
+              this.closeHistory();
+            })
+        }
+        .width('100%')
+        .margin({ top: 12 })
+      }
+      .width('88%')
+      .constraintSize({ maxWidth: 460 })
+      .padding(20)
+      .borderRadius(24)
+      .backgroundColor($r('app.color.hm_card_bg'))
+      .shadow({ radius: 24, color: '#40000000', offsetY: 6 })
+    }
+    .width('100%')
+    .height('100%')
+  }
+
+  /** 历史版本条目（点击查看差异，可回滚）。 */
+  @Builder
+  historyRow(item: HistorySnapshot, index: number) {
+    Column() {
+      Row() {
+        Text(this.historyTime(item.timestamp))
+          .fontSize(13)
+          .fontColor(this.historySelected === item.name ? $r('app.color.hm_accent')
+            : $r('app.color.hm_text_primary'))
+          .layoutWeight(1)
+        Text($r('app.string.history_rollback'))
+          .fontSize(12)
+          .fontColor($r('app.color.hm_accent'))
+          .padding({ left: 8, right: 8, top: 3, bottom: 3 })
+          .borderRadius(8)
+          .backgroundColor($r('app.color.hm_accent_weak'))
+          .onClick(() => {
+            this.rollbackSnapshot(item.name);
+          })
+      }
+      .width('100%')
+      if (this.historySelected === item.name) {
+        Text($r('app.string.history_diff'))
+          .fontSize(11)
+          .fontColor($r('app.color.hm_text_secondary'))
+          .width('100%')
+          .margin({ top: 4 })
+        Column() {
+          ForEach(this.historyDiff, (line: DiffLine, lineIndex: number) => {
+            Text(this.diffLineText(line))
+              .fontSize(11)
+              .fontFamily('monospace')
+              .fontColor(this.diffColor(line))
+              .width('100%')
+              .maxLines(1)
+              .textOverflow({ overflow: TextOverflow.Ellipsis })
+          }, (line: DiffLine, lineIndex: number): string => `d_${lineIndex}_${line.marker}`)
+        }
+        .width('100%')
+        .alignItems(HorizontalAlign.Start)
+        .margin({ top: 2 })
+      }
+    }
+    .width('100%')
+    .alignItems(HorizontalAlign.Start)
+    .padding(10)
+    .borderRadius(10)
+    .backgroundColor($r('app.color.hm_hover_bg'))
+    .margin({ top: 6 })
+    .onClick(() => {
+      this.selectSnapshot(item.name);
+    })
+  }
+
+  /** 模板选择浮层。 */
+  @Builder
+  templateOverlay() {
+    Stack() {
+      Column() {
+      }
+      .width('100%')
+      .height('100%')
+      .backgroundColor($r('app.color.hm_mask'))
+      .backgroundBlurStyle(BlurStyle.Thin)
+      .onClick(() => {
+        this.closeTemplates();
+      })
+      Column() {
+        Text($r('app.string.template_title'))
+          .fontSize(18)
+          .fontWeight(FontWeight.Medium)
+          .fontColor($r('app.color.hm_text_primary'))
+          .width('100%')
+          .margin({ bottom: 10 })
+        if (this.templateList.length === 0) {
+          Text($r('app.string.template_empty'))
+            .fontSize(13)
+            .fontColor($r('app.color.hm_text_secondary'))
+        } else {
+          Scroll() {
+            Column() {
+              ForEach(this.templateList, (item: string, index: number) => {
+                Row() {
+                  SymbolGlyph($r('sys.symbol.doc_plaintext'))
+                    .fontSize(15)
+                    .fontColor([$r('app.color.hm_text_secondary')])
+                    .width(20)
+                  Text(this.templateName(item))
+                    .fontSize(15)
+                    .fontColor($r('app.color.hm_text_primary'))
+                    .layoutWeight(1)
+                }
+                .width('100%')
+                .height(42)
+                .padding({ left: 6, right: 6 })
+                .borderRadius(8)
+                .onClick(() => {
+                  this.applyTemplate(item);
+                })
+              }, (item: string, index: number): string => `tpl_${item}`)
+            }
+            .width('100%')
+          }
+          .width('100%')
+          .layoutWeight(1)
+          .align(Alignment.Top)
+          .scrollBar(BarState.Off)
+          .constraintSize({ maxHeight: 320 })
+        }
+        Row() {
+          Button($r('app.string.dialog_cancel'))
+            .type(ButtonType.Capsule)
+            .height(40)
+            .fontSize(16)
+            .backgroundColor($r('app.color.hm_hover_bg'))
+            .fontColor($r('app.color.hm_text_primary'))
+            .layoutWeight(1)
+            .onClick(() => {
+              this.closeTemplates();
+            })
+        }
+        .width('100%')
+        .margin({ top: 12 })
+      }
+      .width('88%')
+      .constraintSize({ maxWidth: 420 })
+      .padding(20)
+      .borderRadius(24)
+      .backgroundColor($r('app.color.hm_card_bg'))
+      .shadow({ radius: 24, color: '#40000000', offsetY: 6 })
+    }
+    .width('100%')
+    .height('100%')
+  }
+
+  /** 快速闪念浮层。 */
+  @Builder
+  quickNoteOverlay() {
+    Stack() {
+      Column() {
+      }
+      .width('100%')
+      .height('100%')
+      .backgroundColor($r('app.color.hm_mask'))
+      .backgroundBlurStyle(BlurStyle.Thin)
+      .onClick(() => {
+        this.closeQuickNote();
+      })
+      Column() {
+        Text($r('app.string.share_title'))
+          .fontSize(18)
+          .fontWeight(FontWeight.Medium)
+          .fontColor($r('app.color.hm_text_primary'))
+          .width('100%')
+          .margin({ bottom: 10 })
+        TextArea({
+          placeholder: $r('app.string.share_hint'),
+          text: this.quickNoteText
+        })
+          .width('100%')
+          .height(120)
+          .fontSize(15)
+          .backgroundColor($r('app.color.hm_input_bg'))
+          .placeholderColor($r('app.color.hm_text_secondary'))
+          .onChange((value: string): void => {
+            this.quickNoteText = value;
+          })
+        Row() {
+          Button($r('app.string.dialog_cancel'))
+            .type(ButtonType.Capsule)
+            .height(40)
+            .fontSize(16)
+            .backgroundColor($r('app.color.hm_hover_bg'))
+            .fontColor($r('app.color.hm_text_primary'))
+            .layoutWeight(1)
+            .onClick(() => {
+              this.closeQuickNote();
+            })
+          Button($r('app.string.share_save'))
+            .type(ButtonType.Capsule)
+            .height(40)
+            .fontSize(16)
+            .backgroundColor($r('app.color.hm_accent'))
+            .fontColor(Color.White)
+            .layoutWeight(1)
+            .margin({ left: 12 })
+            .onClick(() => {
+              this.saveQuickNote();
+            })
+        }
+        .width('100%')
+        .margin({ top: 14 })
+      }
+      .width('88%')
+      .constraintSize({ maxWidth: 420 })
+      .padding(20)
+      .borderRadius(24)
+      .backgroundColor($r('app.color.hm_card_bg'))
+      .shadow({ radius: 24, color: '#40000000', offsetY: 6 })
+    }
+    .width('100%')
+    .height('100%')
+  }
+
+  /** 手写速记浮层。 */
+  @Builder
+  handwriteOverlay() {
+    Stack() {
+      Column() {
+      }
+      .width('100%')
+      .height('100%')
+      .backgroundColor($r('app.color.hm_mask'))
+      .backgroundBlurStyle(BlurStyle.Thin)
+      .onClick(() => {
+        this.closeHandwrite();
+      })
+      Column() {
+        HandwritePanel({
+          onSave: (data: ArrayBuffer): void => {
+            this.saveHandwrite(data);
+          },
+          onClose: (): void => {
+            this.closeHandwrite();
+          }
+        })
+      }
+      .width('90%')
+      .constraintSize({ maxWidth: 520 })
+      .padding(16)
+      .borderRadius(24)
+      .backgroundColor($r('app.color.hm_card_bg'))
+      .shadow({ radius: 24, color: '#40000000', offsetY: 6 })
+    }
+    .width('100%')
+    .height('100%')
+  }
+
   /** 新建对话框字段标签。 */
   @Builder
   createFieldLabel(label: ResourceStr) {
@@ -1801,6 +2800,480 @@ struct Index {
     this.vm.createNote().then((): void => {
       this.syncNowIfAuto();
     });
+  }
+
+  /** 轻提示（使用 UIContext 的 PromptAction，避免全局 promptAction 的弃用告警）。 */
+  private toast(message: ResourceStr): void {
+    this.getUIContext().getPromptAction().showToast({ message: message });
+  }
+
+  /** 打开重命名对话框：预填当前笔记的文件名（不含扩展名）。 */
+  private openRenamePanel(): void {
+    if (this.vm.selectedPath.length === 0) {
+      this.toast($r('app.string.msg_no_note_selected'));
+      return;
+    }
+    this.renameText = this.vm.selectedNoteName();
+    this.animAssign((): void => {
+      this.showRenamePanel = true;
+    });
+  }
+
+  /** 关闭重命名对话框。 */
+  private closeRenamePanel(): void {
+    this.animAssign((): void => {
+      this.showRenamePanel = false;
+    });
+  }
+
+  /** 确认重命名：重命名会同步重写指向旧名的双链。 */
+  private confirmRename(): void {
+    const target: string = this.renameText.trim();
+    this.closeRenamePanel();
+    if (target.length === 0) {
+      return;
+    }
+    const path: string = this.vm.selectedPath;
+    this.vm.renameNote(path, target).then((ok: boolean): void => {
+      if (!ok) {
+        this.toast($r('app.string.msg_rename_failed'));
+        return;
+      }
+      this.toast($r('app.string.msg_rename_done'));
+      this.syncNowIfAuto();
+    });
+  }
+
+  /** 打开新建文件夹对话框。 */
+  private openFolderPanel(): void {
+    this.folderName = '';
+    this.animAssign((): void => {
+      this.showFolderPanel = true;
+    });
+  }
+
+  /** 关闭新建文件夹对话框。 */
+  private closeFolderPanel(): void {
+    this.animAssign((): void => {
+      this.showFolderPanel = false;
+    });
+  }
+
+  /** 确认新建文件夹。 */
+  private confirmCreateFolder(): void {
+    const name: string = this.folderName.trim();
+    this.closeFolderPanel();
+    if (name.length === 0) {
+      return;
+    }
+    this.vm.createFolder(name).then((ok: boolean): void => {
+      if (!ok) {
+        this.toast($r('app.string.msg_folder_failed'));
+        return;
+      }
+      this.toast($r('app.string.msg_folder_done'));
+    });
+  }
+
+  /** 打开移动目标目录选择面板。 */
+  private openMovePanel(): void {
+    if (this.vm.selectedPath.length === 0) {
+      this.toast($r('app.string.msg_no_note_selected'));
+      return;
+    }
+    this.moveDirs = this.vm.listDirs();
+    this.animAssign((): void => {
+      this.showMovePanel = true;
+    });
+  }
+
+  /** 关闭移动目标目录选择面板。 */
+  private closeMovePanel(): void {
+    this.animAssign((): void => {
+      this.showMovePanel = false;
+    });
+  }
+
+  /** 确认移动到目标目录。 */
+  private confirmMoveTo(dir: string): void {
+    const path: string = this.vm.selectedPath;
+    this.closeMovePanel();
+    if (path.length === 0) {
+      return;
+    }
+    this.vm.moveNote(path, dir).then((ok: boolean): void => {
+      if (!ok) {
+        this.toast($r('app.string.msg_move_failed'));
+        return;
+      }
+      this.toast($r('app.string.msg_move_done'));
+      this.syncNowIfAuto();
+    });
+  }
+
+  /** 文件树拖拽：把笔记移动到目标目录。 */
+  private moveNoteTo(path: string, destDir: string): void {
+    this.vm.moveNote(path, destDir).then((ok: boolean): void => {
+      if (!ok) {
+        this.toast($r('app.string.msg_move_failed'));
+        return;
+      }
+      this.toast($r('app.string.msg_move_done'));
+      this.syncNowIfAuto();
+    });
+  }
+
+  /** 打开分屏选择（复用快速切换器选择第二栏笔记）。 */
+  private openSplitPicker(): void {
+    this.splitPickMode = true;
+    this.searchVm.loadNotes(this.vm.currentVault.id);
+    this.animAssign((): void => {
+      this.showQuick = true;
+    });
+  }
+
+  /** 打开日历面板。 */
+  private openCalendar(): void {
+    const now: Date = new Date();
+    this.calendarYear = now.getFullYear();
+    this.calendarMonth = now.getMonth() + 1;
+    this.animAssign((): void => {
+      this.showCalendar = true;
+    });
+    this.loadCalendar();
+  }
+
+  /** 关闭日历面板。 */
+  private closeCalendar(): void {
+    this.animAssign((): void => {
+      this.showCalendar = false;
+    });
+  }
+
+  /** 跳转到今天。 */
+  private openCalendarToday(): void {
+    const now: Date = new Date();
+    this.calendarYear = now.getFullYear();
+    this.calendarMonth = now.getMonth() + 1;
+    this.loadCalendar();
+  }
+
+  /** 加载当前月份的日历数据。 */
+  private loadCalendar(): void {
+    this.vm.calendarMonth(this.calendarYear, this.calendarMonth).then((days: CalendarDay[]): void => {
+      this.calendarDays = days;
+    });
+  }
+
+  /** 切换月份。 */
+  private shiftCalendar(delta: number): void {
+    let year: number = this.calendarYear;
+    let month: number = this.calendarMonth + delta;
+    if (month < 1) {
+      month = 12;
+      year--;
+    }
+    if (month > 12) {
+      month = 1;
+      year++;
+    }
+    this.calendarYear = year;
+    this.calendarMonth = month;
+    this.loadCalendar();
+  }
+
+  /** 打开指定日期的日记。 */
+  private openDailyByDate(date: string): void {
+    this.vm.openDailyNoteByDate(date).then((): void => {
+      this.syncNowIfAuto();
+    });
+  }
+
+  /** 打开历史版本面板。 */
+  private openHistory(): void {
+    this.historySelected = '';
+    this.historyDiff = [];
+    this.vm.listHistory().then((list: HistorySnapshot[]): void => {
+      this.historyList = list;
+    });
+    this.animAssign((): void => {
+      this.showHistory = true;
+    });
+  }
+
+  /** 关闭历史版本面板。 */
+  private closeHistory(): void {
+    this.animAssign((): void => {
+      this.showHistory = false;
+    });
+  }
+
+  /** 选中快照并计算差异。 */
+  private selectSnapshot(name: string): void {
+    this.historySelected = name;
+    this.vm.diffHistory(name).then((diff: DiffLine[]): void => {
+      this.historyDiff = diff;
+    });
+  }
+
+  /** 回滚到指定快照。 */
+  private rollbackSnapshot(name: string): void {
+    this.vm.rollbackHistory(name).then((ok: boolean): void => {
+      if (!ok) {
+        return;
+      }
+      this.closeHistory();
+      this.toast($r('app.string.msg_history_rolled_back'));
+      this.syncNowIfAuto();
+    });
+  }
+
+  /** 快照时间格式化。 */
+  private historyTime(timestamp: number): string {
+    if (timestamp <= 0) {
+      return '';
+    }
+    const value: Date = new Date(timestamp);
+    const pad = (v: number): string => v < 10 ? `0${v}` : `${v}`;
+    return `${value.getFullYear()}-${pad(value.getMonth() + 1)}-${pad(value.getDate())} ` +
+      `${pad(value.getHours())}:${pad(value.getMinutes())}:${pad(value.getSeconds())}`;
+  }
+
+  /** Diff 行文本。 */
+  private diffLineText(line: DiffLine): string {
+    return `${line.marker}${line.text}`;
+  }
+
+  /** Diff 行颜色。 */
+  private diffColor(line: DiffLine): ResourceColor {
+    if (line.marker === '+') {
+      return $r('app.color.hm_accent');
+    }
+    if (line.marker === '-') {
+      return $r('app.color.hm_danger');
+    }
+    return $r('app.color.hm_text_secondary');
+  }
+
+  /** 打开模板选择面板。 */
+  private openTemplates(): void {
+    this.vm.listTemplates().then((list: string[]): void => {
+      this.templateList = list;
+    });
+    this.animAssign((): void => {
+      this.showTemplates = true;
+    });
+  }
+
+  /** 关闭模板选择面板。 */
+  private closeTemplates(): void {
+    this.animAssign((): void => {
+      this.showTemplates = false;
+    });
+  }
+
+  /** 套用模板创建笔记。 */
+  private applyTemplate(path: string): void {
+    this.closeTemplates();
+    const now: Date = new Date();
+    const pad = (v: number): string => v < 10 ? `0${v}` : `${v}`;
+    const stamp: string = `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}` +
+      `${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
+    this.vm.createNoteWithTemplate(path, `未命名-${stamp}`).then((): void => {
+      this.toast($r('app.string.msg_template_applied'));
+      this.syncNowIfAuto();
+    });
+  }
+
+  /** 模板显示名。 */
+  private templateName(path: string): string {
+    const index: number = path.lastIndexOf('/');
+    const name: string = index >= 0 ? path.substring(index + 1) : path;
+    return name.endsWith('.md') ? name.substring(0, name.length - 3) : name;
+  }
+
+  /** 打开快速闪念面板。 */
+  private openQuickNote(): void {
+    this.quickNoteText = '';
+    this.animAssign((): void => {
+      this.showQuickNote = true;
+    });
+  }
+
+  /** 关闭快速闪记面板。 */
+  private closeQuickNote(): void {
+    this.animAssign((): void => {
+      this.showQuickNote = false;
+    });
+  }
+
+  /** 保存快速闪念到当天日记。 */
+  private saveQuickNote(): void {
+    const text: string = this.quickNoteText.trim();
+    this.closeQuickNote();
+    if (text.length === 0) {
+      return;
+    }
+    this.vm.appendQuickNote(text).then((ok: boolean): void => {
+      if (ok) {
+        this.toast($r('app.string.msg_share_saved'));
+        this.syncNowIfAuto();
+      }
+    });
+  }
+
+  /** 打开手写速记面板。 */
+  private openHandwrite(): void {
+    this.animAssign((): void => {
+      this.showHandwrite = true;
+    });
+  }
+
+  /** 关闭手写速记面板。 */
+  private closeHandwrite(): void {
+    this.animAssign((): void => {
+      this.showHandwrite = false;
+    });
+  }
+
+  /** 保存手写内容为附件并插入编辑器。 */
+  private saveHandwrite(data: ArrayBuffer): void {
+    this.vm.saveImageAttachment(data, 'png').then((relative: string): void => {
+      this.closeHandwrite();
+      if (relative.length === 0) {
+        return;
+      }
+      const name: string = relative.substring(relative.lastIndexOf('/') + 1);
+      this.insertFormat(`![[${name}]]`);
+      this.toast($r('app.string.msg_handwrite_saved'));
+    });
+  }
+
+  /** 确认把当前笔记移入回收站。 */
+  private confirmTrashNote(): void {
+    if (this.vm.selectedPath.length === 0) {
+      this.toast($r('app.string.msg_no_note_selected'));
+      return;
+    }
+    const path: string = this.vm.selectedPath;
+    AlertDialog.show({
+      title: $r('app.string.dialog_trash_title'),
+      message: $r('app.string.dialog_trash_msg'),
+      primaryButton: {
+        value: $r('app.string.dialog_cancel'),
+        action: (): void => {
+        }
+      },
+      secondaryButton: {
+        value: $r('app.string.action_trash'),
+        fontColor: $r('app.color.hm_danger'),
+        action: (): void => {
+          this.vm.trashNote(path).then((ok: boolean): void => {
+            if (!ok) {
+              this.toast($r('app.string.msg_trash_failed'));
+              return;
+            }
+            this.toast($r('app.string.msg_trash_done'));
+            this.syncNowIfAuto();
+          });
+        }
+      },
+      alignment: DialogAlignment.Bottom
+    });
+  }
+
+  /** 确认清空回收站。 */
+  private confirmEmptyTrash(): void {
+    AlertDialog.show({
+      title: $r('app.string.dialog_empty_trash_title'),
+      message: $r('app.string.dialog_empty_trash_msg'),
+      primaryButton: {
+        value: $r('app.string.dialog_cancel'),
+        action: (): void => {
+        }
+      },
+      secondaryButton: {
+        value: $r('app.string.action_empty_trash'),
+        fontColor: $r('app.color.hm_danger'),
+        action: (): void => {
+          this.vm.emptyTrash().then((count: number): void => {
+            this.toast($r('app.string.msg_empty_trash_done'));
+            this.syncNowIfAuto();
+          });
+        }
+      },
+      alignment: DialogAlignment.Bottom
+    });
+  }
+
+  /** 选择图片并插入到当前光标处。 */
+  private async pickAndInsertImage(): Promise<void> {
+    try {
+      const pickerInstance = new photoAccessHelper.PhotoViewPicker();
+      const options = new photoAccessHelper.PhotoSelectOptions();
+      options.MIMEType = photoAccessHelper.PhotoViewMIMETypes.IMAGE_TYPE;
+      options.maxSelectNumber = 1;
+      const result = await pickerInstance.select(options);
+      if (result.photoUris.length === 0) {
+        return;
+      }
+      const uri: string = result.photoUris[0];
+      const extension: string = this.extensionOfUri(uri);
+      const relative: string = await this.vm.importAttachment(uri, extension);
+      if (relative.length === 0) {
+        this.toast($r('app.string.msg_image_failed'));
+        return;
+      }
+      const name: string = relative.substring(relative.lastIndexOf('/') + 1);
+      this.insertFormat(`![[${name}]]`);
+      this.toast($r('app.string.msg_image_done'));
+    } catch (error) {
+      const err = error as BusinessError;
+      LOG.error(`pick image failed, code=${err.code}, message=${err.message}`);
+    }
+  }
+
+  /** 从 URI 中提取扩展名（不含点）。 */
+  private extensionOfUri(uri: string): string {
+    const clean: string = uri.split('?')[0];
+    const index: number = clean.lastIndexOf('.');
+    if (index < 0) {
+      return 'png';
+    }
+    const ext: string = clean.substring(index + 1).toLowerCase();
+    return ext.length > 0 ? ext : 'png';
+  }
+
+  /** 滚动到指定标题块：按标题文本匹配块序号。 */
+  private scrollToHeading(heading: string): void {
+    const target: string = heading.trim().toLowerCase();
+    if (target.length === 0) {
+      return;
+    }
+    const blocks: MdBlock[] = this.vm.document.blocks;
+    for (let i = 0; i < blocks.length; i++) {
+      const block: MdBlock = blocks[i];
+      if (block.type !== MdBlockType.HEADING) {
+        continue;
+      }
+      if (this.headingText(block).toLowerCase() === target) {
+        setTimeout((): void => {
+          this.docController.scrollToBlock(i);
+        }, 360);
+        return;
+      }
+    }
+    LOG.info(`heading not found: ${heading}`);
+  }
+
+  /** 标题块的纯文本。 */
+  private headingText(block: MdBlock): string {
+    let text: string = '';
+    const segments = MdInlineFlattener.flatten(block.inlines);
+    for (const segment of segments) {
+      text += segment.text;
+    }
+    return text.trim();
   }
 
   /** 自动同步开启时立即触发一次同步（保存 / 新建后调用）。 */
