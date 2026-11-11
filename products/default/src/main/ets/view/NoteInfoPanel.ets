@@ -23,6 +23,11 @@ export struct NoteInfoPanel {
   /** 属性变更：value 用于标量，listValue 用于列表。 */
   @Event onUpdateProperty: (key: string, value: string, listValue: string[]) => void =
     (key: string, value: string, listValue: string[]): void => {};
+  /** 新增属性。 */
+  @Event onAddProperty: (key: string, type: MdPropType) => void =
+    (key: string, type: MdPropType): void => {};
+  /** 删除属性。 */
+  @Event onRemoveProperty: (key: string) => void = (key: string): void => {};
   /** 未链接提及转双链。 */
   @Event onLinkMention: (path: string, title: string) => void =
     (path: string, title: string): void => {};
@@ -34,6 +39,12 @@ export struct NoteInfoPanel {
   @Local editValue: string = '';
   /** 列表属性新增项。 */
   @Local listInput: string = '';
+  /** 是否正在新增属性。 */
+  @Local addingProp: boolean = false;
+  /** 新增属性的名称。 */
+  @Local newPropKey: string = '';
+  /** 新增属性的类型序号：0 文本 / 1 开关 / 2 列表。 */
+  @Local newPropTypeIndex: number = 0;
 
   build() {
     Column() {
@@ -278,7 +289,23 @@ export struct NoteInfoPanel {
         } else {
           ForEach(this.properties, (property: MdProperty, index: number) => {
             this.propertyRow(property)
-          }, (property: MdProperty, index: number): string => `prop_${index}`)
+          }, (property: MdProperty, index: number): string => `prop_${property.key}`)
+        }
+        if (this.addingProp) {
+          this.newPropertyForm()
+        } else {
+          Text($r('app.string.props_add_new'))
+            .fontSize(13)
+            .fontColor($r('app.color.hm_accent'))
+            .padding({ left: 10, right: 10, top: 6, bottom: 6 })
+            .borderRadius(8)
+            .backgroundColor($r('app.color.hm_hover_bg'))
+            .margin({ top: 10 })
+            .onClick(() => {
+              this.addingProp = true;
+              this.newPropKey = '';
+              this.newPropTypeIndex = 0;
+            })
         }
       }
       .width('100%')
@@ -287,6 +314,84 @@ export struct NoteInfoPanel {
     }
     .width('100%')
     .height('100%')
+  }
+
+  /** 新增属性表单：属性名 + 类型选择。 */
+  @Builder
+  newPropertyForm() {
+    Column() {
+      TextInput({ placeholder: $r('app.string.props_key_hint'), text: this.newPropKey })
+        .fontSize(13)
+        .height(32)
+        .width('100%')
+        .backgroundColor($r('app.color.hm_input_bg'))
+        .placeholderColor($r('app.color.hm_text_secondary'))
+        .onChange((value: string): void => {
+          this.newPropKey = value;
+        })
+      Row() {
+        this.propTypeChip(0, $r('app.string.props_type_text'))
+        this.propTypeChip(1, $r('app.string.props_type_bool'))
+        this.propTypeChip(2, $r('app.string.props_type_list'))
+      }
+      .width('100%')
+      .margin({ top: 8 })
+      Row() {
+        Text($r('app.string.props_add'))
+          .fontSize(13)
+          .fontColor($r('app.color.hm_accent'))
+          .padding({ left: 8, right: 8, top: 4, bottom: 4 })
+          .onClick(() => {
+            this.commitNewProperty();
+          })
+        Text($r('app.string.dialog_cancel'))
+          .fontSize(13)
+          .fontColor($r('app.color.hm_text_secondary'))
+          .padding({ left: 12, right: 8, top: 4, bottom: 4 })
+          .onClick(() => {
+            this.addingProp = false;
+          })
+      }
+      .width('100%')
+      .margin({ top: 8 })
+    }
+    .width('100%')
+    .margin({ top: 10 })
+  }
+
+  /** 属性类型选择胶囊。 */
+  @Builder
+  propTypeChip(index: number, label: Resource) {
+    Text(label)
+      .fontSize(12)
+      .fontColor(this.newPropTypeIndex === index ? $r('app.color.hm_accent')
+        : $r('app.color.hm_text_secondary'))
+      .padding({ left: 10, right: 10, top: 4, bottom: 4 })
+      .margin({ right: 6 })
+      .borderRadius(10)
+      .backgroundColor(this.newPropTypeIndex === index ? $r('app.color.hm_accent_weak')
+        : $r('app.color.hm_hover_bg'))
+      .onClick(() => {
+        this.newPropTypeIndex = index;
+      })
+  }
+
+  /** 提交新增属性。 */
+  private commitNewProperty(): void {
+    const key: string = this.newPropKey.trim();
+    if (key.length === 0) {
+      return;
+    }
+    let type: MdPropType = MdPropType.STRING;
+    if (this.newPropTypeIndex === 1) {
+      type = MdPropType.BOOLEAN;
+    } else if (this.newPropTypeIndex === 2) {
+      type = MdPropType.LIST;
+    }
+    this.onAddProperty(key, type);
+    this.addingProp = false;
+    this.newPropKey = '';
+    this.newPropTypeIndex = 0;
   }
 
   /** 单个属性的可交互表单行。 */
@@ -298,6 +403,15 @@ export struct NoteInfoPanel {
           .fontSize(13)
           .fontColor($r('app.color.hm_text_secondary'))
           .layoutWeight(1)
+        SymbolGlyph($r('sys.symbol.xmark'))
+          .fontSize(11)
+          .fontColor([$r('app.color.hm_text_secondary')])
+          .width(18)
+          .height(18)
+          .margin({ right: 6 })
+          .onClick(() => {
+            this.onRemoveProperty(property.key);
+          })
         if (property.type === MdPropType.BOOLEAN) {
           Toggle({ type: ToggleType.Switch, isOn: property.value === 'true' })
             .selectedColor($r('app.color.hm_accent'))

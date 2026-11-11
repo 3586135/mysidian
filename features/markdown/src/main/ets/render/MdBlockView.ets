@@ -734,35 +734,15 @@ export struct MdBlockView {
 
   @Builder
   tableView() {
-    Column() {
-      Row() {
-        ForEach(this.block.headers, (header: string, index: number) => {
-          MdInlineText({
-            segments: MdInlineFlattener.flatten(this.inlineParser.parse(header)),
-            fontSize: this.fontSize,
-            textAlignment: this.cellAlign(index),
-            forceBold: true,
-            onOpenLink: (target: string, kind: string): void => {
-              this.onOpenLink(target, kind);
-            },
-            onOpenTag: (tag: string): void => {
-              this.onOpenTag(tag);
-            }
-          })
-            .layoutWeight(1)
-        }, (header: string, index: number): string => `head_${index}`)
-      }
-      .width('100%')
-      .padding({ top: 6, bottom: 6 })
-      Divider()
-        .color($r('sys.color.ohos_id_color_text_secondary'))
-      ForEach(this.block.rows, (row: string[], rowIndex: number) => {
+    Scroll() {
+      Column() {
         Row() {
-          ForEach(row, (cell: string, cellIndex: number) => {
+          ForEach(this.block.headers, (header: string, index: number) => {
             MdInlineText({
-              segments: MdInlineFlattener.flatten(this.inlineParser.parse(cell)),
+              segments: MdInlineFlattener.flatten(this.inlineParser.parse(header)),
               fontSize: this.fontSize,
-              textAlignment: this.cellAlign(cellIndex),
+              textAlignment: this.cellAlign(index),
+              forceBold: true,
               onOpenLink: (target: string, kind: string): void => {
                 this.onOpenLink(target, kind);
               },
@@ -771,14 +751,48 @@ export struct MdBlockView {
               }
             })
               .layoutWeight(1)
-          }, (cell: string, cellIndex: number): string => `cell_${rowIndex}_${cellIndex}`)
+              .constraintSize({ minWidth: 96 })
+          }, (header: string, index: number): string => `head_${index}`)
         }
         .width('100%')
         .padding({ top: 6, bottom: 6 })
-      }, (row: string[], rowIndex: number): string => `row_${rowIndex}`)
+        Divider()
+          .color($r('sys.color.ohos_id_color_text_secondary'))
+        ForEach(this.block.rows, (row: string[], rowIndex: number) => {
+          Row() {
+            ForEach(row, (cell: string, cellIndex: number) => {
+              MdInlineText({
+                segments: MdInlineFlattener.flatten(this.inlineParser.parse(cell)),
+                fontSize: this.fontSize,
+                textAlignment: this.cellAlign(cellIndex),
+                onOpenLink: (target: string, kind: string): void => {
+                  this.onOpenLink(target, kind);
+                },
+                onOpenTag: (tag: string): void => {
+                  this.onOpenTag(tag);
+                }
+              })
+                .layoutWeight(1)
+                .constraintSize({ minWidth: 96 })
+            }, (cell: string, cellIndex: number): string => `cell_${rowIndex}_${cellIndex}`)
+          }
+          .width('100%')
+          .padding({ top: 6, bottom: 6 })
+        }, (row: string[], rowIndex: number): string => `row_${rowIndex}`)
+      }
+      .width('100%')
+      .constraintSize({ minWidth: this.tableMinWidth() })
     }
+    .scrollable(ScrollDirection.Horizontal)
+    .scrollBar(BarState.Off)
     .width('100%')
     .margin({ top: 6, bottom: 6 })
+  }
+
+  /** 表格最小宽度：列多时保证单元格不被压成竖条，超出后横向滚动。 */
+  private tableMinWidth(): number {
+    const columns: number = Math.max(this.block.headers.length, 1);
+    return columns * 96;
   }
 
   /** 表格列对齐：依据分隔�?`:---:` 解析结果映射�?TextAlign�?*/

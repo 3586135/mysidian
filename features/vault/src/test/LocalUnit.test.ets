@@ -3,6 +3,7 @@ import { FuzzyMatcher } from '../main/ets/manager/FuzzyMatcher';
 import { Tokenizer } from '../main/ets/indexer/Tokenizer';
 import { LinkRewriter } from '../main/ets/manager/LinkRewriter';
 import { AttachmentResolver } from '../main/ets/manager/AttachmentResolver';
+import { TemplateEngine, TemplateRenderResult } from '../main/ets/manager/TemplateEngine';
 
 export default function vaultUtilTest() {
   describe('VaultUtilTest', () => {
@@ -95,6 +96,36 @@ export default function vaultUtilTest() {
     it('returnsEmptyForMissingAttachment', 0, () => {
       const files: string[] = ['b.md'];
       expect(AttachmentResolver.resolve('missing.png', 'b.md', files)).assertEqual('');
+    });
+
+    it('removesCursorTokenCompletely', 0, () => {
+      const result: TemplateRenderResult = TemplateEngine.render('标题：{{title}}\n正文\n{{cursor}}', '读书',
+        new Date(2026, 10, 11));
+      expect(result.content.includes('{{cursor}}')).assertFalse();
+      // 占位符整体被移除，不得残留右花括号。
+      expect(result.content.includes('}')).assertFalse();
+      expect(result.cursorOffset).assertEqual(result.content.length);
+    });
+
+    it('keepsCursorOffsetInMiddle', 0, () => {
+      const result: TemplateRenderResult = TemplateEngine.render('前{{cursor}}后', 'x', new Date(2026, 10, 11));
+      expect(result.content).assertEqual('前后');
+      expect(result.cursorOffset).assertEqual(1);
+    });
+
+    it('rendersTemplatePlaceholders', 0, () => {
+      const result: TemplateRenderResult = TemplateEngine.render('{{title}} {{date}} {{time}}',
+        '笔记', new Date(2026, 10, 11, 9, 30));
+      expect(result.content).assertEqual('笔记 2026-11-11 09:30');
+    });
+
+    it('computesIsoWeekKey', 0, () => {
+      expect(TemplateEngine.weekKey(new Date(2026, 10, 11))).assertEqual('2026-W46');
+    });
+
+    it('usesIsoWeekYearForCrossYearWeek', 0, () => {
+      // 2024-12-30 属于 ISO 2025-W01。
+      expect(TemplateEngine.weekKey(new Date(2024, 11, 30))).assertEqual('2025-W01');
     });
   });
 }

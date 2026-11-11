@@ -509,6 +509,66 @@
       "value": "清空回收站"
     },
     {
+      "name": "action_trash_list",
+      "value": "回收站"
+    },
+    {
+      "name": "trash_title",
+      "value": "回收站"
+    },
+    {
+      "name": "trash_empty",
+      "value": "回收站是空的"
+    },
+    {
+      "name": "trash_restore",
+      "value": "恢复"
+    },
+    {
+      "name": "trash_restored",
+      "value": "已恢复到仓库"
+    },
+    {
+      "name": "msg_restore_failed",
+      "value": "恢复失败"
+    },
+    {
+      "name": "msg_edit_autosaved",
+      "value": "已自动保存修改"
+    },
+    {
+      "name": "props_add_new",
+      "value": "新增属性"
+    },
+    {
+      "name": "props_key_hint",
+      "value": "属性名"
+    },
+    {
+      "name": "props_value_hint",
+      "value": "属性值"
+    },
+    {
+      "name": "props_type_text",
+      "value": "文本"
+    },
+    {
+      "name": "props_type_bool",
+      "value": "开关"
+    },
+    {
+      "name": "props_type_list",
+      "value": "列表"
+    },
+    {
+      "name": "props_delete",
+      "value": "删除属性"
+    },
+    {
+      "name": "msg_wiki_created",
+      "value": "已创建新笔记"
+    },
+    {
       "name": "dialog_rename_title",
       "value": "重命名笔记"
     },

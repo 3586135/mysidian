@@ -22,6 +22,8 @@ export class TemplateRenderResult {
 export class TemplateEngine {
   /** 模板目录名（仓库根目录下的 Templates）。 */
   public static readonly TEMPLATES_DIR: string = 'Templates';
+  /** 光标占位符标记（渲染后移除，位置记录在结果中）。 */
+  private static readonly CURSOR_TOKEN: string = '{{cursor}}';
 
   /**
    * 渲染模板。
@@ -43,10 +45,11 @@ export class TemplateEngine {
       (match: string, format: string): string => {
         return TemplateEngine.formatDate(now, format);
       });
-    // 光标占位符
-    const cursorIndex: number = content.indexOf('{{cursor}}');
+    // 光标占位符：整体移除并记录位置（注意占位符长度为 10，避免残留 '}'）。
+    const cursorIndex: number = content.indexOf(TemplateEngine.CURSOR_TOKEN);
     if (cursorIndex >= 0) {
-      content = content.substring(0, cursorIndex) + content.substring(cursorIndex + 9);
+      content = content.substring(0, cursorIndex) +
+        content.substring(cursorIndex + TemplateEngine.CURSOR_TOKEN.length);
       result.cursorOffset = cursorIndex;
     } else {
       result.cursorOffset = content.length;
@@ -77,9 +80,22 @@ export class TemplateEngine {
 
   /** ISO 周键：YYYY-Www（Obsidian 周期笔记的周报文件名）。 */
   public static weekKey(now: Date): string {
-    const year: string = now.getFullYear().toString();
-    const week: string = TemplateEngine.pad(TemplateEngine.isoWeek(now), 2);
-    return `${year}-W${week}`;
+    const year: number = TemplateEngine.isoWeekYear(now);
+    const week: number = TemplateEngine.isoWeek(now);
+    return `${year}-W${TemplateEngine.pad(week, 2)}`;
+  }
+
+  /**
+   * ISO 8601 周所属年份。
+   *
+   * 跨年周（如 2024-12-30 属于 2025-W01）按 ISO 周年计算，
+   * 与 Obsidian 的周报命名保持一致。
+   */
+  public static isoWeekYear(now: Date): number {
+    const date: Date = new Date(now.getTime());
+    const weekday: number = (date.getDay() + 6) % 7;
+    date.setDate(date.getDate() - weekday + 3);
+    return date.getFullYear();
   }
 
   /** ISO 8601 周序号。 */

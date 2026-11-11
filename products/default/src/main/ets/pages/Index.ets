@@ -1,12 +1,12 @@
-import { promptAction, window } from '@kit.ArkUI';
+import { KeyboardAvoidMode, promptAction, window } from '@kit.ArkUI';
 import { picker } from '@kit.CoreFileKit';
 import { BusinessError } from '@kit.BasicServicesKit';
 import { photoAccessHelper } from '@kit.MediaLibraryKit';
 import { HdsBarStyle, HdsTabs, HdsTabsController, hdsMaterial } from '@kit.UIDesignKit';
 import { EmptyState, FileTreeView, Logger } from '@ohos/common';
 import { MdDocumentView, MdDocumentViewController, MdInlineFlattener } from '@ohos/markdown';
-import { CalendarDay, DataViewResult, DataViewTask, GraphData, MdBlock, MdBlockType, OutlineEntry,
-  VaultInfo } from '@ohos/domain';
+import { CalendarDay, DataViewResult, DataViewTask, GraphData, MdBlock, MdBlockType, MdDocument,
+  MdPropType, OutlineEntry, VaultInfo } from '@ohos/domain';
 import { DiffLine, HistorySnapshot } from '@ohos/vault';
 import { NoteInfoPanel } from '../view/NoteInfoPanel';
 import { SearchOverlay } from '../view/SearchOverlay';
@@ -50,6 +50,13 @@ struct Index {
   @Local showRecent: boolean = false;
   /** 编辑工具栏显示状态。 */
   @Local showToolbar: boolean = false;
+  /** 键盘高度（vp）：键盘弹出时用于抬升编辑区。 */
+  @Local keyboardHeight: number = 0;
+  /**
+   * 编辑区「键盘交互态」：为 true 时窄屏切换为 NONE 避让，
+   * 底部导航栏沉到键盘下方，编辑工具栏紧贴键盘上沿。
+   */
+  @Local editorKeyboardMode: boolean = false;
   /** wiki 链接补全浮层。 */
   @Local showCompletion: boolean = false;
   @Local completionItems: CompletionCandidate[] = [];
@@ -77,6 +84,9 @@ struct Index {
   @Local historyList: HistorySnapshot[] = [];
   @Local historyDiff: DiffLine[] = [];
   @Local historySelected: string = '';
+  /** 回收站面板。 */
+  @Local showTrash: boolean = false;
+  @Local trashList: string[] = [];
   /** 模板选择面板。 */
   @Local showTemplates: boolean = false;
   @Local templateList: string[] = [];
@@ -94,6 +104,8 @@ struct Index {
   private tabsController: HdsTabsController = new HdsTabsController();
   /** 程序化编辑的期望文本：用于识别控制器修改引起的 onChange 回调。 */
   private expectedText: string = '';
+  /** 程序化写入进行中：屏蔽期间的 onChange（避免污染撤销栈）。 */
+  private programmaticEdit: boolean = false;
   /** 撤销 / 重做栈。 */
   private undoStack: string[] = [];
   private redoStack: string[] = [];
@@ -114,6 +126,14 @@ struct Index {
   private contentWidth: number = 0;
   /** 屏幕左右边缘系统返回手势保留区宽度（vp）。 */
   private static readonly EDGE_GESTURE_ZONE: number = 32;
+  /** 主窗口：用于订阅键盘高度变化。 */
+  private mainWindow: window.Window | undefined = undefined;
+  /** 键盘高度变化回调（单位 px）。 */
+  private keyboardCallback: (height: number) => void = (height: number): void => {
+    this.keyboardHeight = this.getUIContext().px2vp(height);
+    // 键盘高度变化后重新评估避让策略（含收起时恢复 RESIZE）。
+    this.applyKeyboardAvoidMode();
+  };
 
   aboutToAppear(): void {
     const context = this.getUIContext().getHostContext();
@@ -125,6 +145,9 @@ struct Index {
     this.vm.attachUi(this.getUIContext());
     this.vm.onScrollToHeading = (heading: string): void => {
       this.scrollToHeading(heading);
+    };
+    this.vm.onNoteCreated = (path: string): void => {
+      this.toast($r('app.string.msg_wiki_created'));
     };
     this.vm.init(context);
     this.syncVm.init(context).then((): void => {
@@ -140,6 +163,10 @@ struct Index {
 
   aboutToDisappear(): void {
     this.stopAutoSyncTimer();
+    if (this.mainWindow !== undefined) {
+      this.mainWindow.off('keyboardHeightChange', this.keyboardCallback);
+      this.mainWindow = undefined;
+    }
   }
 
   build() {
@@ -167,7 +194,7 @@ struct Index {
               }
               .width('100%')
               .height('100%')
-              .padding({ bottom: 84 })
+              .padding({ bottom: this.notesTabBottomPadding() })
             }
             .tabBar(this.floatingTabItem(0, $r('app.string.tab_notes'), $r('sys.symbol.doc_plaintext')))
 
@@ -201,6 +228,8 @@ struct Index {
           })
           .onChange((index: number): void => {
             this.currentTab = index;
+            // 切换页签时退出编辑区键盘交互态，恢复默认避让策略。
+            this.setEditorKeyboardMode(false);
           })
           .width('100%')
           .height('100%')
@@ -213,185 +242,194 @@ struct Index {
         .height('100%')
       }
 
-      if (this.showCreatePanel) {
-        this.createPanel()
-      }
-      if (this.showRenamePanel) {
-        this.renamePanel()
-      }
-      if (this.showFolderPanel) {
-        this.folderPanel()
-      }
-      if (this.showMovePanel) {
-        this.movePanel()
-      }
-      if (this.showCalendar) {
-        this.calendarOverlay()
-      }
-      if (this.showHistory) {
-        this.historyOverlay()
-      }
-      if (this.showTemplates) {
-        this.templateOverlay()
-      }
-      if (this.showQuickNote) {
-        this.quickNoteOverlay()
-      }
-      if (this.showHandwrite) {
-        this.handwriteOverlay()
-      }
-      if (this.showSearch) {
-        SearchOverlay({
-          hits: this.searchVm.hits,
-          keyword: this.searchVm.keyword,
-          busy: this.searchVm.busy,
-          searchMode: this.searchVm.searchMode,
-          tagChips: this.searchVm.tagChips,
-          activeTag: this.searchVm.activeTag,
-          onKeywordChange: (value: string): void => {
-            this.searchVm.search(this.vm.currentVault.id, value);
-          },
-          onModeChange: (mode: number): void => {
-            this.searchVm.setMode(this.vm.currentVault.id, mode);
-          },
-          onSelectTag: (tag: string): void => {
-            this.searchVm.selectTag(this.vm.currentVault.id, tag);
-          },
-          onOpenNote: (path: string): void => {
-            this.animAssign((): void => {
-              this.showSearch = false;
-            });
-            this.openNoteFrom(path);
-          },
-          onClose: (): void => {
-            this.animAssign((): void => {
-              this.showSearch = false;
-            });
-          }
-        })
-      }
-      if (this.showQuick) {
-        QuickSwitcher({
-          items: this.searchVm.quickItems,
-          keyword: this.searchVm.quickKeyword,
-          onKeywordChange: (value: string): void => {
-            this.searchVm.updateQuickKeyword(value);
-          },
-          onOpenNote: (path: string): void => {
-            this.animAssign((): void => {
-              this.showQuick = false;
-            });
-            if (this.splitPickMode) {
-              this.splitPickMode = false;
-              this.vm.openSecondary(path);
-              // 分屏时收起右侧信息面板，给正文与预览留出宽度。
-              if (this.isWide) {
-                this.animAssign((): void => {
-                  this.showRightPanel = false;
-                });
-              }
-              return;
-            }
-            this.openNoteFrom(path);
-          },
-          onClose: (): void => {
-            this.animAssign((): void => {
-              this.showQuick = false;
-            });
-          }
-        })
-      }
-      if (this.showRecent) {
-        RecentNotesPanel({
-          items: this.vm.recentNotes,
-          onOpenNote: (path: string): void => {
-            this.animAssign((): void => {
-              this.showRecent = false;
-            });
-            this.openNoteFrom(path);
-          },
-          onClose: (): void => {
-            this.animAssign((): void => {
-              this.showRecent = false;
-            });
-          }
-        })
-      }
-      if (this.showCommands) {
-        CommandPalette({
-          commands: this.filteredCommands(),
-          keyword: this.commandKeyword,
-          onKeywordChange: (value: string): void => {
-            this.commandKeyword = value;
-          },
-          onRun: (command: AppCommand): void => {
-            this.animAssign((): void => {
-              this.showCommands = false;
-            });
-            command.action();
-          },
-          onClose: (): void => {
-            this.animAssign((): void => {
-              this.showCommands = false;
-            });
-          }
-        })
-      }
-      if (this.showSync) {
-        SyncSettings({
-          serverUrl: this.syncVm.serverUrl,
-          username: this.syncVm.username,
-          password: this.syncVm.password,
-          remoteRoot: this.syncVm.remoteRoot,
-          caCertPath: this.syncVm.caCertPath,
-          skipCertVerify: this.syncVm.skipCertVerify,
-          autoSync: this.syncVm.autoSync,
-          statusText: this.syncVm.statusText(),
-          conflicts: this.syncVm.conflicts,
-          onServerUrlChange: (value: string): void => {
-            this.syncVm.serverUrl = value;
-          },
-          onUsernameChange: (value: string): void => {
-            this.syncVm.username = value;
-          },
-          onPasswordChange: (value: string): void => {
-            this.syncVm.password = value;
-          },
-          onRemoteRootChange: (value: string): void => {
-            this.syncVm.remoteRoot = value;
-          },
-          onImportCert: (): void => {
-            this.pickCertFile();
-          },
-          onClearCert: (): void => {
-            this.syncVm.clearCert();
-          },
-          onSkipCertChange: (value: boolean): void => {
-            this.syncVm.skipCertVerify = value;
-          },
-          onAutoSyncChange: (value: boolean): void => {
-            this.syncVm.autoSync = value;
-            this.restartAutoSyncTimer();
-          },
-          onSyncNow: (): void => {
-            this.syncVm.runSync(this.vm.currentVault);
-          },
-          onClose: (): void => {
-            this.animAssign((): void => {
-              this.showSync = false;
-            });
-          }
-        })
-      }
-      if (this.showVaults) {
-        Column() {
-          this.vaultsTab()
+      // 弹层层：NONE 避让下页面未被压缩，弹层整体上移让出键盘高度。
+      Stack() {
+        if (this.showCreatePanel) {
+          this.createPanel()
         }
-        .width('100%')
-        .height('100%')
-        .backgroundColor($r('app.color.hm_bg'))
-        .transition(this.tabTransition())
+        if (this.showRenamePanel) {
+          this.renamePanel()
+        }
+        if (this.showFolderPanel) {
+          this.folderPanel()
+        }
+        if (this.showMovePanel) {
+          this.movePanel()
+        }
+        if (this.showCalendar) {
+          this.calendarOverlay()
+        }
+        if (this.showHistory) {
+          this.historyOverlay()
+        }
+        if (this.showTrash) {
+          this.trashOverlay()
+        }
+        if (this.showTemplates) {
+          this.templateOverlay()
+        }
+        if (this.showQuickNote) {
+          this.quickNoteOverlay()
+        }
+        if (this.showHandwrite) {
+          this.handwriteOverlay()
+        }
+        if (this.showSearch) {
+          SearchOverlay({
+            hits: this.searchVm.hits,
+            keyword: this.searchVm.keyword,
+            busy: this.searchVm.busy,
+            searchMode: this.searchVm.searchMode,
+            tagChips: this.searchVm.tagChips,
+            activeTag: this.searchVm.activeTag,
+            onKeywordChange: (value: string): void => {
+              this.searchVm.search(this.vm.currentVault.id, value);
+            },
+            onModeChange: (mode: number): void => {
+              this.searchVm.setMode(this.vm.currentVault.id, mode);
+            },
+            onSelectTag: (tag: string): void => {
+              this.searchVm.selectTag(this.vm.currentVault.id, tag);
+            },
+            onOpenNote: (path: string): void => {
+              this.animAssign((): void => {
+                this.showSearch = false;
+              });
+              this.openNoteFrom(path);
+            },
+            onClose: (): void => {
+              this.animAssign((): void => {
+                this.showSearch = false;
+              });
+            }
+          })
+        }
+        if (this.showQuick) {
+          QuickSwitcher({
+            items: this.searchVm.quickItems,
+            keyword: this.searchVm.quickKeyword,
+            onKeywordChange: (value: string): void => {
+              this.searchVm.updateQuickKeyword(value);
+            },
+            onOpenNote: (path: string): void => {
+              this.animAssign((): void => {
+                this.showQuick = false;
+              });
+              if (this.splitPickMode) {
+                this.splitPickMode = false;
+                this.vm.openSecondary(path);
+                // 分屏时收起右侧信息面板，给正文与预览留出宽度。
+                if (this.isWide) {
+                  this.animAssign((): void => {
+                    this.showRightPanel = false;
+                  });
+                }
+                return;
+              }
+              this.openNoteFrom(path);
+            },
+            onClose: (): void => {
+              this.animAssign((): void => {
+                this.showQuick = false;
+              });
+            }
+          })
+        }
+        if (this.showRecent) {
+          RecentNotesPanel({
+            items: this.vm.recentNotes,
+            onOpenNote: (path: string): void => {
+              this.animAssign((): void => {
+                this.showRecent = false;
+              });
+              this.openNoteFrom(path);
+            },
+            onClose: (): void => {
+              this.animAssign((): void => {
+                this.showRecent = false;
+              });
+            }
+          })
+        }
+        if (this.showCommands) {
+          CommandPalette({
+            commands: this.filteredCommands(),
+            keyword: this.commandKeyword,
+            onKeywordChange: (value: string): void => {
+              this.commandKeyword = value;
+            },
+            onRun: (command: AppCommand): void => {
+              this.animAssign((): void => {
+                this.showCommands = false;
+              });
+              command.action();
+            },
+            onClose: (): void => {
+              this.animAssign((): void => {
+                this.showCommands = false;
+              });
+            }
+          })
+        }
+        if (this.showSync) {
+          SyncSettings({
+            serverUrl: this.syncVm.serverUrl,
+            username: this.syncVm.username,
+            password: this.syncVm.password,
+            remoteRoot: this.syncVm.remoteRoot,
+            caCertPath: this.syncVm.caCertPath,
+            skipCertVerify: this.syncVm.skipCertVerify,
+            autoSync: this.syncVm.autoSync,
+            statusText: this.syncVm.statusText(),
+            conflicts: this.syncVm.conflicts,
+            onServerUrlChange: (value: string): void => {
+              this.syncVm.serverUrl = value;
+            },
+            onUsernameChange: (value: string): void => {
+              this.syncVm.username = value;
+            },
+            onPasswordChange: (value: string): void => {
+              this.syncVm.password = value;
+            },
+            onRemoteRootChange: (value: string): void => {
+              this.syncVm.remoteRoot = value;
+            },
+            onImportCert: (): void => {
+              this.pickCertFile();
+            },
+            onClearCert: (): void => {
+              this.syncVm.clearCert();
+            },
+            onSkipCertChange: (value: boolean): void => {
+              this.syncVm.skipCertVerify = value;
+            },
+            onAutoSyncChange: (value: boolean): void => {
+              this.syncVm.autoSync = value;
+              this.restartAutoSyncTimer();
+            },
+            onSyncNow: (): void => {
+              this.syncVm.runSync(this.vm.currentVault);
+            },
+            onClose: (): void => {
+              this.animAssign((): void => {
+                this.showSync = false;
+              });
+            }
+          })
+        }
+        if (this.showVaults) {
+          Column() {
+            this.vaultsTab()
+          }
+          .width('100%')
+          .height('100%')
+          .backgroundColor($r('app.color.hm_bg'))
+          .transition(this.tabTransition())
+        }
       }
+      .width('100%')
+      .height('100%')
+      .padding({ bottom: this.overlayBottomMargin() })
     }
     .width('100%')
     .height('100%')
@@ -409,6 +447,8 @@ struct Index {
           this.showSideBar = true;
           this.showRightPanel = newArea.width >= 900;
         }
+        // 布局形态变化后重新评估键盘避让策略（宽屏无底部悬浮导航栏）。
+        this.applyKeyboardAvoidMode();
       }
     })
   }
@@ -1128,6 +1168,10 @@ struct Index {
         .onClick(() => {
           this.confirmTrashNote();
         })
+      MenuItem({ content: $r('app.string.action_trash_list') })
+        .onClick(() => {
+          this.openTrash();
+        })
       MenuItem({ content: $r('app.string.action_empty_trash') })
         .onClick(() => {
           this.confirmEmptyTrash();
@@ -1378,14 +1422,25 @@ struct Index {
               .placeholderColor($r('app.color.hm_text_secondary'))
               .caretColor($r('app.color.hm_accent'))
               .padding({ left: 20, right: 20, top: 8, bottom: 8 })
+              .gesture(this.contentPanGesture())
               .onTouch((event: TouchEvent) => {
                 this.onContentTouch(event);
+                // 触摸先于聚焦发生：提前切换避让策略，避免键盘弹出瞬间页面跳动。
+                this.setEditorKeyboardMode(true);
               })
               .onFocus(() => {
                 this.showToolbar = true;
+                this.setEditorKeyboardMode(true);
               })
               .onBlur(() => {
                 this.showToolbar = false;
+                // 键盘已收起时退出键盘交互态，恢复默认避让策略。
+                if (this.keyboardHeight <= 0) {
+                  this.setEditorKeyboardMode(false);
+                }
+              })
+              .onAppear(() => {
+                this.applyPendingCaret();
               })
               .onChange((value: string) => {
                 this.onEditorChange(value);
@@ -1440,6 +1495,7 @@ struct Index {
           })
           .layoutWeight(1)
           .padding({ left: 20, right: 20 })
+          .gesture(this.contentPanGesture())
           .onTouch((event: TouchEvent) => {
             this.onContentTouch(event);
           })
@@ -1450,7 +1506,16 @@ struct Index {
     }
     .width('100%')
     .height('100%')
-    .gesture(PanGesture({ fingers: 1, direction: PanDirection.Horizontal })
+  }
+
+  /**
+   * 正文区横向滑动手势（向右呼出文件侧栏 / 向左查看双链）。
+   *
+   * 只挂在正文（编辑区与预览区）上，不挂整个编辑器容器，
+   * 避免与编辑工具栏的横向滚动互相抢手势。
+   */
+  private contentPanGesture(): GestureType {
+    return PanGesture({ fingers: 1, direction: PanDirection.Horizontal })
       .onActionStart((event: GestureEvent) => {
         this.swipeStartSidebarOpen = this.showSideBar;
         this.swipeStartX = event.fingerList.length > 0 ? event.fingerList[0].globalX : -1;
@@ -1460,7 +1525,7 @@ struct Index {
           return;
         }
         this.handleContentSwipe(event.offsetX);
-      }))
+      });
   }
 
   /** 起点位于屏幕左右边缘保留区内的滑动交给系统返回手势处理。 */
@@ -1564,6 +1629,12 @@ struct Index {
         .maxLines(1)
         .textOverflow({ overflow: TextOverflow.Ellipsis })
         .layoutWeight(1)
+        .onClick(() => {
+          // 点击标题即可重命名当前笔记。
+          if (!this.vm.editMode && this.vm.selectedPath.length > 0) {
+            this.openRenamePanel();
+          }
+        })
       if (!this.vm.editMode && this.vm.selectedPath.length > 0) {
         // 宽屏布局没有笔记列表头部，笔记级操作（重命名 / 回收站 / 分屏双开等）由此进入。
         SymbolGlyph($r('sys.symbol.more'))
@@ -1582,6 +1653,7 @@ struct Index {
           .padding({ left: 8, right: 8 })
           .margin({ left: 4 })
           .onClick(() => {
+            this.setEditorKeyboardMode(false);
             this.vm.cancelEdit();
           })
         Text($r('app.string.action_save'))
@@ -1592,6 +1664,7 @@ struct Index {
           .padding({ left: 8, right: 8 })
           .margin({ left: 4 })
           .onClick(() => {
+            this.setEditorKeyboardMode(false);
             this.vm.saveDraft().then((): void => {
               this.syncNowIfAuto();
             });
@@ -1685,6 +1758,11 @@ struct Index {
 
   /** 编辑器内容变化：处理列表续行、撤销栈与 wiki 补全。 */
   private onEditorChange(value: string): void {
+    if (this.programmaticEdit) {
+      // 程序化写入过程中的回调：只同步缓冲区，不参与续行与撤销。
+      this.vm.updateDraft(value);
+      return;
+    }
     if (this.expectedText.length > 0 && value === this.expectedText) {
       // 控制器程序化修改引起的回调：只同步缓冲区，不参与续行与撤销。
       this.expectedText = '';
@@ -1713,6 +1791,9 @@ struct Index {
   private replaceEditorText(text: string, caret: number): void {
     const current: string = this.vm.draftBuffer;
     this.expectedText = text;
+    // 程序化写入期间屏蔽 onChange：delete + add 会产生中间空串回调，
+    // 若不屏蔽会被当成用户输入压入撤销栈（首次撤销即清空正文）。
+    this.programmaticEdit = true;
     if (current.length > 0) {
       this.textEditorController.deleteText({ start: 0, end: current.length });
     }
@@ -1721,6 +1802,7 @@ struct Index {
     }
     this.textEditorController.setTextSelection(caret, caret);
     this.vm.updateDraft(text);
+    this.programmaticEdit = false;
   }
 
   /** 记录撤销快照：600ms 内的连续输入合并为一次快照。 */
@@ -1763,14 +1845,17 @@ struct Index {
     this.replaceEditorText(popped, popped.length);
   }
 
-  /** 更新 wiki 链接补全浮层。 */
+  /** 更新 wiki 链接 / 标签补全浮层。 */
   private updateCompletion(text: string, caret: number): void {
     if (caret < 0) {
       this.showCompletion = false;
       return;
     }
-    const candidates: CompletionCandidate[] =
+    let candidates: CompletionCandidate[] =
       EditorTextUtils.getWikiCompletionCandidates(text, caret, this.vm.noteTitles());
+    if (candidates.length === 0) {
+      candidates = EditorTextUtils.getTagCompletionCandidates(text, caret, this.vm.allTagNames);
+    }
     if (candidates.length === 0) {
       this.showCompletion = false;
       this.completionItems = [];
@@ -1790,156 +1875,198 @@ struct Index {
       return;
     }
     const text: string = this.vm.draftBuffer;
-    const next: string = text.substring(0, caret) + item.insertText + text.substring(caret);
-    this.replaceEditorText(next, caret + item.insertText.length);
+    // replaceFrom >= 0 时替换已输入的查询串（支持前缀 / 包含命中与标签补全）。
+    const from: number = item.replaceFrom >= 0 && item.replaceFrom < caret ? item.replaceFrom : caret;
+    const next: string = text.substring(0, from) + item.insertText + text.substring(caret);
+    this.replaceEditorText(next, from + item.insertText.length);
     this.showCompletion = false;
   }
 
-  /** 编辑模式底部格式化工具栏。 */
+  /** 编辑模式底部格式化工具栏（横向滚动，避免窄屏按钮溢出）。 */
   @Builder
   editToolbar() {
-    Row() {
-      Button('B')
-        .fontSize(14)
-        .fontWeight(FontWeight.Bold)
-        .height(32)
-        .padding({ left: 10, right: 10 })
-        .backgroundColor($r('app.color.hm_hover_bg'))
-        .borderRadius(6)
-        .onClick(() => {
-          this.insertFormat('**');
-        })
-      Button('I')
-        .fontSize(14)
-        .height(32)
-        .padding({ left: 10, right: 10 })
-        .backgroundColor($r('app.color.hm_hover_bg'))
-        .borderRadius(6)
-        .onClick(() => {
-          this.insertFormat('*');
-        })
-      Button('~')
-        .fontSize(14)
-        .height(32)
-        .padding({ left: 10, right: 10 })
-        .backgroundColor($r('app.color.hm_hover_bg'))
-        .borderRadius(6)
-        .onClick(() => {
-          this.insertFormat('~~');
-        })
-      Button('`')
-        .fontSize(14)
-        .height(32)
-        .padding({ left: 10, right: 10 })
-        .backgroundColor($r('app.color.hm_hover_bg'))
-        .borderRadius(6)
-        .onClick(() => {
-          this.insertFormat('`');
-        })
-      Button('H1')
-        .fontSize(13)
-        .height(32)
-        .padding({ left: 8, right: 8 })
-        .backgroundColor($r('app.color.hm_hover_bg'))
-        .borderRadius(6)
-        .onClick(() => {
-          this.insertFormat('# ');
-        })
-      Button('H2')
-        .fontSize(13)
-        .height(32)
-        .padding({ left: 8, right: 8 })
-        .backgroundColor($r('app.color.hm_hover_bg'))
-        .borderRadius(6)
-        .onClick(() => {
-          this.insertFormat('## ');
-        })
-      Button('H3')
-        .fontSize(13)
-        .height(32)
-        .padding({ left: 8, right: 8 })
-        .backgroundColor($r('app.color.hm_hover_bg'))
-        .borderRadius(6)
-        .onClick(() => {
-          this.insertFormat('### ');
-        })
-      Button('>')
-        .fontSize(14)
-        .height(32)
-        .padding({ left: 10, right: 10 })
-        .backgroundColor($r('app.color.hm_hover_bg'))
-        .borderRadius(6)
-        .onClick(() => {
-          this.insertFormat('> ');
-        })
-      Button('-')
-        .fontSize(14)
-        .height(32)
-        .padding({ left: 10, right: 10 })
-        .backgroundColor($r('app.color.hm_hover_bg'))
-        .borderRadius(6)
-        .onClick(() => {
-          this.insertFormat('- ');
-        })
-      Button('1.')
-        .fontSize(13)
-        .height(32)
-        .padding({ left: 8, right: 8 })
-        .backgroundColor($r('app.color.hm_hover_bg'))
-        .borderRadius(6)
-        .onClick(() => {
-          this.insertFormat('1. ');
-        })
-      Button('-[]')
-        .fontSize(12)
-        .height(32)
-        .padding({ left: 8, right: 8 })
-        .backgroundColor($r('app.color.hm_hover_bg'))
-        .borderRadius(6)
-        .onClick(() => {
-          this.insertFormat('- [ ] ');
-        })
-      Button('—')
-        .fontSize(14)
-        .height(32)
-        .padding({ left: 10, right: 10 })
-        .backgroundColor($r('app.color.hm_hover_bg'))
-        .borderRadius(6)
-        .onClick(() => {
-          this.insertFormat('---\n');
-        })
-      Button('↶')
-        .fontSize(15)
-        .height(32)
-        .padding({ left: 10, right: 10 })
-        .backgroundColor($r('app.color.hm_hover_bg'))
-        .borderRadius(6)
-        .opacity(this.undoDepth > 0 ? 1 : 0.4)
-        .onClick(() => {
-          this.undoEdit();
-        })
-      Button('↷')
-        .fontSize(15)
-        .height(32)
-        .padding({ left: 10, right: 10 })
-        .backgroundColor($r('app.color.hm_hover_bg'))
-        .borderRadius(6)
-        .opacity(this.redoDepth > 0 ? 1 : 0.4)
-        .onClick(() => {
-          this.redoEdit();
-        })
-      Button('IMG')
-        .fontSize(12)
-        .height(32)
-        .padding({ left: 8, right: 8 })
-        .backgroundColor($r('app.color.hm_hover_bg'))
-        .borderRadius(6)
-        .onClick(() => {
-          this.pickAndInsertImage();
-        })
+    Scroll() {
+      Row() {
+        Button('B')
+          .fontSize(14)
+          .fontWeight(FontWeight.Bold)
+          .height(32)
+          .padding({ left: 10, right: 10 })
+          .backgroundColor($r('app.color.hm_hover_bg'))
+          .borderRadius(6)
+          .focusable(false)
+          .onClick(() => {
+            this.insertFormat('**');
+          })
+        Button('I')
+          .fontSize(14)
+          .height(32)
+          .padding({ left: 10, right: 10 })
+          .backgroundColor($r('app.color.hm_hover_bg'))
+          .borderRadius(6)
+          .focusable(false)
+          .onClick(() => {
+            this.insertFormat('*');
+          })
+        Button('~')
+          .fontSize(14)
+          .height(32)
+          .padding({ left: 10, right: 10 })
+          .backgroundColor($r('app.color.hm_hover_bg'))
+          .borderRadius(6)
+          .focusable(false)
+          .onClick(() => {
+            this.insertFormat('~~');
+          })
+        Button('`')
+          .fontSize(14)
+          .height(32)
+          .padding({ left: 10, right: 10 })
+          .backgroundColor($r('app.color.hm_hover_bg'))
+          .borderRadius(6)
+          .focusable(false)
+          .onClick(() => {
+            this.insertFormat('`');
+          })
+        Button('H1')
+          .fontSize(13)
+          .height(32)
+          .padding({ left: 8, right: 8 })
+          .backgroundColor($r('app.color.hm_hover_bg'))
+          .borderRadius(6)
+          .focusable(false)
+          .onClick(() => {
+            this.insertFormat('# ');
+          })
+        Button('H2')
+          .fontSize(13)
+          .height(32)
+          .padding({ left: 8, right: 8 })
+          .backgroundColor($r('app.color.hm_hover_bg'))
+          .borderRadius(6)
+          .focusable(false)
+          .onClick(() => {
+            this.insertFormat('## ');
+          })
+        Button('H3')
+          .fontSize(13)
+          .height(32)
+          .padding({ left: 8, right: 8 })
+          .backgroundColor($r('app.color.hm_hover_bg'))
+          .borderRadius(6)
+          .focusable(false)
+          .onClick(() => {
+            this.insertFormat('### ');
+          })
+        Button('>')
+          .fontSize(14)
+          .height(32)
+          .padding({ left: 10, right: 10 })
+          .backgroundColor($r('app.color.hm_hover_bg'))
+          .borderRadius(6)
+          .focusable(false)
+          .onClick(() => {
+            this.insertFormat('> ');
+          })
+        Button('-')
+          .fontSize(14)
+          .height(32)
+          .padding({ left: 10, right: 10 })
+          .backgroundColor($r('app.color.hm_hover_bg'))
+          .borderRadius(6)
+          .focusable(false)
+          .onClick(() => {
+            this.insertFormat('- ');
+          })
+        Button('1.')
+          .fontSize(13)
+          .height(32)
+          .padding({ left: 8, right: 8 })
+          .backgroundColor($r('app.color.hm_hover_bg'))
+          .borderRadius(6)
+          .focusable(false)
+          .onClick(() => {
+            this.insertFormat('1. ');
+          })
+        Button('-[]')
+          .fontSize(12)
+          .height(32)
+          .padding({ left: 8, right: 8 })
+          .backgroundColor($r('app.color.hm_hover_bg'))
+          .borderRadius(6)
+          .focusable(false)
+          .onClick(() => {
+            this.insertFormat('- [ ] ');
+          })
+        Button('—')
+          .fontSize(14)
+          .height(32)
+          .padding({ left: 10, right: 10 })
+          .backgroundColor($r('app.color.hm_hover_bg'))
+          .borderRadius(6)
+          .focusable(false)
+          .onClick(() => {
+            this.insertFormat('---\n');
+          })
+        Button('↶')
+          .fontSize(15)
+          .height(32)
+          .padding({ left: 10, right: 10 })
+          .backgroundColor($r('app.color.hm_hover_bg'))
+          .borderRadius(6)
+          .focusable(false)
+          .opacity(this.undoDepth > 0 ? 1 : 0.4)
+          .onClick(() => {
+            this.undoEdit();
+          })
+        Button('↷')
+          .fontSize(15)
+          .height(32)
+          .padding({ left: 10, right: 10 })
+          .backgroundColor($r('app.color.hm_hover_bg'))
+          .borderRadius(6)
+          .focusable(false)
+          .opacity(this.redoDepth > 0 ? 1 : 0.4)
+          .onClick(() => {
+            this.redoEdit();
+          })
+        Button('IMG')
+          .fontSize(12)
+          .height(32)
+          .padding({ left: 8, right: 8 })
+          .backgroundColor($r('app.color.hm_hover_bg'))
+          .borderRadius(6)
+          .focusable(false)
+          .onClick(() => {
+            this.pickAndInsertImage();
+          })
+        Button('[[')
+          .fontSize(12)
+          .height(32)
+          .padding({ left: 8, right: 8 })
+          .backgroundColor($r('app.color.hm_hover_bg'))
+          .borderRadius(6)
+          .focusable(false)
+          .onClick(() => {
+            this.insertFormat('[[');
+          })
+        Button('#')
+          .fontSize(12)
+          .height(32)
+          .padding({ left: 8, right: 8 })
+          .backgroundColor($r('app.color.hm_hover_bg'))
+          .borderRadius(6)
+          .focusable(false)
+          .onClick(() => {
+            this.insertFormat('#');
+          })
+      }
+      .padding({ left: 12, right: 12, top: 8, bottom: 8 })
     }
-    .padding({ left: 12, right: 12, top: 8, bottom: 8 })
+    .scrollable(ScrollDirection.Horizontal)
+    .scrollBar(BarState.Off)
     .width('100%')
+    .height(48)
     .backgroundColor($r('app.color.hm_card_bg'))
     .border({ width: { top: 1 }, color: $r('app.color.hm_divider') })
   }
@@ -1973,6 +2100,12 @@ struct Index {
       },
       onUpdateProperty: (key: string, value: string, listValue: string[]): void => {
         this.vm.updateProperty(key, value, listValue);
+      },
+      onAddProperty: (key: string, type: MdPropType): void => {
+        this.vm.addProperty(key, type);
+      },
+      onRemoveProperty: (key: string): void => {
+        this.confirmRemoveProperty(key);
       },
       onLinkMention: (path: string, title: string): void => {
         this.vm.linkMention(path, title);
@@ -2489,6 +2622,106 @@ struct Index {
     .height('100%')
   }
 
+  /** 回收站浮层：查看已删除笔记，可逐条恢复或清空。 */
+  @Builder
+  trashOverlay() {
+    Stack() {
+      Column() {
+      }
+      .width('100%')
+      .height('100%')
+      .backgroundColor($r('app.color.hm_mask'))
+      .backgroundBlurStyle(BlurStyle.Thin)
+      .onClick(() => {
+        this.closeTrash();
+      })
+      Column() {
+        Text($r('app.string.trash_title'))
+          .fontSize(18)
+          .fontWeight(FontWeight.Medium)
+          .fontColor($r('app.color.hm_text_primary'))
+          .width('100%')
+          .margin({ bottom: 8 })
+        if (this.trashList.length === 0) {
+          Text($r('app.string.trash_empty'))
+            .fontSize(13)
+            .fontColor($r('app.color.hm_text_secondary'))
+        } else {
+          Scroll() {
+            Column() {
+              ForEach(this.trashList, (item: string, index: number) => {
+                this.trashRow(item, index)
+              }, (item: string, index: number): string => `trash_${index}_${item}`)
+            }
+            .width('100%')
+          }
+          .width('100%')
+          .layoutWeight(1)
+          .align(Alignment.Top)
+          .scrollBar(BarState.Off)
+          .constraintSize({ maxHeight: 320 })
+        }
+        Row() {
+          Button($r('app.string.action_empty_trash'))
+            .type(ButtonType.Capsule)
+            .height(40)
+            .fontSize(16)
+            .backgroundColor($r('app.color.hm_hover_bg'))
+            .fontColor($r('app.color.hm_danger'))
+            .layoutWeight(1)
+            .onClick(() => {
+              this.confirmEmptyTrash();
+            })
+          Button($r('app.string.dialog_cancel'))
+            .type(ButtonType.Capsule)
+            .height(40)
+            .fontSize(16)
+            .backgroundColor($r('app.color.hm_hover_bg'))
+            .fontColor($r('app.color.hm_text_primary'))
+            .layoutWeight(1)
+            .margin({ left: 12 })
+            .onClick(() => {
+              this.closeTrash();
+            })
+        }
+        .width('100%')
+        .margin({ top: 12 })
+      }
+      .width('88%')
+      .constraintSize({ maxWidth: 460 })
+      .padding(20)
+      .borderRadius(24)
+      .backgroundColor($r('app.color.hm_card_bg'))
+      .shadow({ radius: 24, color: '#40000000', offsetY: 6 })
+    }
+    .width('100%')
+    .height('100%')
+  }
+
+  /** 回收站条目：文件名 + 恢复按钮。 */
+  @Builder
+  trashRow(item: string, index: number) {
+    Row() {
+      Text(this.trashDisplayName(item))
+        .fontSize(14)
+        .fontColor($r('app.color.hm_text_primary'))
+        .maxLines(1)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
+        .layoutWeight(1)
+      Text($r('app.string.trash_restore'))
+        .fontSize(12)
+        .fontColor($r('app.color.hm_accent'))
+        .padding({ left: 8, right: 8, top: 3, bottom: 3 })
+        .borderRadius(10)
+        .backgroundColor($r('app.color.hm_hover_bg'))
+        .onClick(() => {
+          this.restoreFromTrash(item);
+        })
+    }
+    .width('100%')
+    .padding({ top: 8, bottom: 8 })
+  }
+
   /** 历史版本条目（点击查看差异，可回滚）。 */
   @Builder
   historyRow(item: HistorySnapshot, index: number) {
@@ -2770,8 +3003,104 @@ struct Index {
       const nav = win.getWindowAvoidArea(window.AvoidAreaType.TYPE_NAVIGATION_INDICATOR);
       this.topInset = this.getUIContext().px2vp(system.topRect.height);
       this.bottomInset = this.getUIContext().px2vp(nav.bottomRect.height);
+      // 订阅键盘高度变化：键盘弹出时按高度抬升编辑区，使编辑工具栏紧贴键盘上沿。
+      this.mainWindow = win;
+      win.on('keyboardHeightChange', this.keyboardCallback);
     }).catch((error: BusinessError) => {
       LOG.error(`get window insets failed, code=${error.code}, message=${error.message}`);
+    });
+  }
+
+  /**
+   * 应用键盘避让策略。
+   * 窄屏（底部悬浮导航栏形态）下，编辑区进入键盘交互态时改用 NONE 避让：
+   * 页面不被压缩，底部「笔记 / 设置」导航栏沉到键盘下方不再上浮，
+   * 仅编辑工具栏贴在键盘上沿；其余场景保持 RESIZE（弹窗与设置页不会被键盘遮挡）。
+   */
+  private applyKeyboardAvoidMode(): void {
+    const useNone: boolean = this.noneAvoidActive();
+    const mode: KeyboardAvoidMode = useNone ? KeyboardAvoidMode.NONE : KeyboardAvoidMode.RESIZE;
+    this.getUIContext().setKeyboardAvoidMode(mode);
+  }
+
+  /** NONE 避让是否生效（页面不被压缩，需手动让出键盘高度）。 */
+  private noneAvoidActive(): boolean {
+    return this.editorKeyboardMode && this.currentTab === 0 && !this.isWide;
+  }
+
+  /** 窄屏笔记页底部留白：键盘弹出时让出键盘高度，否则为悬浮导航栏留位。 */
+  private notesTabBottomPadding(): number {
+    if (this.noneAvoidActive() && this.keyboardHeight > 0) {
+      return this.keyboardHeight;
+    }
+    return 84;
+  }
+
+  /** 弹层底部让位高度：NONE 避让下页面未被压缩，弹层需自行避开键盘。 */
+  private overlayBottomMargin(): number {
+    if (this.noneAvoidActive()) {
+      return this.keyboardHeight;
+    }
+    return 0;
+  }
+
+  /** 进入 / 退出编辑区键盘交互态。 */
+  private setEditorKeyboardMode(active: boolean): void {
+    if (this.editorKeyboardMode === active) {
+      return;
+    }
+    this.editorKeyboardMode = active;
+    this.applyKeyboardAvoidMode();
+  }
+
+  /** 应用模板光标位置：套用模板后把光标放到 {{cursor}} 所在处。 */
+  private applyPendingCaret(): void {
+    const caret: number = this.vm.pendingCaret;
+    if (caret < 0) {
+      return;
+    }
+    this.vm.pendingCaret = -1;
+    const limit: number = this.vm.draftBuffer.length;
+    const position: number = caret > limit ? limit : caret;
+    setTimeout((): void => {
+      this.textEditorController.caretPosition(position);
+    }, 80);
+  }
+
+  /**
+   * 返回键退出编辑：有改动则自动保存。
+   * 侧滑返回极易误触，直接丢弃草稿会丢失整段输入（对标 Obsidian 的自动保存）。
+   */
+  private exitEditWithSave(): void {
+    this.setEditorKeyboardMode(false);
+    if (this.vm.draftBuffer === this.vm.noteContent) {
+      this.vm.cancelEdit();
+      return;
+    }
+    this.vm.saveDraft().then((): void => {
+      this.toast($r('app.string.msg_edit_autosaved'));
+      this.syncNowIfAuto();
+    });
+  }
+
+  /** 删除属性前二次确认（属性删除立即落盘，不可撤销）。 */
+  private confirmRemoveProperty(key: string): void {
+    AlertDialog.show({
+      title: $r('app.string.props_delete'),
+      message: key,
+      primaryButton: {
+        value: $r('app.string.dialog_cancel'),
+        action: (): void => {
+        }
+      },
+      secondaryButton: {
+        value: $r('app.string.dialog_confirm'),
+        fontColor: $r('app.color.hm_danger'),
+        action: (): void => {
+          this.vm.removeProperty(key);
+        }
+      },
+      alignment: DialogAlignment.Bottom
     });
   }
 
@@ -3182,6 +3511,48 @@ struct Index {
     });
   }
 
+  /** 打开回收站面板：列出已删除笔记。 */
+  private openTrash(): void {
+    this.vm.listTrash().then((items: string[]): void => {
+      this.trashList = items;
+      this.animAssign((): void => {
+        this.showTrash = true;
+      });
+    });
+  }
+
+  /** 关闭回收站面板。 */
+  private closeTrash(): void {
+    this.animAssign((): void => {
+      this.showTrash = false;
+    });
+  }
+
+  /** 从回收站恢复笔记。 */
+  private restoreFromTrash(item: string): void {
+    this.vm.restoreNote(item).then((ok: boolean): void => {
+      if (!ok) {
+        this.toast($r('app.string.msg_restore_failed'));
+        return;
+      }
+      this.toast($r('app.string.trash_restored'));
+      this.vm.listTrash().then((items: string[]): void => {
+        this.trashList = items;
+      });
+    });
+  }
+
+  /** 回收站条目显示名：去掉回收时添加的时间戳前缀。 */
+  private trashDisplayName(item: string): string {
+    const parts: string[] = item.split('/');
+    const name: string = parts.length > 0 ? parts[parts.length - 1] : item;
+    const underscore: number = name.indexOf('_');
+    if (underscore < 0) {
+      return name;
+    }
+    return name.substring(underscore + 1);
+  }
+
   /** 确认清空回收站。 */
   private confirmEmptyTrash(): void {
     AlertDialog.show({
@@ -3198,6 +3569,7 @@ struct Index {
         action: (): void => {
           this.vm.emptyTrash().then((count: number): void => {
             this.toast($r('app.string.msg_empty_trash_done'));
+            this.trashList = [];
             this.syncNowIfAuto();
           });
         }
@@ -3321,6 +3693,56 @@ struct Index {
 
   /** 系统返回：依次关闭浮层 → 返回上一笔记 → 窄屏唤出目录 → 默认退出。 */
   onBackPress(): boolean {
+    if (this.showTrash) {
+      this.closeTrash();
+      return true;
+    }
+    if (this.showRenamePanel) {
+      this.animAssign((): void => {
+        this.showRenamePanel = false;
+      });
+      return true;
+    }
+    if (this.showFolderPanel) {
+      this.animAssign((): void => {
+        this.showFolderPanel = false;
+      });
+      return true;
+    }
+    if (this.showMovePanel) {
+      this.animAssign((): void => {
+        this.showMovePanel = false;
+      });
+      return true;
+    }
+    if (this.showCalendar) {
+      this.animAssign((): void => {
+        this.showCalendar = false;
+      });
+      return true;
+    }
+    if (this.showHistory) {
+      this.animAssign((): void => {
+        this.showHistory = false;
+      });
+      return true;
+    }
+    if (this.showTemplates) {
+      this.animAssign((): void => {
+        this.showTemplates = false;
+      });
+      return true;
+    }
+    if (this.showQuickNote) {
+      this.closeQuickNote();
+      return true;
+    }
+    if (this.showHandwrite) {
+      this.animAssign((): void => {
+        this.showHandwrite = false;
+      });
+      return true;
+    }
     if (this.showSearch) {
       this.animAssign((): void => {
         this.showSearch = false;
@@ -3370,7 +3792,7 @@ struct Index {
       return true;
     }
     if (this.vm.editMode) {
-      this.vm.cancelEdit();
+      this.exitEditWithSave();
       return true;
     }
     if (!this.isWide && this.showInfo) {

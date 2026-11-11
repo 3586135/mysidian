@@ -110,6 +110,21 @@ export class InlineParser {
         }
       }
 
+      if (ch === '=' && index + 1 < end && text.charAt(index + 1) === '=') {
+        // 高亮：==文本==（内容不得为空，避免 "====" 被整体吞掉）
+        const close: number = text.indexOf('==', index + 2);
+        if (close >= index + 3 && close < end) {
+          this.flush(nodes, buffer);
+          buffer = '';
+          const node: MdInline = new MdInline();
+          node.type = MdInlineType.HIGHLIGHT;
+          node.children = this.parseRange(text, index + 2, close);
+          nodes.push(node);
+          index = close + 2;
+          continue;
+        }
+      }
+
       if (ch === '$') {
         const close: number = text.indexOf('$', index + 1);
         if (close > index + 1 && close < end) {

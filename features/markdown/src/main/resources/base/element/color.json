@@ -7,6 +7,10 @@
     {
       "name": "md_chip_bg",
       "value": "#0F000000"
+    },
+    {
+      "name": "md_highlight_bg",
+      "value": "#26FFC107"
     }
   ]
 }

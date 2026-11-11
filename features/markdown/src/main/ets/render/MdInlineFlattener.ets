@@ -28,6 +28,15 @@ export class MdInlineFlattener {
         MdInlineFlattener.walk(inline.children, bold, italic, true, output);
         continue;
       }
+      if (inline.type === MdInlineType.HIGHLIGHT) {
+        const highlighted: MdInlineSegment[] = [];
+        MdInlineFlattener.walk(inline.children, bold, italic, strike, highlighted);
+        for (const item of highlighted) {
+          item.highlight = true;
+          output.push(item);
+        }
+        continue;
+      }
       const segment: MdInlineSegment = new MdInlineSegment();
       segment.text = inline.type === MdInlineType.MATH
         ? MathRenderer.toPlain(inline.text) : inline.text;

@@ -4,8 +4,8 @@ import { preferences } from '@kit.ArkData';
 import { BusinessError } from '@kit.BasicServicesKit';
 import { BacklinkItem, CalendarDay, DataViewEntry, DataViewResult, DataViewTask, FileNode,
   FlatFileNode, GraphData, GraphEdge, GraphNode, LinkRef, MdBlock, MdBlockType, MdDocument,
-  MdFrontmatter, MdListItem, MdPropType, MdProperty, NoteRow, OutlineEntry, UnlinkedMention,
-  VaultInfo } from '@ohos/domain';
+  MdFrontmatter, MdListItem, MdPropType, MdProperty, NoteRow, OutlineEntry, TagRef,
+  UnlinkedMention, VaultInfo } from '@ohos/domain';
 import { Logger } from '@ohos/common';
 import { DataViewQuery, FrontmatterSerializer, MarkdownParser, TaskMetadata } from '@ohos/markdown';
 import { AttachmentResolver, BlockDao, DiffLine, FileHistory, FileStatInfo, HistorySnapshot,
@@ -54,6 +54,8 @@ export class VaultViewModel {
   @Trace editMode: boolean = false;
   /** 编辑器缓冲区（非响应式，避免输入时重建 TextArea 造成光标跳动）。 */
   draftBuffer: string = '';
+  /** 待应用的光标位置（模板渲染后的 {{cursor}} 位置，-1 表示无）。 */
+  @Trace pendingCaret: number = -1;
   /** 信息面板。 */
   @Trace infoTabIndex: number = 0;
   @Trace outline: OutlineEntry[] = [];
@@ -65,6 +67,8 @@ export class VaultViewModel {
 
   /** 反向链接面板增强：未链接提及。 */
   @Trace unlinked: UnlinkedMention[] = [];
+  /** 仓库内全部标签（# 标签补全候选）。 */
+  @Trace allTagNames: string[] = [];
   /** 局部关系图谱数据。 */
   @Trace graph: GraphData = new GraphData();
   /** 分屏第二栏的笔记路径（宽屏分屏双开）。 */
@@ -85,6 +89,8 @@ export class VaultViewModel {
 
   /** 锚点跳转回调：由页面注入（负责滚动到目标标题块）。 */
   public onScrollToHeading: (heading: string) => void = (heading: string): void => {};
+  /** 自动创建笔记回调：由页面注入（用于提示用户）。 */
+  public onNoteCreated: (path: string) => void = (path: string): void => {};
 
   /** 绑定 UI 上下文，用于驱动界面过渡动画。 */
   public attachUi(ui: UIContext): void {
@@ -667,6 +673,7 @@ export class VaultViewModel {
     const name: string = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
     const path: string = `${name}.md`;
     const existing: NoteRow | null = await NoteDao.findByPath(context, this.currentVault.id, path);
+    let cursor: number = -1;
     if (existing === null) {
       // 存在日记模板时套用模板，否则写默认标题。
       const template: string = await this.findTemplate(['日记', 'daily', 'Daily', 'Journal']);
@@ -675,12 +682,17 @@ export class VaultViewModel {
         const raw: string = await manager.readTemplate(this.currentVault, template);
         const rendered: TemplateRenderResult = TemplateEngine.render(raw, name, now);
         content = rendered.content;
+        cursor = rendered.cursorOffset;
       }
       await manager.writeNote(this.currentVault, path, content);
       await manager.refreshNote(this.currentVault, path);
       await this.refreshTree();
     }
     await this.openNote(path);
+    if (cursor >= 0) {
+      this.pendingCaret = cursor;
+      this.startEdit();
+    }
     return true;
   }
 
@@ -695,6 +707,7 @@ export class VaultViewModel {
     const key: string = TemplateEngine.weekKey(now);
     const path: string = `${key}.md`;
     const existing: NoteRow | null = await NoteDao.findByPath(context, this.currentVault.id, path);
+    let cursor: number = -1;
     if (existing === null) {
       const template: string = await this.findTemplate(['周报', 'weekly', 'Weekly']);
       let content: string = `# ${key}\n\n`;
@@ -702,12 +715,17 @@ export class VaultViewModel {
         const raw: string = await manager.readTemplate(this.currentVault, template);
         const rendered: TemplateRenderResult = TemplateEngine.render(raw, key, now);
         content = rendered.content;
+        cursor = rendered.cursorOffset;
       }
       await manager.writeNote(this.currentVault, path, content);
       await manager.refreshNote(this.currentVault, path);
       await this.refreshTree();
     }
     await this.openNote(path);
+    if (cursor >= 0) {
+      this.pendingCaret = cursor;
+      this.startEdit();
+    }
     return true;
   }
 
@@ -715,6 +733,10 @@ export class VaultViewModel {
     const manager: VaultManager | null = this.manager;
     if (manager === null) {
       return;
+    }
+    // 切换笔记前先落盘当前草稿，避免未保存内容被静默丢弃（同系统返回键处理）。
+    if (this.editMode && this.draftBuffer !== this.noteContent) {
+      await this.saveDraft();
     }
     if (recordHistory && this.selectedPath.length > 0 && this.selectedPath !== path) {
       this.noteHistory.push(this.selectedPath);
@@ -803,13 +825,61 @@ export class VaultViewModel {
     }
     const note = await NoteResolver.resolve(context, this.currentVault.id, noteTarget);
     if (note === null) {
-      LOG.info(`unresolved wiki link: ${target}`);
+      // 双链工作流：目标笔记不存在时自动创建同名笔记并打开（先写链接，后填内容）。
+      const created: string = await this.createNoteByTitle(noteTarget);
+      if (created.length === 0) {
+        LOG.info(`unresolved wiki link: ${target}`);
+        return;
+      }
+      await this.openNote(created);
+      this.onNoteCreated(created);
+      if (anchor.length > 0) {
+        this.onScrollToHeading(anchor);
+      }
       return;
     }
     await this.openNote(note.path);
     if (anchor.length > 0) {
       this.onScrollToHeading(anchor);
     }
+  }
+
+  /**
+   * 按链接目标创建笔记（双链「先写链接、后填内容」）。
+   *
+   * @param title 链接目标（可含子目录，如 books/读书笔记）
+   * @returns 新建笔记的相对路径；失败返回空串
+   */
+  private async createNoteByTitle(title: string): Promise<string> {
+    const manager: VaultManager | null = this.manager;
+    const context: common.Context | null = this.context;
+    if (manager === null || context === null || title.length === 0) {
+      return '';
+    }
+    const segments: string[] = title.split('/');
+    const names: string[] = [];
+    for (const segment of segments) {
+      const trimmed: string = segment.trim();
+      if (trimmed.length === 0) {
+        return '';
+      }
+      const safe: string = VaultPath.sanitizeName(trimmed);
+      if (safe.length === 0) {
+        return '';
+      }
+      names.push(safe);
+    }
+    const joined: string = names.join('/');
+    const path: string = joined.endsWith('.md') ? joined : `${joined}.md`;
+    // 已存在同名笔记：直接打开，绝不覆盖用户已有内容。
+    const existing: NoteRow | null = await NoteDao.findByPath(context, this.currentVault.id, path);
+    if (existing !== null) {
+      return existing.path;
+    }
+    await manager.writeNote(this.currentVault, path, '');
+    await manager.refreshNote(this.currentVault, path);
+    await this.refreshTree();
+    return path;
   }
 
   /** 用系统默认应用打开外部链接。 */
@@ -1018,7 +1088,7 @@ export class VaultViewModel {
     return `file://${this.currentVault.rootPath}/${relative}`;
   }
 
-  /** 加载嵌入笔记的正文（只读渲染用）。 */
+  /** 加载嵌入笔记的正文（只读渲染用）；支持 #章节 锚点。 */
   public async loadEmbed(target: string): Promise<string> {
     const manager: VaultManager | null = this.manager;
     const context: common.Context | null = this.context;
@@ -1026,8 +1096,10 @@ export class VaultViewModel {
       return '';
     }
     let noteTarget: string = target.trim();
+    let anchor: string = '';
     const hash: number = noteTarget.indexOf('#');
     if (hash >= 0) {
+      anchor = noteTarget.substring(hash + 1).trim();
       noteTarget = noteTarget.substring(0, hash).trim();
     }
     if (noteTarget.length === 0) {
@@ -1037,7 +1109,68 @@ export class VaultViewModel {
     if (note === null) {
       return '';
     }
-    return manager.readNote(this.currentVault, note.path);
+    const content: string = await manager.readNote(this.currentVault, note.path);
+    if (anchor.length === 0) {
+      return content;
+    }
+    return this.extractSection(content, anchor);
+  }
+
+  /**
+   * 抽取标题锚点对应的章节正文。
+   *
+   * 从目标标题行开始，收集到下一个同级或更高级标题为止（不含该标题）。
+   *
+   * @param content 笔记全文
+   * @param anchor 标题文本
+   * @returns 章节正文；找不到标题时返回全文
+   */
+  private extractSection(content: string, anchor: string): string {
+    const lines: string[] = content.split('\n');
+    let start: number = -1;
+    let level: number = 0;
+    let inFence: boolean = false;
+    for (let index = 0; index < lines.length; index++) {
+      const trimmed: string = lines[index].trim();
+      if (trimmed.startsWith('```')) {
+        // 围栏代码块内的 # 不是标题。
+        inFence = !inFence;
+        continue;
+      }
+      if (inFence) {
+        continue;
+      }
+      const match: RegExpExecArray | null = /^(#{1,6})\s+(.*)$/.exec(lines[index]);
+      if (match === null) {
+        continue;
+      }
+      if (match[2].trim() === anchor || match[2].trim().toLowerCase() === anchor.toLowerCase()) {
+        start = index + 1;
+        level = match[1].length;
+        break;
+      }
+    }
+    if (start < 0) {
+      return content;
+    }
+    const collected: string[] = [];
+    let fence: boolean = false;
+    for (let index = start; index < lines.length; index++) {
+      const trimmed: string = lines[index].trim();
+      if (trimmed.startsWith('```')) {
+        fence = !fence;
+        collected.push(lines[index]);
+        continue;
+      }
+      if (!fence) {
+        const match: RegExpExecArray | null = /^(#{1,6})\s+/.exec(lines[index]);
+        if (match !== null && match[1].length <= level) {
+          break;
+        }
+      }
+      collected.push(lines[index]);
+    }
+    return collected.join('\n').trim();
   }
 
   /** 仓库内笔记标题列表（供 wiki 链接补全候选）。 */
@@ -1125,6 +1258,7 @@ export class VaultViewModel {
     }
     const path: string = `${date}.md`;
     const existing: NoteRow | null = await NoteDao.findByPath(context, this.currentVault.id, path);
+    let cursor: number = -1;
     if (existing === null) {
       const template: string = await this.findTemplate(['日记', 'daily', 'Daily', 'Journal']);
       let content: string = `# ${date}\n\n`;
@@ -1133,12 +1267,17 @@ export class VaultViewModel {
         const parsed: Date = new Date(`${date}T00:00:00`);
         const rendered: TemplateRenderResult = TemplateEngine.render(raw, date, parsed);
         content = rendered.content;
+        cursor = rendered.cursorOffset;
       }
       await manager.writeNote(this.currentVault, path, content);
       await manager.refreshNote(this.currentVault, path);
       await this.refreshTree();
     }
     await this.openNote(path);
+    if (cursor >= 0) {
+      this.pendingCaret = cursor;
+      this.startEdit();
+    }
     return true;
   }
 
@@ -1188,6 +1327,27 @@ export class VaultViewModel {
     this.tree = await manager.buildTree(this.currentVault);
     this.refreshTreeItems();
     this.vaultFiles = await manager.listVaultFiles(this.currentVault);
+    await this.refreshAllTags();
+  }
+
+  /** 刷新仓库内全部标签（供 # 标签补全使用）。 */
+  private async refreshAllTags(): Promise<void> {
+    const context: common.Context | null = this.context;
+    if (context === null) {
+      return;
+    }
+    try {
+      const refs: TagRef[] = await TagDao.listAll(context, this.currentVault.id);
+      const names: string[] = [];
+      for (const ref of refs) {
+        if (ref.tag.length > 0 && !names.includes(ref.tag)) {
+          names.push(ref.tag);
+        }
+      }
+      this.allTagNames = names;
+    } catch (error) {
+      LOG.error(`load tags failed, message=${error}`);
+    }
   }
 
   /** 重建指定笔记的索引（改名后链接目标路径会变化）。 */
@@ -1300,7 +1460,7 @@ export class VaultViewModel {
     return manager.listTemplates(this.currentVault);
   }
 
-  /** 用模板创建笔记并打开。 */
+  /** 用模板创建笔记并打开（进入编辑态并把光标放到 {{cursor}} 位置）。 */
   public async createNoteWithTemplate(templatePath: string, title: string): Promise<void> {
     const manager: VaultManager | null = this.manager;
     if (manager === null) {
@@ -1313,6 +1473,9 @@ export class VaultViewModel {
     await manager.refreshNote(this.currentVault, path);
     await this.refreshTree();
     await this.openNote(path);
+    // 模板光标占位符：进入编辑态并定位光标。
+    this.pendingCaret = rendered.cursorOffset;
+    this.startEdit();
   }
 
   /** 按文件名查找模板（Templates 目录内）。 */
@@ -1394,19 +1557,7 @@ export class VaultViewModel {
 
   /** 更新笔记属性（可视化属性编辑器），回写 frontmatter 并保存。 */
   public async updateProperty(key: string, value: string, listValue: string[]): Promise<void> {
-    const manager: VaultManager | null = this.manager;
-    const context: common.Context | null = this.context;
-    if (manager === null || context === null || this.selectedPath.length === 0) {
-      return;
-    }
-    const note: NoteRow | null = await NoteDao.findByPath(context, this.currentVault.id,
-      this.selectedPath);
-    if (note === null) {
-      return;
-    }
-    const content: string = await manager.readNote(this.currentVault, this.selectedPath);
-    const document: MdDocument = MarkdownParser.parse(content);
-    const properties: MdProperty[] = document.frontmatter.properties;
+    const properties: MdProperty[] = await this.currentProperties();
     let target: MdProperty | null = null;
     for (const property of properties) {
       if (property.key === key) {
@@ -1415,6 +1566,18 @@ export class VaultViewModel {
       }
     }
     if (target === null) {
+      // 属性不存在：按标量 / 列表新建一条。
+      const created: MdProperty = new MdProperty();
+      created.key = key;
+      if (listValue.length > 0) {
+        created.type = MdPropType.LIST;
+        created.listValue = listValue;
+      } else {
+        created.type = MdPropType.STRING;
+        created.value = value;
+      }
+      properties.push(created);
+      await this.saveProperties(properties);
       return;
     }
     if (target.type === MdPropType.LIST || listValue.length > 0) {
@@ -1424,6 +1587,61 @@ export class VaultViewModel {
     } else {
       target.value = value;
     }
+    await this.saveProperties(properties);
+  }
+
+  /** 新增属性（可视化属性编辑器）。 */
+  public async addProperty(key: string, type: MdPropType): Promise<void> {
+    const trimmed: string = key.trim();
+    if (trimmed.length === 0) {
+      return;
+    }
+    const properties: MdProperty[] = await this.currentProperties();
+    for (const property of properties) {
+      if (property.key === trimmed) {
+        return;
+      }
+    }
+    const created: MdProperty = new MdProperty();
+    created.key = trimmed;
+    created.type = type;
+    if (type === MdPropType.LIST) {
+      created.listValue = [];
+    }
+    properties.push(created);
+    await this.saveProperties(properties);
+  }
+
+  /** 删除属性（可视化属性编辑器）。 */
+  public async removeProperty(key: string): Promise<void> {
+    const properties: MdProperty[] = await this.currentProperties();
+    const kept: MdProperty[] = [];
+    for (const property of properties) {
+      if (property.key !== key) {
+        kept.push(property);
+      }
+    }
+    await this.saveProperties(kept);
+  }
+
+  /** 读取当前笔记的属性集合（副本，可修改后回写）。 */
+  private async currentProperties(): Promise<MdProperty[]> {
+    const manager: VaultManager | null = this.manager;
+    if (manager === null || this.selectedPath.length === 0) {
+      return [];
+    }
+    const content: string = await manager.readNote(this.currentVault, this.selectedPath);
+    const document: MdDocument = MarkdownParser.parse(content);
+    return document.frontmatter.properties;
+  }
+
+  /** 把属性集合写回 frontmatter 并保存笔记。 */
+  private async saveProperties(properties: MdProperty[]): Promise<void> {
+    const manager: VaultManager | null = this.manager;
+    if (manager === null || this.selectedPath.length === 0) {
+      return;
+    }
+    const content: string = await manager.readNote(this.currentVault, this.selectedPath);
     const next: string = FrontmatterSerializer.rebuild(content, properties);
     await manager.writeNote(this.currentVault, this.selectedPath, next);
     this.noteContent = next;
@@ -1466,6 +1684,8 @@ export class VaultViewModel {
     if (!ok) {
       return false;
     }
+    // 回滚前丢弃未保存草稿，避免旧草稿在重新打开时覆盖刚回滚的内容。
+    this.cancelEdit();
     await manager.refreshNote(this.currentVault, this.selectedPath);
     await this.openNote(this.selectedPath);
     return true;
@@ -1713,7 +1933,8 @@ export class VaultViewModel {
     this.outline = await BlockDao.outline(context, note.id);
     this.backlinks = await LinkDao.backlinks(context, this.selectedPath);
     this.noteTags = await TagDao.tagsOfNote(context, note.id);
-    this.noteProperties = await PropDao.ofNote(context, note.id);
+    // 属性以「文件解析结果」为准：与写回链路同源，避免面板顺序与列表值漂移。
+    this.noteProperties = this.document.frontmatter.properties;
   }
 
   private refreshTreeItems(): void {

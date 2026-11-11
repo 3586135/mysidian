@@ -67,7 +67,9 @@ export default function editorTextUtilsTest() {
         EditorTextUtils.getWikiCompletionCandidates('见 [[笔记', 5, titles);
       expect(candidates.length).assertEqual(2);
       expect(candidates[0].title).assertEqual('笔记甲');
-      expect(candidates[0].insertText).assertEqual('甲]]');
+      // 候选项整体替换已输入的查询串，因此插入文本是完整标题 + 右括号。
+      expect(candidates[0].insertText).assertEqual('笔记甲]]');
+      expect(candidates[0].replaceFrom).assertEqual(3);
     });
 
     it('returnsNoCandidatesOutsideWikiLink', 0, () => {
@@ -89,6 +91,37 @@ export default function editorTextUtilsTest() {
       const candidates: CompletionCandidate[] =
         EditorTextUtils.getWikiCompletionCandidates('[[a', 3, titles);
       expect(candidates.length).assertEqual(8);
+    });
+
+    it('matchesContainsAfterPrefix', 0, () => {
+      const titles: string[] = ['2026-读书笔记', '读书笔记'];
+      const candidates: CompletionCandidate[] =
+        EditorTextUtils.getWikiCompletionCandidates('[[读书', 4, titles);
+      expect(candidates.length).assertEqual(2);
+      // 前缀命中排在前面。
+      expect(candidates[0].title).assertEqual('读书笔记');
+      expect(candidates[0].insertText).assertEqual('读书笔记]]');
+      // 包含命中排在后面，补全时整体替换已输入的查询串。
+      expect(candidates[1].title).assertEqual('2026-读书笔记');
+      expect(candidates[1].insertText).assertEqual('2026-读书笔记]]');
+      expect(candidates[1].replaceFrom).assertEqual(2);
+    });
+
+    it('findsTagCompletionCandidates', 0, () => {
+      const tags: string[] = ['语法', '示例'];
+      const candidates: CompletionCandidate[] =
+        EditorTextUtils.getTagCompletionCandidates('正文 #语', 5, tags);
+      expect(candidates.length).assertEqual(1);
+      expect(candidates[0].title).assertEqual('语法');
+      expect(candidates[0].insertText).assertEqual('语法');
+      expect(candidates[0].replaceFrom).assertEqual(3);
+    });
+
+    it('returnsNoTagCandidatesWithoutHash', 0, () => {
+      const tags: string[] = ['语法'];
+      const candidates: CompletionCandidate[] =
+        EditorTextUtils.getTagCompletionCandidates('普通文本', 4, tags);
+      expect(candidates.length).assertEqual(0);
     });
   });
 }

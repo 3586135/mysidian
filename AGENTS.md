@@ -30,14 +30,17 @@ devecocli run --skip-build               # 装机运行（必须先 build 成功
 
 | 设备 | 连接 | 说明 |
 |---|---|---|
-| Mate X7 折叠屏模拟器 | `127.0.0.1:5555` | 2210x2416，展开 ~650vp（中等宽 600-900vp 区间的代表机型） |
-| MatePad Pro 13 平板模拟器 | `127.0.0.1:5557` | 2880x1920，宽屏固定面板形态 |
-| Mate 90 Pro 手机模拟器 | `127.0.0.1:5559` | 1280x2832，窄屏形态 |
-| 真机（无线调试） | `192.168.3.149:42073` | 端口可能变化；`hdc tconn <ip:port>` 重连 |
+| Mate 90 Pro 手机模拟器 | `127.0.0.1:5555` | 1280x2832，窄屏形态（底部悬浮导航栏 + 键盘避让问题的高发机型） |
+| Mate X7 折叠屏模拟器 | `127.0.0.1:5557` | 展开 2210x2416 ~650vp；折叠态 1080x2444 ~430vp 可复现窄屏布局 |
+| MatePad Pro 13 平板模拟器 | `127.0.0.1:5559` | 2880x1920，宽屏固定面板形态 |
+| 真机（无线调试） | `192.168.3.149:42073` | 端口可能变化；`hdc tconn <ip:port>` 重连（nova 14 Ultra） |
 
 - 启动应用：`hdc -t <dev> shell aa start -a DefaultAbility -b com.mrs.mysidian`（**没有** EntryAbility，用错报 10104001）。
 - 多设备在线时 devecocli 子命令必须带 `--device`。
 - 用户要求：**UI 功能验证尽量在三台模拟器上都做**。
+- **模拟器端口会变**：`devecocli emulator list` 的 Name↔Serial 映射以实际输出为准（2026-11-11 实测 5555=Mate 90 Pro、5557=Mate X7、5559=MatePad，与本文旧表相反）。
+- 折叠屏模拟器可用 `devecocli emulator fold --target <serial> open|close` 切换形态（折叠态即窄屏布局）。
+- **已知环境问题（2026-11-11）**：三台模拟器的 `devecocli ui click` / `uitest uiInput click` / `uinput -T -c` 触摸注入均无响应（命令返回成功但界面无变化，a11y 树还可能与实际渲染不一致）；此时 UI 验证只能靠截图肉眼确认，无法驱动交互，需先重启模拟器再试。
 
 ### UI 自动化要点（devecocli ui）
 

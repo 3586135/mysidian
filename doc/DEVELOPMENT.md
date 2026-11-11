@@ -34,6 +34,74 @@
 
 ## 近期变更（未发布）
 
+### 键盘避让重做：编辑工具栏紧贴键盘，底部导航栏沉到键盘下（2026-11-11）
+
+- **问题**：原先全局 `KeyboardAvoidMode.RESIZE`，键盘弹出时整个页面压缩，底部「笔记 / 设置」悬浮导航栏被一起顶到键盘上方，挡住视线。
+- **方案**（`Index.ets`）：窄屏且编辑区进入「键盘交互态」（`editorKeyboardMode`）时改用 `KeyboardAvoidMode.NONE`——页面不被压缩，底部导航栏沉到键盘下方不可见；编辑区按 `keyboardHeightChange` 事件抬升 `keyboardHeight`，使编辑格式工具栏紧贴键盘上沿。
+  - 键盘高度：Index.ets 订阅 `window.on('keyboardHeightChange')`，`aboutToDisappear` 取消订阅。
+  - 避让策略切换：编辑器 `onTouch`（先于聚焦）即切换为 NONE，避免键盘弹出瞬间页面跳动；切页签 / 取消保存时恢复 RESIZE。
+  - 弹层让位：所有弹层统一包进一个 `Stack`，NONE 避让时按键盘高度 `padding` 上移，弹层不会被键盘遮挡。
+  - 宽屏（≥600vp）无底部悬浮导航栏，保持 RESIZE 不变。
+
+### 六个「代码级断层」修补（2026-11-11）
+
+1. **模板 `{{cursor}}` 少截 1 字符**：`TemplateEngine.render` 用 `+ 9` 截断占位符（实际长度 10），正文会残留 `}`。改为按 `CURSOR_TOKEN.length` 截断；并新增单测。
+2. **模板光标位置未生效**：`createNoteWithTemplate` / `openDailyNote` / `openWeeklyNote` / `openDailyNoteByDate` 计算了 `cursorOffset` 却没用。现在置 `vm.pendingCaret` 并进入编辑态，页面在 `TextArea.onAppear` 里调用 `textEditorController.caretPosition()` 定位光标。
+3. **编辑模式返回键丢弃草稿**：`onBackPress` 直接 `cancelEdit()`。改为 `exitEditWithSave()`——草稿有变化则自动保存并提示「已自动保存修改」，无变化才取消。
+4. **编辑工具栏窄屏溢出**：15+ 个按钮塞在不可滚动 `Row` 里，撤销/重做/IMG 被裁切。改为 `Scroll`（横向）+ `scrollBar(BarState.Off)`，并新增 `[[`、`#` 快捷按钮（17 个按钮）。
+5. **回收站无查看/恢复入口**：`listTrash()` / `restoreNote()` 已有实现但 UI 缺失。新增 `trashOverlay()` 浮层（逐条「恢复」+ 底部「清空回收站」），菜单新增「回收站」入口。
+6. **未创建双链无响应 / 嵌入忽略锚点**：
+   - `openLink` 解析不到笔记时自动创建同名笔记并打开（双链「先写链接，后填内容」），并提示「已创建新笔记」。
+   - `loadEmbed` 支持 `![[笔记#章节]]`：新增 `extractSection()`，抽取目标标题到下一个同级/更高级标题之间的正文。
+
+### 属性面板增删属性（2026-11-11）
+
+- `NoteInfoPanel` 属性页签新增「+ 新增属性」表单（属性名 + 文本/开关/列表类型选择），每个属性行新增删除按钮。
+- `VaultViewModel` 新增 `addProperty()` / `removeProperty()`，`updateProperty()` 改为「不存在则新建」；抽出 `currentProperties()` / `saveProperties()` 复用读写链路。
+
+### Markdown 与编辑体验增强（2026-11-11）
+
+- **==高亮==**：`MdInlineType.HIGHLIGHT` + InlineParser 解析 + `MdInlineSegment.highlight` + `MdInlineText` 用 `textBackgroundStyle` 着色（新增 `md_highlight_bg` 深浅色资源）。
+- **宽表格横向滚动**：表格外包横向 `Scroll`，每列 `constraintSize({ minWidth: 96 })`，列多时不再被压成竖条。
+- **补全增强**：`getWikiCompletionCandidates` 改为「前缀命中在前、包含命中在后」（输入 `[[读书` 可命中「2026-读书笔记」）；新增 `getTagCompletionCandidates`，输入 `#` 提示仓库内已有标签。候选项新增 `replaceFrom` 字段，补全时替换已输入的查询串。
+- **点击标题重命名**：编辑器标题栏点击笔记标题直接打开重命名对话框。
+
+### 验证状态（2026-11-11）
+
+- `devecocli build` 通过；`devecocli check arkts` 仅剩已知的资源名误报。
+- 新增单测：`TemplateEngine` 光标/占位符 4 例、补全前缀/包含与标签补全 3 例（hypium 仅能在 DevEco Studio 内运行）。
+- **UI 交互验证受阻**：三台模拟器（5555/5557/5559）的触摸注入（`devecocli ui click` / `uitest uiInput click` / `uinput -T -c`）全部无响应（命令返回成功但界面无变化，a11y 树与实际渲染不一致），本轮只能完成构建级与代码级验证，交互项需在模拟器恢复后补验。
+
+### 代码走查后的加固（2026-11-11）
+
+对本次改动做了独立代码走查，发现并修复以下问题：
+
+| 问题 | 修复 |
+|---|---|
+| 前缀补全会把已输入的前缀丢掉（`[[读书` → `[[笔记]]`） | 候选项统一「整体替换查询串」：`insertText = 完整标题 + ']]'`，`replaceFrom` 指向查询起点 |
+| 自动建笔记可能覆盖同名文件 | 建前先查 `NoteDao.findByPath`，命中则直接打开，不写文件 |
+| 历史回滚会被旧草稿覆盖 | 回滚前 `cancelEdit()`；切换笔记前自动落盘草稿（新增保护） |
+| `replaceEditorText` 的中间空串回调污染撤销栈（首次撤销清空正文） | 新增 `programmaticEdit` 标志，程序化写入期间屏蔽 onChange |
+| 退出编辑后避让策略未复位 | `exitEditWithSave` / `onBlur` / 键盘收起事件统一重新评估策略 |
+| 点工具栏按钮会让输入框失焦、工具栏消失 | 17 个工具栏按钮加 `focusable(false)` |
+| 工具栏横向滚动被编辑器侧滑手势抢走 | 横向 PanGesture 从编辑器容器移到正文（编辑区 / 预览区） |
+| 返回键未关闭回收站等新弹层 | `onBackPress` 补齐全部弹层（回收站/重命名/新建目录/移动/日历/历史/模板/闪念/手写） |
+| 属性写回会丢失嵌套 map / 注释等未识别内容 | `FrontmatterSerializer` 改为「按 key 合并」：只替换被改属性块，其余原样保留 |
+| 属性面板顺序与写回不一致（DB 排序 vs 文件顺序） | 面板改用文件解析结果（与写回同源） |
+| 删除属性立即落盘不可撤销 | 删除前弹二次确认；属性列表 ForEach key 改用属性名 |
+| `==高亮==` 可匹配空内容（`====` 被吞） | 要求高亮体非空 |
+| 章节锚点会误判代码块内的 `#` 注释行 | `extractSection` 跳过 ``` 围栏 |
+| 周报跨年周命名与 Obsidian 不一致 | `weekKey` 改用 ISO 周年（2024-12-30 → 2025-W01） |
+| 标签补全会命中 `C#` / URL 片段 | `#` 必须是标签起始（前面为空白/行首/`(`/`[`） |
+
+### 待办（下一轮，按优先级）
+
+1. 文件树长按菜单：目录（在此新建/新建子目录/重命名/删除）、文件（重命名/移动/回收站/分屏打开）。
+2. 页内查找 & 替换（当前只有全库搜索）。
+3. 图片点击全屏预览 + 双指缩放；代码块语法着色。
+4. Dataview TABLE/LIST（`collectEntries`）、未链接提及（`unlinkedMentions`）、日历统计（`calendarMonth`）仍逐篇 `readNote` + `MarkdownParser.parse`，大仓库需改走 RDB 索引。
+5. 书签（★ 置顶区）与全屏全局图谱入口。
+
 ### Dataview live TABLE/LIST + 勾选实时消失（2026-11-10，TODO #4/#5 完成）
 
 - TABLE/LIST 查询由静态解析升级为**联动索引数据**：`DataViewQuery` 解析列/条件，`VaultViewModel` 基于索引实时求值（不依赖 Web 兜底）。

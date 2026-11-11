@@ -26,7 +26,9 @@ export default class DefaultAbility extends UIAbility {
         return;
       }
       hilog.info(DOMAIN, 'testTag', 'Succeeded in loading the content.');
-      // 键盘避让改为压缩模式：键盘弹出时页面压缩，编辑工具栏动态显示在输入法上方
+      // 键盘避让默认压缩模式：弹窗与设置页不会被键盘遮挡。
+      // 窄屏编辑器进入键盘交互态时，Index.ets 会临时切换为 NONE 避让，
+      // 使底部悬浮导航栏沉到键盘下方、编辑工具栏紧贴键盘上沿。
       windowStage.getMainWindowSync().getUIContext().setKeyboardAvoidMode(KeyboardAvoidMode.RESIZE);
     });
 

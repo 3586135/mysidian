@@ -30,6 +30,8 @@ export class CompletionCandidate {
   title: string = '';
   /** 选中后应追加的文本（标题剩余部分 + 右括号）。 */
   insertText: string = '';
+  /** 候选替换起点（相对正文起始位置；-1 表示在光标处直接插入）。 */
+  replaceFrom: number = -1;
 }
 
 /**
@@ -82,6 +84,8 @@ export class EditorTextUtils {
   /**
    * 计算 wiki 链接补全候选。
    *
+   * 匹配规则：前缀命中排在前面，包含命中排在后面（输入 [[读书 可命中「2026-读书笔记」）。
+   *
    * @param text 当前正文
    * @param caret 当前光标位置
    * @param allTitles 仓库内全部笔记标题
@@ -107,16 +111,85 @@ export class EditorTextUtils {
       return candidates;
     }
     const lower: string = query.toLowerCase();
+    const prefixHits: CompletionCandidate[] = [];
+    const containsHits: CompletionCandidate[] = [];
     for (const title of allTitles) {
       if (title.length === 0) {
         continue;
       }
-      if (!title.toLowerCase().startsWith(lower)) {
+      const lowerTitle: string = title.toLowerCase();
+      const candidate: CompletionCandidate = new CompletionCandidate();
+      candidate.title = title;
+      candidate.replaceFrom = open + 2;
+      if (lowerTitle.startsWith(lower)) {
+        // 前缀命中：整体替换已输入的查询串。
+        candidate.insertText = `${title}]]`;
+        prefixHits.push(candidate);
+      } else if (lowerTitle.includes(lower)) {
+        // 包含命中：同样整体替换为完整标题。
+        candidate.insertText = `${title}]]`;
+        containsHits.push(candidate);
+      }
+    }
+    for (const candidate of prefixHits) {
+      candidates.push(candidate);
+      if (candidates.length >= EditorTextUtils.MAX_COMPLETION_ITEMS) {
+        return candidates;
+      }
+    }
+    for (const candidate of containsHits) {
+      candidates.push(candidate);
+      if (candidates.length >= EditorTextUtils.MAX_COMPLETION_ITEMS) {
+        break;
+      }
+    }
+    return candidates;
+  }
+
+  /**
+   * 计算标签补全候选（输入 # 时提示仓库内已有标签）。
+   *
+   * @param text 当前正文
+   * @param caret 当前光标位置
+   * @param allTags 仓库内全部标签
+   * @returns 候选列表；当前不在标签上下文中时返回空数组
+   */
+  public static getTagCompletionCandidates(text: string, caret: number,
+    allTags: string[]): CompletionCandidate[] {
+    const candidates: CompletionCandidate[] = [];
+    if (caret < 0 || caret > text.length) {
+      return candidates;
+    }
+    const before: string = text.substring(0, caret);
+    const hash: number = before.lastIndexOf('#');
+    if (hash < 0) {
+      return candidates;
+    }
+    // '#' 必须是标签起始（前为空白或行首），避免命中 "C#" / URL 片段。
+    if (hash > 0) {
+      const prev: string = before.charAt(hash - 1);
+      const isBoundary: boolean = prev.trim().length === 0 || prev === '(' || prev === '[';
+      if (!isBoundary) {
+        return candidates;
+      }
+    }
+    const query: string = before.substring(hash + 1);
+    if (query.includes('\n') || query.includes(' ') || query.includes('#')) {
+      return candidates;
+    }
+    const lower: string = query.toLowerCase();
+    for (const tag of allTags) {
+      const name: string = tag.startsWith('#') ? tag.substring(1) : tag;
+      if (name.length === 0) {
+        continue;
+      }
+      if (!name.toLowerCase().startsWith(lower)) {
         continue;
       }
       const candidate: CompletionCandidate = new CompletionCandidate();
-      candidate.title = title;
-      candidate.insertText = `${title.substring(query.length)}]]`;
+      candidate.title = name;
+      candidate.insertText = name;
+      candidate.replaceFrom = hash + 1;
       candidates.push(candidate);
       if (candidates.length >= EditorTextUtils.MAX_COMPLETION_ITEMS) {
         break;

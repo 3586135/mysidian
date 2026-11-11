@@ -22,6 +22,9 @@ export struct MdInlineText {
           .fontStyle(segment.italic ? FontStyle.Italic : FontStyle.Normal)
           .fontColor(this.segmentColor(segment))
           .fontFamily(segment.code ? 'monospace' : 'HarmonyOS Sans')
+          .textBackgroundStyle(segment.highlight
+            ? { color: $r('app.color.md_highlight_bg'), radius: 4 }
+            : { color: Color.Transparent, radius: 0 })
           .decoration({
             type: segment.strike ? TextDecorationType.LineThrough : TextDecorationType.None,
             color: $r('sys.color.ohos_id_color_text_primary')

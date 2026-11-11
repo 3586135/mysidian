@@ -23,6 +23,7 @@ export enum MdInlineType {
   STRONG = 'strong',
   EMPHASIS = 'emphasis',
   STRIKETHROUGH = 'strikethrough',
+  HIGHLIGHT = 'highlight',
   INLINE_CODE = 'inlineCode',
   LINK = 'link',
   WIKI_LINK = 'wikiLink',
@@ -143,6 +144,8 @@ export class MdInlineSegment {
   italic: boolean = false;
   strike: boolean = false;
   code: boolean = false;
+  /** 高亮（==文本==）。 */
+  highlight: boolean = false;
   /** 链接目标（wiki 链接为笔记名，markdown 链接为 url） */
   linkTarget: string = '';
   /** 链接类型：wiki / url / embed */
