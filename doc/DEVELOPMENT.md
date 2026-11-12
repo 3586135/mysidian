@@ -42,6 +42,14 @@
 - **Markdown 引擎**：有序列表保留源码序号（M10）；闭合围栏须纯围栏字符（M8）；URL 自动链接括号配平（InlineParser `findUrlEnd`）；frontmatter 嵌套 map 以 `MdPropType.MAP` + `rawBlock` 原样保留、可删除（M7）；DataView 日期比较改算子模型（dueOp/startOp/scheduledOp，M4）；`FROM #tag` 统一笔记级语义；Mermaid 双圆/边正则交替修复（M11）；数学公式脚本递归深度防护。
 - **UI 层**：任务勾选按行号定位替换（`MdListItem.lineNumber`，失配回退首处匹配，U12/M2）；`syncIndex` 清幽灵行（U8）；`openToken` 防打开笔记竞态（U9）；重命名/移动改写历史与最近路径引用（U13）；快速追加补末行换行（U14）；切笔记/编辑态切换清撤销栈与补全（`@Monitor`，U1/U11）；非编辑态手写先入编辑（U5）；4 处 ForEach key 改稳定唯一值（U3）；分享扩展按官方 Share Kit 重写（`getSharedData` + `terminateSelfWithResult`）；卡片 formId 改 `FormParam.IDENTITY_KEY`（U10）；`CopyOptions.Default` → `LocalDevice`。
 
+### v0.3.0 触摸全死回归：根因与修复（2026-11-12）
+
+- **现象**：v0.3.0 所有界面触摸完全无响应（仅系统返回键可用），三台模拟器与真机一致；v0.2.0 正常。最初疑似"模拟器触摸注入失效"，实为应用自身回归。
+- **根因**：4b71a43（键盘避让重做）把全部弹层统一包进一个**常驻全屏 `Stack`**（`Index.ets` `build()` 根 Stack 的最后一个子节点，见上文"弹层让位"设计）。无弹层激活时该 Stack 虽为空，但仍占满 100%×100% 且位于最上层——ArkUI 容器按 bounds 参与命中测试，视觉为空并不豁免——**拦截了整屏触摸**。
+- **定位**：hap 级/字段级/环境级排查（签名、pack.info、AOT、install 幻影）逐一排除后，源码二分锁定 4b71a43；再对 Index.ets 做 hunk 级二分（dbacd36 基底 + 子集 patch + 编译桩），单 hunk（overlays 包裹 Stack）即可复现触死。
+- **修复**：该 overlays Stack 追加 `.hitTestBehavior(HitTestMode.Transparent)`——空态时触摸穿透到底层内容；弹层出现后其子节点自身（Default 模式）照常消费触摸，弹层交互不受影响。
+- **验证**（三台模拟器）：5559 全流程（欢迎页点击 → 新建仓库对话框聚焦输入「示例仓库修复测试仓」→ 创建成功进入主界面）；5555 点击打开笔记、5557 文件树展开均正常（真实仓库 `install -r` 保数据升级，零改动）。键盘避让的 padding 上移逻辑不受影响（创建对话框聚焦时正常上移让位键盘）。
+
 ### 验证状态（2026-11-12）
 
 - `devecocli check arkts` 通过（仅剩已知资源名误报，真实错误 6 处已修：SharedRecord 可空字段、`SyncBaselineRow` 未导出、CopyOptions 枚举值）；`devecocli build` 成功。
