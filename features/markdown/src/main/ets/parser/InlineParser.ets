@@ -25,8 +25,16 @@ export class InlineParser {
       const ch: string = text.charAt(index);
 
       if (ch === '\\' && index + 1 < end) {
-        buffer += text.charAt(index + 1);
-        index += 2;
+        // 仅 ASCII 标点可被转义（CommonMark 规定）；
+        // `\d`、`C:\Users` 等「反斜杠+字母」不是转义，反斜杠原样保留。
+        const nextCh: string = text.charAt(index + 1);
+        if (this.isEscapablePunctuation(nextCh)) {
+          buffer += nextCh;
+          index += 2;
+          continue;
+        }
+        buffer += ch;
+        index += 1;
         continue;
       }
 
@@ -97,8 +105,9 @@ export class InlineParser {
       }
 
       if (ch === '~' && index + 1 < end && text.charAt(index + 1) === '~') {
+        // 删除线：~~文本~~（内容不得为空，避免 "~~~~" 被整体吞掉）
         const close: number = text.indexOf('~~', index + 2);
-        if (close > index && close < end) {
+        if (close > index + 2 && close < end) {
           this.flush(nodes, buffer);
           buffer = '';
           const node: MdInline = new MdInline();
@@ -242,8 +251,10 @@ export class InlineParser {
     if (close < 0 || close + 1 >= end || text.charAt(close + 1) !== '(') {
       return null;
     }
-    const urlEnd: number = text.indexOf(')', close + 2);
-    if (urlEnd < 0 || urlEnd >= end) {
+    // URL 结尾按括号深度扫描：URL 内成对的括号（维基百科链接常见）
+    // 不能在第一个 ')' 处截断。
+    const urlEnd: number = this.findUrlEnd(text, close + 2, end);
+    if (urlEnd < 0) {
       return null;
     }
     const result: InlineParseResult = new InlineParseResult();
@@ -418,5 +429,37 @@ export class InlineParser {
     }
     const code: number = ch.charCodeAt(0);
     return (code >= 48 && code <= 57) || (code >= 65 && code <= 90) || (code >= 97 && code <= 122);
+  }
+
+  /** 是否为可转义的 ASCII 标点（CommonMark 转义仅对标点生效）。 */
+  private isEscapablePunctuation(ch: string): boolean {
+    if (ch.length === 0) {
+      return false;
+    }
+    const code: number = ch.charCodeAt(0);
+    return (code >= 33 && code <= 47) || (code >= 58 && code <= 64) ||
+      (code >= 91 && code <= 96) || (code >= 123 && code <= 126);
+  }
+
+  /** URL 结尾位置：括号深度计数，容忍 URL 内成对括号，遇未配对 ')' 收尾。 */
+  private findUrlEnd(text: string, start: number, end: number): number {
+    let depth: number = 0;
+    let index: number = start;
+    while (index < end) {
+      const ch: string = text.charAt(index);
+      if (ch === '(') {
+        depth++;
+      } else if (ch === ')') {
+        if (depth === 0) {
+          return index;
+        }
+        depth--;
+      } else if (ch === ' ' || ch === '\n' || ch === '\t') {
+        // URL 不允许包含空白：视为未闭合，不按链接解析。
+        return -1;
+      }
+      index++;
+    }
+    return -1;
   }
 }

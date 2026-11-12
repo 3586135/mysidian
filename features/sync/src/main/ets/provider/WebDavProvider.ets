@@ -140,27 +140,25 @@ export class WebDavProvider implements SyncProvider {
     const content: string = WebDavProvider.readText(localPath);
     const response: http.HttpResponse = await this.request(url, http.RequestMethod.PUT,
       http.HttpDataType.STRING, content);
-    if (response.responseCode === 409) {
+    if (response.responseCode === 404 || response.responseCode === 409) {
+      // 父目录不存在：先建目录再重试一次（与 pushBinary 一致，
+      // 否则含子目录的仓库首次同步必然 409 失败）。
+      const dir: string = WebDavProvider.dirnameOf(entry.path);
+      if (dir.length > 0) {
+        await this.mkdirRemote(dir);
+        const retry: http.HttpResponse = await this.request(url, http.RequestMethod.PUT,
+          http.HttpDataType.STRING, content);
+        if (retry.responseCode >= 200 && retry.responseCode < 300) {
+          return WebDavProvider.etagOf(retry);
+        }
+        throw new Error(WebDavProvider.describeCode(retry.responseCode, 'webdav push'));
+      }
       throw new Error(`远端目录不存在(409)，请先在 WebDAV 服务端创建目录: ${this.baseUrl}`);
     }
     if (response.responseCode < 200 || response.responseCode >= 300) {
       throw new Error(WebDavProvider.describeCode(response.responseCode, 'webdav push'));
     }
-    // 返回 PUT 响应中的 ETag，供同步引擎更新该文件的服务器版本基线。
-    const headerMap: Record<string, string> = response.header as Record<string, string>;
-    const etagValue: Object | undefined = headerMap['etag'];
-    if (typeof etagValue === 'string') {
-      return etagValue;
-    }
-    const etagValue2: Object | undefined = headerMap['Etag'];
-    if (typeof etagValue2 === 'string') {
-      return etagValue2;
-    }
-    const etagValue3: Object | undefined = headerMap['ETag'];
-    if (typeof etagValue3 === 'string') {
-      return etagValue3;
-    }
-    return '';
+    return WebDavProvider.etagOf(response);
   }
 
   /** 拉取远端二进制文件（图片等附件）到本地沙箱路径。 */
@@ -205,21 +203,45 @@ export class WebDavProvider implements SyncProvider {
     return WebDavProvider.etagOf(response);
   }
 
-  /** 在远端创建目录（幂等：已存在视为成功）。 */
+  /** 在远端创建目录（幂等：已存在视为成功；深路径逐级创建）。 */
   public async mkdirRemote(remoteDir: string): Promise<void> {
     const trimmed: string = remoteDir.replace(/^\/+/, '').replace(/\/+$/, '');
     if (trimmed.length === 0) {
       return;
     }
-    const url: string = `${this.baseUrl}/${WebDavProvider.encodePath(trimmed)}`;
-    const response: http.HttpResponse = await this.request(url, WebDavProvider.MKCOL_METHOD,
+    // 逐级 MKCOL：一次性对深路径 MKCOL 会因父目录不存在而 409
+    // （如 attachments/a/b.png 只建一层时 a/b 仍缺失）。
+    const segments: string[] = trimmed.split('/');
+    let current: string = '';
+    for (const segment of segments) {
+      if (segment.length === 0) {
+        continue;
+      }
+      current = current.length === 0 ? segment : `${current}/${segment}`;
+      const url: string = `${this.baseUrl}/${WebDavProvider.encodePath(current)}`;
+      const response: http.HttpResponse = await this.request(url, WebDavProvider.MKCOL_METHOD,
+        http.HttpDataType.STRING);
+      // 405（已存在）与 301（已存在）视为幂等成功。
+      if (response.responseCode === 405 || response.responseCode === 301) {
+        continue;
+      }
+      if (response.responseCode < 200 || response.responseCode >= 300) {
+        throw new Error(WebDavProvider.describeCode(response.responseCode, 'webdav mkdir'));
+      }
+    }
+  }
+
+  /** 删除远端文件（本地删除传播；远端已不存在视为成功）。 */
+  public async deleteRemote(path: string): Promise<void> {
+    const url: string = `${this.baseUrl}/${WebDavProvider.encodePath(path)}`;
+    const response: http.HttpResponse = await this.request(url, http.RequestMethod.DELETE,
       http.HttpDataType.STRING);
-    // 405（已存在）与 301（已存在）视为幂等成功。
-    if (response.responseCode === 405 || response.responseCode === 301) {
+    // 404：远端已不存在（清单幽灵条目 / 双端同时删除），幂等成功。
+    if (response.responseCode === 404) {
       return;
     }
     if (response.responseCode < 200 || response.responseCode >= 300) {
-      throw new Error(WebDavProvider.describeCode(response.responseCode, 'webdav mkdir'));
+      throw new Error(WebDavProvider.describeCode(response.responseCode, 'webdav delete'));
     }
   }
 
@@ -402,13 +424,34 @@ export class WebDavProvider implements SyncProvider {
     if (basePath.length > 0 && path.startsWith(basePath)) {
       path = path.substring(basePath.length);
     } else {
-      // 部分服务端返回相对 href：回退用远端根目录名定位。
+      // 部分服务端返回相对 href：回退按路径段匹配远端根目录。
+      // 用整段比较而非 indexOf 子串定位，避免根目录名是其它路径段
+      // 的子串时（如 notes2026/）解析错位。
       const rootName: string = this.config.remoteRoot.trim();
-      const rootIdx: number = rootName.length > 0 ? path.indexOf(rootName) : 0;
-      if (rootIdx < 0) {
+      const rootSegs: string[] = rootName.split('/').filter(
+        (seg: string): boolean => seg.length > 0);
+      if (rootSegs.length === 0) {
         return null;
       }
-      path = path.substring(rootIdx + rootName.length);
+      const segs: string[] = path.split('/');
+      let found: number = -1;
+      for (let i = segs.length - rootSegs.length; i >= 0; i--) {
+        let matched: boolean = true;
+        for (let k = 0; k < rootSegs.length; k++) {
+          if (segs[i + k] !== rootSegs[k]) {
+            matched = false;
+            break;
+          }
+        }
+        if (matched) {
+          found = i;
+          break;
+        }
+      }
+      if (found < 0) {
+        return null;
+      }
+      path = segs.slice(found + rootSegs.length).join('/');
     }
     while (path.startsWith('/')) {
       path = path.substring(1);
@@ -420,13 +463,27 @@ export class WebDavProvider implements SyncProvider {
     }
     // 路径穿越防护：任何路径段不得为 ".."/"."，防止异常/恶意
     // 服务端响应让 pull 把文件写到 vault 沙箱之外。
-    const segments: string[] = path.split('/');
-    for (const seg of segments) {
-      if (seg === '..' || seg === '.') {
-        return null;
-      }
+    if (!WebDavProvider.isSafeRelativePath(path)) {
+      return null;
     }
     return path;
+  }
+
+  /**
+   * 相对路径安全校验：拒绝绝对路径、反斜杠、空段与 "."/".." 穿越段。
+   * PROPFIND 与远端清单两条入口共用，防止被篡改清单把文件写出沙箱。
+   */
+  private static isSafeRelativePath(path: string): boolean {
+    if (path.length === 0 || path.startsWith('/') || path.includes('\\')) {
+      return false;
+    }
+    const segments: string[] = path.split('/');
+    for (const seg of segments) {
+      if (seg === '..' || seg === '.' || seg.length === 0) {
+        return false;
+      }
+    }
+    return true;
   }
 
   /** 取 URL 的路径部分（不含协议与主机）。 */
@@ -618,6 +675,12 @@ export class WebDavProvider implements SyncProvider {
       if (item === undefined || item.path === undefined || item.path.length === 0) {
         continue;
       }
+      // 路径穿越防护：清单来自远端，可能被篡改/损坏，
+      // 与 PROPFIND 分支保持同一套段校验。
+      if (!WebDavProvider.isSafeRelativePath(item.path)) {
+        LOG.warn(`manifest entry skipped (unsafe path): ${item.path}`);
+        continue;
+      }
       const entry: RemoteEntry = new RemoteEntry();
       entry.path = item.path;
       entry.etag = item.hash === undefined ? '' : item.hash;
@@ -629,25 +692,32 @@ export class WebDavProvider implements SyncProvider {
     return entries;
   }
 
+  /** 原子写入文本：先写临时文件并 fsync，再 rename 到目标（防中断截断损坏）。 */
   private static writeText(path: string, content: string): void {
-    const file = fileIo.openSync(path,
+    const tempPath: string = `${path}.sync-tmp`;
+    const file = fileIo.openSync(tempPath,
       fileIo.OpenMode.READ_WRITE | fileIo.OpenMode.CREATE | fileIo.OpenMode.TRUNC);
     try {
       fileIo.writeSync(file.fd, content);
+      fileIo.fsyncSync(file.fd);
     } finally {
       fileIo.closeSync(file);
     }
+    fileIo.renameSync(tempPath, path);
   }
 
-  /** 写入二进制内容到沙箱文件。 */
+  /** 原子写入二进制内容到沙箱文件（临时文件 + rename，防中断截断损坏）。 */
   private static writeBytes(path: string, data: ArrayBuffer): void {
-    const file = fileIo.openSync(path,
+    const tempPath: string = `${path}.sync-tmp`;
+    const file = fileIo.openSync(tempPath,
       fileIo.OpenMode.READ_WRITE | fileIo.OpenMode.CREATE | fileIo.OpenMode.TRUNC);
     try {
       fileIo.writeSync(file.fd, data);
+      fileIo.fsyncSync(file.fd);
     } finally {
       fileIo.closeSync(file);
     }
+    fileIo.renameSync(tempPath, path);
   }
 
   /** 读取沙箱文件的二进制内容。 */

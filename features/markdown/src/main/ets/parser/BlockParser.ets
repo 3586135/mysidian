@@ -14,8 +14,11 @@ export class BlockParseResult {
  */
 export class BlockParser {
   private readonly inlineParser: InlineParser = new InlineParser();
+  /** 当前解析的 lines 数组在整篇文档中的起始行偏移（记录绝对行号用）。 */
+  private lineOffset: number = 0;
 
-  public parse(lines: string[]): MdBlock[] {
+  public parse(lines: string[], startLine: number = 0): MdBlock[] {
+    this.lineOffset = startLine;
     const blocks: MdBlock[] = [];
     let index: number = 0;
     while (index < lines.length) {
@@ -115,7 +118,10 @@ export class BlockParser {
     let index: number = start + 1;
     while (index < lines.length) {
       const current: string = lines[index].trim();
-      if (current.startsWith(fenceChar) && this.countFenceChars(current, fenceChar) >= fenceLength) {
+      // 闭合行必须是「纯围栏字符」（允许尾随空白已 trim）且数量不小于起始围栏：
+      // 带 info 的围栏（如代码块内示例 ```js）不能提前闭合外层块。
+      if (current.startsWith(fenceChar) && current.length >= fenceLength &&
+        this.countFenceChars(current, fenceChar) === current.length) {
         index++;
         break;
       }
@@ -212,7 +218,15 @@ export class BlockParser {
         break;
       }
       const item: MdListItem = new MdListItem();
-      item.ordinal = block.items.length + 1;
+      // 有序列表保留源码序号（如 "5. 第五项" 显示 5 而非 1），
+      // 无序列表按位置递增。
+      if (block.ordered && match[1].length > 1) {
+        const parsed: number = Number(match[1].substring(0, match[1].length - 1));
+        item.ordinal = Number.isNaN(parsed) ? block.items.length + 1 : parsed;
+      } else {
+        item.ordinal = block.items.length + 1;
+      }
+      item.lineNumber = this.lineOffset + index;
       item.rawLine = raw;
       let content: string = match[2];
       if (content.startsWith('[ ] ') || content.startsWith('[x] ') || content.startsWith('[X] ')) {

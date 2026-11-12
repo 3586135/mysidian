@@ -82,6 +82,8 @@ export class VaultViewModel {
   private tree: FileNode[] = [];
   private expandedPaths: string[] = [];
   private noteHistory: string[] = [];
+  /** 笔记打开令牌：快速连续打开时旧请求据此放弃，防止竞态覆盖。 */
+  private openToken: number = 0;
   /** Dataview 查询结果缓存（key: 查询文本|当前笔记路径）。 */
   private dataViewCache: Map<string, DataViewResult> = new Map();
   /** 仓库内全部文件的相对路径（附件解析用）。 */
@@ -260,6 +262,10 @@ export class VaultViewModel {
       known[note.path] = note;
     }
     const files: string[] = await manager.listVaultFiles(vault);
+    const fileSet: Record<string, boolean> = {};
+    for (const path of files) {
+      fileSet[path] = true;
+    }
     let changed: number = 0;
     for (const path of files) {
       if (!path.toLowerCase().endsWith('.md')) {
@@ -278,6 +284,13 @@ export class VaultViewModel {
       const blockCount: number = await BlockDao.countOfNote(context, row.id);
       if (blockCount === 0 || stat.mtime !== row.mtime || stat.size !== row.size) {
         await this.indexNoteByPath(vault, path);
+        changed++;
+      }
+    }
+    // 清理幽灵行：文件已不存在（外部删除 / 同步删除）但索引仍残留的笔记。
+    for (const note of notes) {
+      if (fileSet[note.path] !== true) {
+        await NoteDao.removeByPath(context, vault.id, note.path);
         changed++;
       }
     }
@@ -354,8 +367,8 @@ export class VaultViewModel {
     this.recentNotes = items;
   }
 
-  /** 切换任务勾选状态：回写源文本并重建索引。 */
-  public async toggleTask(rawLine: string, checked: boolean): Promise<void> {
+  /** 切换任务勾选状态：按行号回写源文本并重建索引。 */
+  public async toggleTask(rawLine: string, lineNumber: number, checked: boolean): Promise<void> {
     const manager: VaultManager | null = this.manager;
     const context: common.Context | null = this.context;
     if (manager === null || context === null || this.selectedPath.length === 0) {
@@ -365,7 +378,7 @@ export class VaultViewModel {
     if (nextLine === rawLine) {
       return;
     }
-    const nextContent: string = this.noteContent.replace(rawLine, nextLine);
+    const nextContent: string = VaultViewModel.replaceTaskLine(this.noteContent, rawLine, nextLine, lineNumber);
     await manager.writeNote(this.currentVault, this.selectedPath, nextContent);
     this.noteContent = nextContent;
     this.document = MarkdownParser.parse(nextContent);
@@ -373,6 +386,24 @@ export class VaultViewModel {
     await manager.refreshNote(this.currentVault, this.selectedPath);
     await this.reindexCurrentNote();
     await this.refreshNoteInfo();
+  }
+
+  /** 按行号替换任务行；行号失配时回退首次精确匹配，避免重复任务行错改。 */
+  private static replaceTaskLine(content: string, rawLine: string, nextLine: string,
+    lineNumber: number): string {
+    if (lineNumber >= 0) {
+      const lines: string[] = content.split('\n');
+      if (lineNumber < lines.length) {
+        const current: string = lines[lineNumber];
+        const endsCr: boolean = current.endsWith('\r');
+        const body: string = endsCr ? current.substring(0, current.length - 1) : current;
+        if (body === rawLine) {
+          lines[lineNumber] = endsCr ? `${nextLine}\r` : nextLine;
+          return lines.join('\n');
+        }
+      }
+    }
+    return content.replace(rawLine, nextLine);
   }
 
   /** 执行 Dataview 查询：TASK 任务聚合 / live TABLE/LIST 笔记条目（带缓存）。 */
@@ -398,6 +429,10 @@ export class VaultViewModel {
         }
         const content: string = await manager.readNote(this.currentVault, row.path);
         const parsed: MdDocument = MarkdownParser.parse(content);
+        // FROM #tag 为笔记级语义：先按页匹配来源标签，页内任务不再逐行检查。
+        if (!dvQuery.matchesPageSourceTag(content, parsed.frontmatter.tags)) {
+          continue;
+        }
         this.collectTasks(parsed.blocks, dvQuery, row.path, tasks);
       }
       this.sortTasks(tasks, dvQuery);
@@ -595,11 +630,12 @@ export class VaultViewModel {
     // 同步本地缓存行文本，保证后续再次勾选时基于最新行内容计算。
     task.item.rawLine = nextLine;
     if (task.path === this.selectedPath) {
-      await this.toggleTask(rawLine, checked);
+      await this.toggleTask(rawLine, task.item.lineNumber, checked);
       return;
     }
     const content: string = await manager.readNote(this.currentVault, task.path);
-    const nextContent: string = content.replace(rawLine, nextLine);
+    const nextContent: string =
+      VaultViewModel.replaceTaskLine(content, rawLine, nextLine, task.item.lineNumber);
     await manager.writeNote(this.currentVault, task.path, nextContent);
     this.dataViewCache.clear();
     await manager.refreshNote(this.currentVault, task.path);
@@ -659,6 +695,30 @@ export class VaultViewModel {
     }
     await this.writePref(RECENT_LOG_KEY, JSON.stringify(kept));
     await this.loadRecentNotes();
+  }
+
+  /** 重命名 / 移动后同步导航状态中的旧路径（返回历史 + 最近访问）。 */
+  private async rewritePathRefs(oldPath: string, newPath: string): Promise<void> {
+    for (let index = 0; index < this.noteHistory.length; index++) {
+      if (this.noteHistory[index] === oldPath) {
+        this.noteHistory[index] = newPath;
+      }
+    }
+    if (this.context === null) {
+      return;
+    }
+    const entries: RecentNoteEntry[] = await this.readRecentLog();
+    let changed: boolean = false;
+    for (const entry of entries) {
+      if (entry.vaultId === this.currentVault.id && entry.path === oldPath) {
+        entry.path = newPath;
+        changed = true;
+      }
+    }
+    if (changed) {
+      await this.writePref(RECENT_LOG_KEY, JSON.stringify(entries));
+      await this.loadRecentNotes();
+    }
   }
 
   /** 打开今天的日记（不存在则以日期为名新建，支持日记模板）。 */
@@ -734,9 +794,15 @@ export class VaultViewModel {
     if (manager === null) {
       return;
     }
+    // 打开令牌：快速连续切换笔记时，旧请求在任意 await 后发现令牌已更新即放弃，
+    // 防止慢的旧读取覆盖新笔记内容。
+    const token: number = ++this.openToken;
     // 切换笔记前先落盘当前草稿，避免未保存内容被静默丢弃（同系统返回键处理）。
     if (this.editMode && this.draftBuffer !== this.noteContent) {
       await this.saveDraft();
+    }
+    if (token !== this.openToken) {
+      return;
     }
     if (recordHistory && this.selectedPath.length > 0 && this.selectedPath !== path) {
       this.noteHistory.push(this.selectedPath);
@@ -746,11 +812,20 @@ export class VaultViewModel {
       this.canGoBack = true;
     }
     const content: string = await manager.readNote(this.currentVault, path);
+    if (token !== this.openToken) {
+      return;
+    }
     const document: MdDocument = MarkdownParser.parse(content);
     const title: string = document.title.length > 0 ? document.title : VaultPath.basename(path);
     this.applyDocument(path, content, document, title);
     await this.writePref('lastNotePath', path);
+    if (token !== this.openToken) {
+      return;
+    }
     await this.recordRecent(path);
+    if (token !== this.openToken) {
+      return;
+    }
     await this.ensureNoteIndexed();
     await this.refreshNoteInfo();
   }
@@ -1003,6 +1078,7 @@ export class VaultViewModel {
       rewritten = await this.rewriteLinksByScan(path, newPath);
     }
     await this.reindexPaths(rewritten);
+    await this.rewritePathRefs(path, newPath);
     if (this.selectedPath === path) {
       await this.openNote(newPath);
     }
@@ -1059,6 +1135,7 @@ export class VaultViewModel {
     if (!moved) {
       return false;
     }
+    await this.rewritePathRefs(path, target);
     if (this.selectedPath === path) {
       await this.openNote(target);
     }
@@ -1242,7 +1319,12 @@ export class VaultViewModel {
     } else {
       content = `# ${name}\n\n`;
     }
-    const next: string = `${content}- ${new Date().toTimeString().substring(0, 5)} ${text.trim()}\n`;
+    let base: string = content;
+    // 已有日记末行可能无换行符，直接追加会黏到上一行，先补齐。
+    if (base.length > 0 && !base.endsWith('\n')) {
+      base = `${base}\n`;
+    }
+    const next: string = `${base}- ${new Date().toTimeString().substring(0, 5)} ${text.trim()}\n`;
     await manager.writeNote(this.currentVault, path, next);
     await manager.refreshNote(this.currentVault, path);
     await this.refreshTree();
@@ -1580,6 +1662,10 @@ export class VaultViewModel {
       await this.saveProperties(properties);
       return;
     }
+    if (target.type === MdPropType.MAP) {
+      // 嵌套 map 以原始块保留，不支持标量/列表方式改写，避免覆盖丢内容。
+      return;
+    }
     if (target.type === MdPropType.LIST || listValue.length > 0) {
       target.type = MdPropType.LIST;
       target.listValue = listValue;
@@ -1612,7 +1698,7 @@ export class VaultViewModel {
     await this.saveProperties(properties);
   }
 
-  /** 删除属性（可视化属性编辑器）。 */
+  /** 删除属性（可视化属性编辑器），嵌套 map 块整块移除。 */
   public async removeProperty(key: string): Promise<void> {
     const properties: MdProperty[] = await this.currentProperties();
     const kept: MdProperty[] = [];
@@ -1621,7 +1707,7 @@ export class VaultViewModel {
         kept.push(property);
       }
     }
-    await this.saveProperties(kept);
+    await this.saveProperties(kept, [key]);
   }
 
   /** 读取当前笔记的属性集合（副本，可修改后回写）。 */
@@ -1636,16 +1722,20 @@ export class VaultViewModel {
   }
 
   /** 把属性集合写回 frontmatter 并保存笔记。 */
-  private async saveProperties(properties: MdProperty[]): Promise<void> {
+  private async saveProperties(properties: MdProperty[], removedKeys: string[] = []): Promise<void> {
     const manager: VaultManager | null = this.manager;
     if (manager === null || this.selectedPath.length === 0) {
       return;
     }
     const content: string = await manager.readNote(this.currentVault, this.selectedPath);
-    const next: string = FrontmatterSerializer.rebuild(content, properties);
+    const next: string = FrontmatterSerializer.rebuild(content, properties, removedKeys);
     await manager.writeNote(this.currentVault, this.selectedPath, next);
     this.noteContent = next;
     this.document = MarkdownParser.parse(next);
+    // 编辑模式下的草稿仍持有旧 frontmatter，需同步，否则下次落盘会回滚属性修改。
+    if (this.editMode) {
+      this.draftBuffer = next;
+    }
     await manager.refreshNote(this.currentVault, this.selectedPath);
     await this.reindexCurrentNote();
     await this.refreshNoteInfo();

@@ -135,6 +135,18 @@ struct Index {
     this.applyKeyboardAvoidMode();
   };
 
+  /** 切换笔记 / 进出编辑时清空与旧会话绑定的撤销栈与补全浮层（U1/U11）。 */
+  @Monitor('vm.selectedPath', 'vm.editMode')
+  onNoteOrEditModeChanged(): void {
+    this.undoStack = [];
+    this.redoStack = [];
+    this.lastUndoPushAt = 0;
+    this.undoDepth = 0;
+    this.redoDepth = 0;
+    this.showCompletion = false;
+    this.completionItems = [];
+  }
+
   aboutToAppear(): void {
     const context = this.getUIContext().getHostContext();
     if (context === undefined) {
@@ -1468,8 +1480,8 @@ struct Index {
             onOpenTag: (tag: string): void => {
               this.openTagSearch(tag);
             },
-            onToggleTask: (rawLine: string, checked: boolean): void => {
-              this.vm.toggleTask(rawLine, checked).then((): void => {
+            onToggleTask: (rawLine: string, lineNumber: number, checked: boolean): void => {
+              this.vm.toggleTask(rawLine, lineNumber, checked).then((): void => {
                 this.syncNowIfAuto();
               });
             },
@@ -3465,7 +3477,7 @@ struct Index {
     });
   }
 
-  /** 保存手写内容为附件并插入编辑器。 */
+  /** 保存手写内容为附件并插入编辑器（非编辑态先进入编辑，避免插入丢失）。 */
   private saveHandwrite(data: ArrayBuffer): void {
     this.vm.saveImageAttachment(data, 'png').then((relative: string): void => {
       this.closeHandwrite();
@@ -3473,7 +3485,17 @@ struct Index {
         return;
       }
       const name: string = relative.substring(relative.lastIndexOf('/') + 1);
-      this.insertFormat(`![[${name}]]`);
+      const insert: string = `![[${name}]]`;
+      if (this.vm.editMode) {
+        this.insertFormat(insert);
+      } else {
+        // 预览态下无编辑器：先进入编辑，待挂载完成后把图片追加到文末。
+        this.vm.startEdit();
+        setTimeout((): void => {
+          this.textEditorController.caretPosition(this.vm.draftBuffer.length);
+          this.insertFormat(insert);
+        }, 150);
+      }
       this.toast($r('app.string.msg_handwrite_saved'));
     });
   }

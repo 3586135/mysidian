@@ -19,8 +19,8 @@ export struct MdDocumentView {
   @Event onOpenLink: (target: string, kind: string) => void =
     (target: string, kind: string): void => {};
   @Event onOpenTag: (tag: string) => void = (tag: string): void => {};
-  @Event onToggleTask: (rawLine: string, checked: boolean) => void =
-    (rawLine: string, checked: boolean): void => {};
+  @Event onToggleTask: (rawLine: string, lineNumber: number, checked: boolean) => void =
+    (rawLine: string, lineNumber: number, checked: boolean): void => {};
   @Event onLoadDataView: (query: string, onResult: (result: DataViewResult) => void) => void =
     (query: string, onResult: (result: DataViewResult) => void): void => {};
   @Event onToggleDataViewTask: (task: DataViewTask, checked: boolean) => void =
@@ -54,8 +54,8 @@ export struct MdDocumentView {
             onOpenTag: (tag: string): void => {
               this.onOpenTag(tag);
             },
-            onToggleTask: (rawLine: string, checked: boolean): void => {
-              this.onToggleTask(rawLine, checked);
+            onToggleTask: (rawLine: string, lineNumber: number, checked: boolean): void => {
+              this.onToggleTask(rawLine, lineNumber, checked);
             },
             onLoadDataView: (query: string, onResult: (result: DataViewResult) => void): void => {
               this.onLoadDataView(query, onResult);
@@ -74,10 +74,24 @@ export struct MdDocumentView {
         .transition(TransitionEffect.opacity(0)
           .combine(TransitionEffect.translate({ y: 8 }))
           .animation({ duration: 240, curve: Curve.Friction }))
-      }, (block: MdBlock, index: number): string => `${this.docKey}_${index}_${block.type}`)
+      }, (block: MdBlock, index: number): string =>
+        `${this.docKey}_${index}_${block.type}_${MdDocumentView.contentHash(block.rawContent)}`)
     }
     .width('100%')
     .height('100%')
     .scrollBar(BarState.Auto)
+  }
+
+  /**
+   * 块内容哈希（djb2）：参与 ForEach key。
+   * 勾选任务等操作会用新 MdDocument 整体替换 document，但块序号与类型
+   * 不变——key 不含内容时框架复用旧节点，界面停留在旧状态。
+   */
+  private static contentHash(text: string): number {
+    let h: number = 5381;
+    for (let i = 0; i < text.length; i++) {
+      h = ((h << 5) + h + text.charCodeAt(i)) | 0;
+    }
+    return h >>> 0;
   }
 }

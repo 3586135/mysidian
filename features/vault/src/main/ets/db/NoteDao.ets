@@ -83,6 +83,11 @@ export class NoteDao {
     vaultId: number): Promise<void> {
     const store = await DbHelper.getStore();
     const args: Array<relationalStore.ValueType> = [vaultId];
+    // FTS 行随笔记删除而清理，否则旧 rowid 永久残留、索引无限膨胀。
+    if (DbHelper.isFtsReady()) {
+      await store.executeSql(
+        'DELETE FROM note_fts WHERE rowid IN (SELECT id FROM note WHERE vault_id = ?)', args);
+    }
     await store.executeSql(
       'DELETE FROM block WHERE note_id IN (SELECT id FROM note WHERE vault_id = ?)', args);
     await store.executeSql(
@@ -112,6 +117,11 @@ export class NoteDao {
     path: string): Promise<void> {
     const store = await DbHelper.getStore();
     const args: Array<relationalStore.ValueType> = [vaultId, path];
+    if (DbHelper.isFtsReady()) {
+      await store.executeSql(
+        'DELETE FROM note_fts WHERE rowid IN ' +
+        '(SELECT id FROM note WHERE vault_id = ? AND path = ?)', args);
+    }
     await store.executeSql(
       'DELETE FROM block WHERE note_id IN (SELECT id FROM note WHERE vault_id = ? AND path = ?)', args);
     await store.executeSql(

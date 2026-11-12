@@ -1,4 +1,4 @@
-import { FormExtensionAbility as BaseFormExtensionAbility, formBindingData, formProvider }
+import { FormExtensionAbility as BaseFormExtensionAbility, formBindingData, formInfo, formProvider }
   from '@kit.FormKit';
 import { Want } from '@kit.AbilityKit';
 import { Logger } from '@ohos/common';
@@ -28,7 +28,9 @@ export default class FormExtensionAbility extends BaseFormExtensionAbility {
   /** 添加卡片：先返回占位数据，随后异步刷新真实内容。 */
   onAddForm(want: Want): formBindingData.FormBindingData {
     const parameters = want.parameters;
-    const formId: string = parameters === undefined ? '' : String(parameters['formId']);
+    // 卡片唯一标识的系统键为 FormParam.IDENTITY_KEY，而非裸 'formId'。
+    const formId: string = parameters === undefined ? '' :
+      String(parameters[formInfo.FormParam.IDENTITY_KEY]);
     const bindingData: formBindingData.FormBindingData = this.buildPlaceholder();
     this.refreshForm(formId);
     return bindingData;

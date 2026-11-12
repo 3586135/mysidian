@@ -71,6 +71,8 @@ export class MdListItem {
   children: MdListItem[] = [];
   /** 源文本行（任务勾选回写用）。 */
   rawLine: string = '';
+  /** 在整篇笔记中的绝对行号（0 起，-1 表示未知）。 */
+  lineNumber: number = -1;
   /** 任务开始日期 🛫（obsidian-tasks 兼容）。 */
   startDate: string = '';
   /** 任务计划日期 ⏳。 */
@@ -128,6 +130,8 @@ export class MdProperty {
   value: string = '';
   listValue: string[] = [];
   type: MdPropType = MdPropType.STRING;
+  /** 未建模的原始块（嵌套 map）：按行原文保留，序列化时原样回写。 */
+  rawBlock: string = '';
 }
 
 /** YAML frontmatter。 */

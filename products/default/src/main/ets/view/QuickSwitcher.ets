@@ -77,7 +77,7 @@ export struct QuickSwitcher {
                 this.onOpenNote(note.path);
               })
             }
-          }, (note: NoteRow, index: number): string => `quick_${index}`)
+          }, (note: NoteRow, index: number): string => `quick_${note.path}_${index}`)
         }
         .layoutWeight(1)
         .width('100%')

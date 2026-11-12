@@ -223,7 +223,7 @@ export class MathRenderer {
         continue;
       }
       if (ch === '^' || ch === '_') {
-        const script: ScriptChunk = MathRenderer.readScript(text, index, ch);
+        const script: ScriptChunk = MathRenderer.readScript(text, index, ch, depth);
         html += script.html;
         index = script.next;
         continue;
@@ -295,7 +295,7 @@ export class MathRenderer {
   }
 
   /** 读取上标 / 下标。 */
-  private static readScript(text: string, start: number, marker: string): ScriptChunk {
+  private static readScript(text: string, start: number, marker: string, depth: number): ScriptChunk {
     const chunk: ScriptChunk = new ScriptChunk();
     let index: number = start + 1;
     let body: string = '';
@@ -308,7 +308,8 @@ export class MathRenderer {
       index++;
     }
     const tag: string = marker === '^' ? 'sup' : 'sub';
-    chunk.html = `<${tag}>${MathRenderer.render(body, 0)}</${tag}>`;
+    // 深度递增传递，避免嵌套上下标反复从 0 计数绕过递归护栏。
+    chunk.html = `<${tag}>${MathRenderer.render(body, depth + 1)}</${tag}>`;
     chunk.next = index;
     return chunk;
   }

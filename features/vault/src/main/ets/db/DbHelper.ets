@@ -12,7 +12,7 @@ export class DbHelper {
   private static store: relationalStore.RdbStore | null = null;
   /** 平台 SQLite 是否支持 FTS5（不支持时搜索退化为 LIKE 扫描） */
   private static ftsReady: boolean = false;
-  private static readonly CURRENT_VERSION: number = 2;
+  private static readonly CURRENT_VERSION: number = 3;
 
   private static readonly SCHEMA_V1: string[] = [
     'CREATE TABLE IF NOT EXISTS vault (' +
@@ -37,8 +37,8 @@ export class DbHelper {
     'CREATE TABLE IF NOT EXISTS prop (' +
     'note_id INTEGER, prop_key TEXT, prop_value TEXT, vtype TEXT, PRIMARY KEY(note_id, prop_key))',
     'CREATE TABLE IF NOT EXISTS sync_state (' +
-    'path TEXT PRIMARY KEY, file_hash TEXT, mtime INTEGER, remote_etag TEXT,' +
-    'server_tag TEXT, last_sync_at INTEGER, state TEXT)'
+    'vault_id INTEGER NOT NULL, path TEXT NOT NULL, file_hash TEXT, mtime INTEGER, remote_etag TEXT,' +
+    'server_tag TEXT, last_sync_at INTEGER, state TEXT, PRIMARY KEY(vault_id, path))'
   ];
 
   private static readonly FTS_V1: string =
@@ -88,6 +88,13 @@ export class DbHelper {
       await store.executeSql('DROP TABLE IF EXISTS sync_state');
       await store.executeSql(DbHelper.SCHEMA_V1[DbHelper.SCHEMA_V1.length - 1]);
       LOG.info('sync_state rebuilt for v2 (server_tag column)');
+    }
+    if (version >= 1 && version < 3) {
+      // v3：sync_state 增加 vault_id 维度（不同仓库常有相同相对路径，
+      // 缺少隔离会导致基线互相污染、产生虚假冲突）。基线为缓存数据，重建即可。
+      await store.executeSql('DROP TABLE IF EXISTS sync_state');
+      await store.executeSql(DbHelper.SCHEMA_V1[DbHelper.SCHEMA_V1.length - 1]);
+      LOG.info('sync_state rebuilt for v3 (vault_id column)');
     }
     try {
       await store.executeSql(DbHelper.FTS_V1);

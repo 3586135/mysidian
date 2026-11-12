@@ -17,6 +17,7 @@ export struct HandwritePanel {
   private drawing: boolean = false;
   private lastX: number = 0;
   private lastY: number = 0;
+  /** 画布实际像素尺寸：onReady 时从渲染上下文读取，替换固定的 320x420。 */
   private canvasWidth: number = 320;
   private canvasHeight: number = 420;
 
@@ -31,7 +32,7 @@ export struct HandwritePanel {
             this.clearCanvas();
           })
         Blank()
-        Text(this.saving ? $r('app.string.handwrite_save') : $r('app.string.handwrite_save'))
+        Text(this.saving ? $r('app.string.handwrite_saving') : $r('app.string.handwrite_save'))
           .fontSize(14)
           .fontWeight(FontWeight.Medium)
           .fontColor($r('app.color.hm_accent'))
@@ -58,6 +59,9 @@ export struct HandwritePanel {
         .backgroundColor(Color.White)
         .borderRadius(12)
         .onReady((): void => {
+          // 记录画布实际尺寸：清空与导出都必须覆盖整块画布，而非固定的 320x420。
+          this.canvasWidth = this.context.width;
+          this.canvasHeight = this.context.height;
           this.drawBackground();
         })
         .onTouch((event: TouchEvent): void => {
@@ -108,9 +112,10 @@ export struct HandwritePanel {
     }
   }
 
-  /** 清空画布。 */
+  /** 清空画布：按实际尺寸清除并重绘网格背景。 */
   private clearCanvas(): void {
     this.context.clearRect(0, 0, this.canvasWidth, this.canvasHeight);
+    this.drawBackground();
     this.strokeCount = 0;
   }
 

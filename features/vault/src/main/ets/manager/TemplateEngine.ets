@@ -45,11 +45,11 @@ export class TemplateEngine {
       (match: string, format: string): string => {
         return TemplateEngine.formatDate(now, format);
       });
-    // 光标占位符：整体移除并记录位置（注意占位符长度为 10，避免残留 '}'）。
+    // 光标占位符：全部移除并记录首处位置（多个 {{cursor}} 时
+    // 第二个此前会残留为字面文本）。
     const cursorIndex: number = content.indexOf(TemplateEngine.CURSOR_TOKEN);
     if (cursorIndex >= 0) {
-      content = content.substring(0, cursorIndex) +
-        content.substring(cursorIndex + TemplateEngine.CURSOR_TOKEN.length);
+      content = TemplateEngine.replaceAll(content, TemplateEngine.CURSOR_TOKEN, '');
       result.cursorOffset = cursorIndex;
     } else {
       result.cursorOffset = content.length;

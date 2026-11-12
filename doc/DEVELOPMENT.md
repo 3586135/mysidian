@@ -34,6 +34,21 @@
 
 ## 近期变更（未发布）
 
+### 全面 bug 排查修复（2026-11-12）
+
+三个并行探查（存储/同步、Markdown 引擎、UI 层）共审出约 40 项问题，全部修复：
+
+- **同步/存储**：`SyncStateDao` 重写（vault 维度 + 事务化）+ DB v3 迁移；`SyncProvider` 补 `deleteRemote`；WebDavProvider 逐级 MKCOL / 幂等删除 / 临时文件 + rename 原子写；SyncEngine 删除传播、pull 前快照、etag 统一 sha256、冲突副本走 `readRemote`；NoteDao FTS 清理；回收站序号防覆盖；FileHistory 新编码 + 旧编码兼容 + 回滚前快照；LinkRewriter 路径限定；`{{cursor}}` 截断修正。
+- **Markdown 引擎**：有序列表保留源码序号（M10）；闭合围栏须纯围栏字符（M8）；URL 自动链接括号配平（InlineParser `findUrlEnd`）；frontmatter 嵌套 map 以 `MdPropType.MAP` + `rawBlock` 原样保留、可删除（M7）；DataView 日期比较改算子模型（dueOp/startOp/scheduledOp，M4）；`FROM #tag` 统一笔记级语义；Mermaid 双圆/边正则交替修复（M11）；数学公式脚本递归深度防护。
+- **UI 层**：任务勾选按行号定位替换（`MdListItem.lineNumber`，失配回退首处匹配，U12/M2）；`syncIndex` 清幽灵行（U8）；`openToken` 防打开笔记竞态（U9）；重命名/移动改写历史与最近路径引用（U13）；快速追加补末行换行（U14）；切笔记/编辑态切换清撤销栈与补全（`@Monitor`，U1/U11）；非编辑态手写先入编辑（U5）；4 处 ForEach key 改稳定唯一值（U3）；分享扩展按官方 Share Kit 重写（`getSharedData` + `terminateSelfWithResult`）；卡片 formId 改 `FormParam.IDENTITY_KEY`（U10）；`CopyOptions.Default` → `LocalDevice`。
+
+### 验证状态（2026-11-12）
+
+- `devecocli check arkts` 通过（仅剩已知资源名误报，真实错误 6 处已修：SharedRecord 可空字段、`SyncBaselineRow` 未导出、CopyOptions 枚举值）；`devecocli build` 成功。
+- 三台模拟器（5555/5557/5559）安装新版启动正常、无新增 crash（a11y 渲染验证：5555 任务清单、5557/5559 目录树均正常）。
+- 5559 内容注入回归测试通过：有序列表源码序号（5/6/10）、含括号 URL 自动链接、live dataview `TABLE ... FROM #tag WHERE due < date(today) AND start <= date(today)` 正确渲染出该笔记行（页面级 FROM #tag + 日期算子端到端生效）。
+- **交互项验证受阻**：三台模拟器触摸注入再次全部失效（含重启后仍无效，5557 重启后 file 通道恢复正常、5559 重启后触摸仍失效），任务勾选、撤销清理、手写保存、分享/卡片扩展等交互行为本轮无法驱动，待模拟器恢复或真机补验。
+
 ### 键盘避让重做：编辑工具栏紧贴键盘，底部导航栏沉到键盘下（2026-11-11）
 
 - **问题**：原先全局 `KeyboardAvoidMode.RESIZE`，键盘弹出时整个页面压缩，底部「笔记 / 设置」悬浮导航栏被一起顶到键盘上方，挡住视线。

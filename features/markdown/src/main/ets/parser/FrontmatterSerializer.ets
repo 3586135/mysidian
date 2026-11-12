@@ -28,6 +28,13 @@ export class FrontmatterSerializer {
     if (property.key.trim().length === 0) {
       return lines;
     }
+    if (property.type === MdPropType.MAP && property.rawBlock.length > 0) {
+      // 嵌套 map：原样回写解析时保留的原始块，不丢内容。
+      for (const line of property.rawBlock.split('\n')) {
+        lines.push(line);
+      }
+      return lines;
+    }
     if (property.type === MdPropType.LIST) {
       if (property.listValue.length === 0) {
         lines.push(`${property.key}: []`);
@@ -48,9 +55,11 @@ export class FrontmatterSerializer {
    *
    * @param content 原文档
    * @param properties 新属性集合
+   * @param removedKeys 显式删除的属性 key（整块移除，含嵌套 map 块）
    * @returns 替换后的整篇文档
    */
-  public static rebuild(content: string, properties: MdProperty[]): string {
+  public static rebuild(content: string, properties: MdProperty[],
+    removedKeys: string[] = []): string {
     const lines: string[] = content.split('\n');
     if (lines.length === 0 || lines[0].trim() !== FrontmatterSerializer.DELIMITER) {
       const head: string = `${FrontmatterSerializer.DELIMITER}\n${FrontmatterSerializer.serialize(properties)}\n` +
@@ -67,7 +76,7 @@ export class FrontmatterSerializer {
     if (end < 0) {
       return content;
     }
-    const merged: string[] = FrontmatterSerializer.merge(lines.slice(1, end), properties);
+    const merged: string[] = FrontmatterSerializer.merge(lines.slice(1, end), properties, removedKeys);
     const head: string = `${FrontmatterSerializer.DELIMITER}\n${merged.join('\n')}\n` +
       `${FrontmatterSerializer.DELIMITER}`;
     const rest: string[] = lines.slice(end + 1);
@@ -81,10 +90,12 @@ export class FrontmatterSerializer {
    * 按 key 合并 frontmatter 正文。
    *
    * - 命中属性集合的 key：整块替换为新内容；
-   * - 未命中的块（嵌套 map / 注释 / 解析器忽略的行）：原样保留；
+   * - 显式删除（removedKeys）的 key：整块移除；
+   * - 未命中的块（注释 / 解析器忽略的行）：原样保留；
    * - 新增的 key：追加到末尾。
    */
-  private static merge(original: string[], properties: MdProperty[]): string[] {
+  private static merge(original: string[], properties: MdProperty[],
+    removedKeys: string[]): string[] {
     const output: string[] = [];
     const done: string[] = [];
     let index = 0;
@@ -125,7 +136,13 @@ export class FrontmatterSerializer {
         }
       }
       if (property === null) {
-        // 未在属性集合中的键：整块保留（嵌套 map 等内容不丢）。
+        if (removedKeys.includes(key)) {
+          // 显式删除：整块移除（含嵌套 map 块）。
+          done.push(key);
+          index = cursor;
+          continue;
+        }
+        // 未在属性集合中的键：整块保留（注释等内容不丢）。
         output.push(...block);
       } else if (FrontmatterSerializer.hasNestedContent(block) &&
         property.type === MdPropType.LIST && property.listValue.length === 0) {

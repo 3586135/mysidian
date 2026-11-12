@@ -20,15 +20,19 @@ export class LinkRewriter {
 
   /**
    * 重写正文中的 wiki 链接。
-   * 覆盖 [[旧名]] / [[旧名|别名]] / [[旧名#标题]] 三种写法，保留别名与锚点。
+   * 覆盖 [[旧名]] / [[旧名|别名]] / [[旧名#标题]] / [[旧名^块引用]] /
+   * [[目录/旧名]]（路径限定写法，重写为按文件名解析的 [[新名]]）。
    */
   public static rewriteWikiLinks(text: string, oldName: string, newName: string): string {
     if (oldName.length === 0 || newName.length === 0 || oldName === newName) {
       return text;
     }
-    // 仅在 [[ 之后紧跟旧名时才替换，避免误伤 [[旧名后缀]] 这类其它笔记。
-    const pattern: string = `\\[\\[${LinkRewriter.escapeRegExp(oldName)}(?=\\]|\\||#)`;
-    return text.replace(new RegExp(pattern, 'gi'), `[[${newName}`);
+    // 仅在 [[ 之后（允许目录前缀）紧跟旧名、且后随 ]]/|/#/^ 时才替换，
+    // 避免误伤 [[旧名后缀]] 这类其它笔记；^ 为 Obsidian 块引用符。
+    const pattern: string =
+      `\\[\\[(?:[^\\[\\]\\|#^]+/)?${LinkRewriter.escapeRegExp(oldName)}(?=\\]|\\||#|\\^)`;
+    return text.replace(new RegExp(pattern, 'gi'),
+      (match: string): string => `[[${newName}`);
   }
 
   /**

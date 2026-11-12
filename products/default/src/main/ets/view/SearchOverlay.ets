@@ -189,7 +189,7 @@ export struct SearchOverlay {
             this.onOpenNote(hit.path);
           })
         }
-      }, (hit: SearchHit, index: number): string => `hit_${index}`)
+      }, (hit: SearchHit, index: number): string => `hit_${hit.path}_${index}`)
     }
     .layoutWeight(1)
     .width('100%')

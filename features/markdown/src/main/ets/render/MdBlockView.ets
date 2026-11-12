@@ -32,8 +32,8 @@ export struct MdBlockView {
   @Event onOpenLink: (target: string, kind: string) => void =
     (target: string, kind: string): void => {};
   @Event onOpenTag: (tag: string) => void = (tag: string): void => {};
-  @Event onToggleTask: (rawLine: string, checked: boolean) => void =
-    (rawLine: string, checked: boolean): void => {};
+  @Event onToggleTask: (rawLine: string, lineNumber: number, checked: boolean) => void =
+    (rawLine: string, lineNumber: number, checked: boolean): void => {};
   @Event onLoadDataView: (query: string, onResult: (result: DataViewResult) => void) => void =
     (query: string, onResult: (result: DataViewResult) => void): void => {};
   @Event onToggleDataViewTask: (task: DataViewTask, checked: boolean) => void =
@@ -255,7 +255,7 @@ export struct MdBlockView {
             .width(26)
             .margin({ top: 2 })
             .onClick(() => {
-              this.onToggleTask(item.rawLine, !item.checked);
+              this.onToggleTask(item.rawLine, item.lineNumber, !item.checked);
             })
         }
         Column() {
@@ -873,7 +873,7 @@ export struct MdBlockView {
             onOpenTag: (tag: string): void => {
               this.onOpenTag(tag);
             },
-            onToggleTask: (rawLine: string, checked: boolean): void => {
+            onToggleTask: (rawLine: string, lineNumber: number, checked: boolean): void => {
             },
             onLoadDataView: (query: string, onResult: (result: DataViewResult) => void): void => {
             },

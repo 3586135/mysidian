@@ -88,7 +88,7 @@ export struct RecentNotesPanel {
                   this.onOpenNote(item.path);
                 })
               }
-            }, (item: RecentNoteItem, index: number): string => `recent_${index}`)
+            }, (item: RecentNoteItem, index: number): string => `recent_${item.path}_${index}`)
           }
           .layoutWeight(1)
           .width('100%')

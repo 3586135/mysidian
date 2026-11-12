@@ -79,8 +79,9 @@ export class MermaidFlow {
         continue;
       }
       // 捕获组：1=起点标识 2=起点形状 3=连线标签 4=终点标识 5=终点形状
+      // 形状交替中 ((x)) 必须放在 (x) 之前，否则 ((x)) 会被 (x) 先行截断导致整行不匹配。
       const edge: RegExpExecArray | null =
-        /^([A-Za-z0-9_]+)(\[[^\]]*\]|\([^\)]*\)|\{[^\}]*\}|\(\([^\)]*\)\))?\s*-->\s*(?:\|([^|]*)\|\s*)?([A-Za-z0-9_]+)(\[[^\]]*\]|\([^\)]*\)|\{[^\}]*\}|\(\([^\)]*\)\))?$/
+        /^([A-Za-z0-9_]+)(\(\([^\)]*\)\)|\[[^\]]*\]|\([^\)]*\)|\{[^\}]*\})?\s*(?:-->|---)\s*(?:\|([^|]*)\|\s*)?([A-Za-z0-9_]+)(\(\([^\)]*\)\)|\[[^\]]*\]|\([^\)]*\)|\{[^\}]*\})?$/
           .exec(raw);
       if (edge !== null) {
         started = true;
@@ -101,7 +102,7 @@ export class MermaidFlow {
         continue;
       }
       const single: RegExpExecArray | null =
-        /^([A-Za-z0-9_]+)\s*(\[[^\]]*\]|\([^\)]*\)|\{[^\}]*\}|\(\([^\)]*\)\))$/.exec(raw);
+        /^([A-Za-z0-9_]+)\s*(\(\([^\)]*\)\)|\[[^\]]*\]|\([^\)]*\)|\{[^\}]*\})$/.exec(raw);
       if (single !== null) {
         started = true;
         const id: string = single[1];
@@ -170,6 +171,10 @@ export class MermaidFlow {
 
   /** 提取节点形状中的显示文本。 */
   private static labelOf(shape: string): string {
+    // 双圈 ((x))：先剥掉外层括号再取内层文本，避免标签残留 '(' 或 ')'。
+    if (shape.startsWith('((') && shape.endsWith('))') && shape.length >= 4) {
+      return shape.substring(2, shape.length - 2).trim();
+    }
     const open: number = shape.indexOf('[');
     const open2: number = shape.indexOf('(');
     const open3: number = shape.indexOf('{');

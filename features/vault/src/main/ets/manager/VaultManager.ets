@@ -198,7 +198,15 @@ export class VaultManager {
     if (!fileIo.accessSync(trashDir)) {
       fileIo.mkdirSync(trashDir, true);
     }
-    const name: string = `${Date.now()}_${VaultPath.basename(relativePath)}`;
+    // 时间戳前缀防同名覆盖；同一毫秒内连续删除同名文件（批量删除）时
+    // 追加序号，避免 renameSync 静默覆盖先删的那份。
+    const basename: string = VaultPath.basename(relativePath);
+    let name: string = `${Date.now()}_${basename}`;
+    let suffix: number = 1;
+    while (fileIo.accessSync(`${trashDir}/${name}`)) {
+      name = `${Date.now()}_${suffix}_${basename}`;
+      suffix++;
+    }
     fileIo.renameSync(absolute, `${trashDir}/${name}`);
     await NoteDao.removeByPath(this.context, vault.id, relativePath);
     await VaultDao.touch(this.context, vault.id);
@@ -397,20 +405,25 @@ export class VaultManager {
     return true;
   }
 
-  /** 去掉回收站文件名的时间戳前缀。 */
+  /** 去掉回收站文件名的时间戳（及同毫秒防重名附加的序号）前缀。 */
   private static stripTrashStamp(name: string): string {
-    const index: number = name.indexOf('_');
-    if (index <= 0) {
-      return name;
-    }
-    const prefix: string = name.substring(0, index);
-    for (let i = 0; i < prefix.length; i++) {
-      const code: number = prefix.charCodeAt(i);
-      if (code < 48 || code > 57) {
-        return name;
+    let rest: string = name;
+    // 最多剥离两段纯数字前缀：时间戳 + 同毫秒防重名序号。
+    for (let round = 0; round < 2; round++) {
+      const index: number = rest.indexOf('_');
+      if (index <= 0) {
+        return rest;
       }
+      const prefix: string = rest.substring(0, index);
+      for (let i = 0; i < prefix.length; i++) {
+        const code: number = prefix.charCodeAt(i);
+        if (code < 48 || code > 57) {
+          return rest;
+        }
+      }
+      rest = rest.substring(index + 1);
     }
-    return name.substring(index + 1);
+    return rest;
   }
 
   /** 恢复时若目标同名已存在，追加序号避免覆盖。 */

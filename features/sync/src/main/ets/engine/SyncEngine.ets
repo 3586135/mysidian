@@ -4,7 +4,7 @@ import { BusinessError } from '@kit.BasicServicesKit';
 import { RemoteEntry, SyncConfig, SyncConflict, SyncFileFilter, SyncProvider, SyncState, SyncStatus,
   VaultInfo } from '@ohos/domain';
 import { Logger } from '@ohos/common';
-import { SyncBaseline, SyncStateDao } from '@ohos/vault';
+import { FileHistory, SyncBaseline, SyncBaselineRow, SyncStateDao } from '@ohos/vault';
 import { ConflictResolver } from './ConflictResolver';
 import { WebDavProvider } from '../provider/WebDavProvider';
 
@@ -51,7 +51,7 @@ export class SyncEngine {
       await provider.connect(config);
       const remoteEntries: RemoteEntry[] = await provider.list('');
       const localEntries: RemoteEntry[] = await this.collectLocalEntries(vault);
-      const baselines: Map<string, SyncBaseline> = await SyncStateDao.baselines(context);
+      const baselines: Map<string, SyncBaseline> = await SyncStateDao.baselines(context, vault.id);
       LOG.info(`sync plan: local=${localEntries.length}, remote=${remoteEntries.length}`);
 
       const remoteMap: Map<string, RemoteEntry> = new Map<string, RemoteEntry>();
@@ -85,7 +85,7 @@ export class SyncEngine {
           if (baseline !== undefined && baseline.serverTag.length > 0 &&
             remote.serverTag.length > 0 && remote.serverTag !== baseline.serverTag) {
             LOG.info(`sync pull (external change): ${local.path}`);
-            await this.pullEntry(provider, vault, remote);
+            await this.pullEntry(provider, vault, remote, context);
             this.status.pendingDownloads++;
           }
           continue;
@@ -122,7 +122,7 @@ export class SyncEngine {
         }
         if (baseline !== undefined && baseline.fileHash === local.etag) {
           LOG.info(`sync pull (remote changed): ${remote.path}`);
-          await this.pullEntry(provider, vault, remote);
+          await this.pullEntry(provider, vault, remote, context);
           this.status.pendingDownloads++;
           continue;
         }
@@ -130,22 +130,34 @@ export class SyncEngine {
         await this.resolveConflict(provider, vault, local, remote, serverTagMap);
       }
 
-      // 远端新文件（本地没有的）分批并发拉取；单个 404（枚举后被删除、
-      // 清单幽灵条目）跳过即可，不应中断整轮同步。
+      // 远端存在、本地没有的文件分两类：
+      // - 命中基线：上次同步后本地删除（移入回收站等）→ 删除传播到远端，
+      //   否则删除会被下一轮同步无条件拉回（删除被撤销）。
+      // - 未命中基线：远端新文件 → 拉取。单个 404（枚举后被删除、
+      //   清单幽灵条目）跳过即可，不应中断整轮同步。
       const pendingPulls: RemoteEntry[] = [];
+      const pendingDeletes: RemoteEntry[] = [];
       for (const remote of remoteEntries) {
         if (!localMap.has(remote.path)) {
-          pendingPulls.push(remote);
+          if (baselines.has(remote.path)) {
+            pendingDeletes.push(remote);
+          } else {
+            pendingPulls.push(remote);
+          }
         }
       }
       if (pendingPulls.length > 0) {
         LOG.info(`sync pull pending: ${pendingPulls.length} remote-new files`);
       }
+      for (const deleted of pendingDeletes) {
+        LOG.info(`sync delete (local removed): ${deleted.path}`);
+        await provider.deleteRemote(deleted.path);
+      }
       for (let i = 0; i < pendingPulls.length; i += PULL_CONCURRENCY) {
         const batch: RemoteEntry[] = pendingPulls.slice(i, i + PULL_CONCURRENCY);
         const outcomes: Array<string | null> = await Promise.all(batch.map(
           (remote: RemoteEntry): Promise<string | null> => {
-            return this.pullRemote(provider, vault, remote);
+            return this.pullRemote(provider, vault, remote, context);
           }));
         for (let k = 0; k < outcomes.length; k++) {
           const outcome: string | null = outcomes[k];
@@ -164,11 +176,19 @@ export class SyncEngine {
       // 否则清单回写会丢失它们，下次同步将重复处理。
       const finalEntries: RemoteEntry[] = await this.collectLocalEntries(vault);
       await provider.putManifest(finalEntries);
-      await SyncStateDao.clear(context);
+      // 基线回写整体事务化：中途失败不得留下「部分文件有基线、部分没有」
+      // 的状态，否则缺基线文件下次同步会被误判为冲突。
+      const baselineRows: SyncBaselineRow[] = [];
       for (const entry of finalEntries) {
-        const serverTag: string = serverTagMap.get(entry.path) ?? '';
-        await SyncStateDao.put(context, entry.path, entry.etag, entry.mtime, entry.etag, serverTag);
+        const row: SyncBaselineRow = new SyncBaselineRow();
+        row.path = entry.path;
+        row.fileHash = entry.etag;
+        row.mtime = entry.mtime;
+        row.etag = entry.etag;
+        row.serverTag = serverTagMap.get(entry.path) ?? '';
+        baselineRows.push(row);
       }
+      await SyncStateDao.replaceAll(context, vault.id, baselineRows);
 
       this.status.state = this.conflicts.length > 0 ? SyncState.CONFLICT : SyncState.SUCCESS;
       this.status.message = this.conflicts.length > 0 ? 'conflict' : 'success';
@@ -200,12 +220,11 @@ export class SyncEngine {
       item.path = entry.path;
       item.size = stat.size;
       item.mtime = stat.mtime;
-      // 二进制附件用 mtime~size 粗比对，避免大图每次全量计算 sha256。
-      if (SyncFileFilter.isMarkdown(entry.path)) {
-        item.etag = await hash.hash(absolute, 'sha256');
-      } else {
-        item.etag = `${stat.mtime}~${stat.size}`;
-      }
+      // 全部文件（含二进制附件）统一 sha256 内容哈希。
+      // 此前二进制用 mtime~size 做标识，但 mtime 是本机写入时间、跨设备必然
+      // 不同，多设备间每轮同步都会互相判定变化而重复拉取同一张图片（乒乓）。
+      // 内容哈希跨设备稳定，图片体积可控，开销可接受。
+      item.etag = await hash.hash(absolute, 'sha256');
       item.isDir = false;
       result.push(item);
     }
@@ -252,10 +271,10 @@ export class SyncEngine {
   }
 
   /** 拉取单个远端新文件：成功返回 null，失败返回错误消息。 */
-  private async pullRemote(provider: SyncProvider, vault: VaultInfo,
-    remote: RemoteEntry): Promise<string | null> {
+  private async pullRemote(provider: SyncProvider, vault: VaultInfo, remote: RemoteEntry,
+    context: common.Context): Promise<string | null> {
     try {
-      await this.pullEntry(provider, vault, remote);
+      await this.pullEntry(provider, vault, remote, context);
       this.status.pendingDownloads++;
       return null;
     } catch (error) {
@@ -264,11 +283,17 @@ export class SyncEngine {
     }
   }
 
-  private async pullEntry(provider: SyncProvider, vault: VaultInfo, entry: RemoteEntry): Promise<void> {
+  private async pullEntry(provider: SyncProvider, vault: VaultInfo, entry: RemoteEntry,
+    context: common.Context): Promise<void> {
     const absolute: string = `${vault.rootPath}/${entry.path}`;
     const folder: string = absolute.substring(0, absolute.lastIndexOf('/'));
     if (!fileIo.accessSync(folder)) {
       fileIo.mkdirSync(folder, true);
+    }
+    // 覆盖已有本地笔记前保留历史快照：pull 中断/异常时旧内容可从
+    // .history 找回，避免损坏文件被下一轮同步推上去覆盖唯一完好副本。
+    if (SyncFileFilter.isMarkdown(entry.path) && fileIo.accessSync(absolute)) {
+      await FileHistory.snapshot(context, vault, entry.path);
     }
     if (SyncFileFilter.isMarkdown(entry.path)) {
       await provider.pull(entry, absolute);
@@ -290,8 +315,10 @@ export class SyncEngine {
     conflict.path = local.path;
     conflict.localHash = local.etag;
     conflict.remoteHash = remote.etag;
-    const absolute: string = `${vault.rootPath}/${local.path}`;
-    const remoteContent: string = fileIo.readTextSync(absolute);
+    // 冲突副本必须保存「远端版本」：从远端拉取真实内容。
+    // 此前误用本地文件内容充当远端内容，导致冲突副本与本地完全相同、
+    // 远端版本被 push 覆盖后永久丢失。
+    const remoteContent: string = await provider.readRemote(local.path);
     conflict.conflictPath = await ConflictResolver.saveCopy(vault, local.path, remoteContent);
     this.conflicts.push(conflict);
     await this.pushEntry(provider, vault, local, serverTagMap);

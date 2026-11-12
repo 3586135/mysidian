@@ -198,7 +198,8 @@ export struct SyncSettings {
                   .borderRadius(8)
                   .backgroundColor($r('app.color.hm_hover_bg'))
                   .margin({ bottom: 4 })
-                }, (conflict: SyncConflict, index: number): string => `conflict_${index}`)
+                }, (conflict: SyncConflict, index: number): string =>
+                `conflict_${conflict.path}_${conflict.conflictPath}_${index}`)
               }
               .width('100%')
               .alignItems(HorizontalAlign.Start)

@@ -50,17 +50,13 @@ export class DataViewQuery {
   sortDesc: boolean = false;
   /** LIMIT 条数（0 表示不限制）。 */
   limit: number = 0;
-  /** 日期比较：截止日期早于今天。 */
-  dueBeforeToday: boolean = false;
-  /** 日期比较：截止日期晚于今天。 */
-  dueAfterToday: boolean = false;
-  /** 日期比较：截止日期为今天。 */
-  dueOnToday: boolean = false;
-  /** 日期比较：开始日期早于今天。 */
-  startBeforeToday: boolean = false;
-  /** 日期比较：计划日期早于今天。 */
-  scheduledBeforeToday: boolean = false;
-  /** 日期比较字段名（due / start / scheduled）。 */
+  /** 日期比较：due 与今天的比较算子（'' / '<' / '<=' / '>' / '>=' / '='）。 */
+  dueOp: string = '';
+  /** 日期比较：start 与今天的比较算子。 */
+  startOp: string = '';
+  /** 日期比较：scheduled 与今天的比较算子。 */
+  scheduledOp: string = '';
+  /** 日期比较字段名（due / start / scheduled，兼容旧读法）。 */
   dateField: string = '';
 
   /** 是否为可执行的任务查询。 */
@@ -286,27 +282,15 @@ export class DataViewQuery {
     }
   }
 
-  /** 记录日期比较条件。 */
+  /** 记录日期比较条件（field 与今天的 operator 比较）。 */
   private static parseDatePredicate(field: string, operator: string, query: DataViewQuery): void {
     query.dateField = field;
-    if (operator === '<=' || operator === '<') {
-      if (field === 'due') {
-        query.dueBeforeToday = true;
-      } else if (field === 'start') {
-        query.startBeforeToday = true;
-      } else {
-        query.scheduledBeforeToday = true;
-      }
-      return;
-    }
-    if (operator === '>=' || operator === '>') {
-      if (field === 'due') {
-        query.dueAfterToday = true;
-      }
-      return;
-    }
     if (field === 'due') {
-      query.dueOnToday = true;
+      query.dueOp = operator;
+    } else if (field === 'start') {
+      query.startOp = operator;
+    } else {
+      query.scheduledOp = operator;
     }
   }
 
@@ -321,37 +305,42 @@ export class DataViewQuery {
     return this.matchesDate(item);
   }
 
-  /** 日期比较：把任务的 due / start / scheduled 与今天比较。 */
+  /** 日期比较：把任务的 due / start / scheduled 按各自算子与今天比较。 */
   private matchesDate(item: MdListItem): boolean {
-    if (this.dueBeforeToday || this.dueAfterToday || this.dueOnToday) {
-      const due: string = item.dueDate;
-      if (due.length === 0) {
-        return false;
-      }
-      const today: string = DataViewQuery.todayStamp();
-      if (this.dueBeforeToday && due > today) {
-        return false;
-      }
-      if (this.dueAfterToday && due < today) {
-        return false;
-      }
-      if (this.dueOnToday && due !== today) {
-        return false;
-      }
+    const today: string = DataViewQuery.todayStamp();
+    if (!DataViewQuery.matchDateOp(item.dueDate, this.dueOp, today)) {
+      return false;
     }
-    if (this.startBeforeToday) {
-      const start: string = item.startDate;
-      if (start.length === 0 || start > DataViewQuery.todayStamp()) {
-        return false;
-      }
+    if (!DataViewQuery.matchDateOp(item.startDate, this.startOp, today)) {
+      return false;
     }
-    if (this.scheduledBeforeToday) {
-      const scheduled: string = item.scheduledDate;
-      if (scheduled.length === 0 || scheduled > DataViewQuery.todayStamp()) {
-        return false;
-      }
+    if (!DataViewQuery.matchDateOp(item.scheduledDate, this.scheduledOp, today)) {
+      return false;
     }
     return true;
+  }
+
+  /** 单字段日期比较：无算子恒真；有算子但无值恒假。 */
+  private static matchDateOp(value: string, op: string, today: string): boolean {
+    if (op.length === 0) {
+      return true;
+    }
+    if (value.length === 0) {
+      return false;
+    }
+    if (op === '<') {
+      return value < today;
+    }
+    if (op === '<=') {
+      return value <= today;
+    }
+    if (op === '>') {
+      return value > today;
+    }
+    if (op === '>=') {
+      return value >= today;
+    }
+    return value === today;
   }
 
   /** 今天的日期戳（YYYY-MM-DD）。 */
@@ -363,15 +352,12 @@ export class DataViewQuery {
     return `${now.getFullYear()}-${month}-${day}`;
   }
 
-  /** 任务行是否满足查询条件。 */
+  /** 任务行是否满足查询条件（FROM #tag 为笔记级过滤，由宿主按页匹配，不在行内检查）。 */
   public matches(rawLine: string, checked: boolean): boolean {
     if (this.requireCompleted && !checked) {
       return false;
     }
     if (this.requireIncomplete && checked) {
-      return false;
-    }
-    if (this.fromTag.length > 0 && !rawLine.includes(`#${this.fromTag}`)) {
       return false;
     }
     for (let index = 0; index < this.requiredTags.length; index++) {
@@ -407,6 +393,15 @@ export class DataViewQuery {
       return false;
     }
     return true;
+  }
+
+  /** TASK FROM #tag：笔记级标签匹配（frontmatter 标签或正文 #标签），无 FROM 恒真。 */
+  public matchesPageSourceTag(content: string, frontTags: string[]): boolean {
+    if (this.fromTag.length === 0) {
+      return true;
+    }
+    const body: string = DataViewQuery.stripFencedCode(content);
+    return DataViewQuery.pageHasTag(body, frontTags, this.fromTag);
   }
 
   /** 去除围栏代码块后再做文本匹配，避免查询块内的标签/文本自匹配。 */

@@ -26,6 +26,9 @@ export interface SyncProvider {
   /** 在远端创建目录（幂等：目录已存在时视为成功） */
   mkdirRemote(remoteDir: string): Promise<void>;
 
+  /** 删除远端文件（本地删除传播；远端已不存在视为成功） */
+  deleteRemote(path: string): Promise<void>;
+
   /** 查询远端单个文件元信息，不存在时返回 null */
   stat(path: string): Promise<RemoteEntry | null>;
 

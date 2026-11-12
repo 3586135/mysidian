@@ -59,12 +59,26 @@ export class FrontmatterParser {
       property.key = key;
       let listBranch: boolean = false;
       if (value.length === 0) {
-        property.type = MdPropType.LIST;
-        property.listValue = FrontmatterParser.collectListItems(lines, index + 1);
-        // 列表分支把游标推进到下一个键所在行，循环末尾不能再自增，
-        // 否则列表之后的属性会被整条跳过（属性丢失）。
-        index = FrontmatterParser.skipListItems(lines, index + 1);
-        listBranch = true;
+        // 先看空值后是否紧跟缩进的 map 子行（嵌套 map）：
+        // 是则按 MAP 原样保留整块，避免被当成空列表后编辑时丢失内容。
+        const nested: string[] = FrontmatterParser.collectNestedLines(lines, index + 1);
+        if (FrontmatterParser.hasMapLines(nested)) {
+          property.type = MdPropType.MAP;
+          property.rawBlock = [raw, ...nested].join('\n');
+          // 子行不再走循环顶部的缩进跳过分支，需手动计入 raw 保持原文完整。
+          for (const nestedLine of nested) {
+            rawLines.push(nestedLine);
+          }
+          listBranch = true;
+          index = index + 1 + nested.length;
+        } else {
+          property.type = MdPropType.LIST;
+          property.listValue = FrontmatterParser.collectListItems(lines, index + 1);
+          // 列表分支把游标推进到下一个键所在行，循环末尾不能再自增，
+          // 否则列表之后的属性会被整条跳过（属性丢失）。
+          index = FrontmatterParser.skipListItems(lines, index + 1);
+          listBranch = true;
+        }
       } else if (value.startsWith('[') && value.endsWith(']')) {
         property.type = MdPropType.LIST;
         property.listValue = FrontmatterParser.splitInlineList(value);
@@ -89,6 +103,34 @@ export class FrontmatterParser {
     }
     frontmatter.raw = rawLines.join('\n');
     return frontmatter;
+  }
+
+  /** 收集键下方连续的缩进行（空行终止）。 */
+  private static collectNestedLines(lines: string[], start: number): string[] {
+    const nested: string[] = [];
+    let index: number = start;
+    while (index < lines.length) {
+      const raw: string = lines[index];
+      if (raw.trim().length === 0) {
+        break;
+      }
+      if (!raw.startsWith(' ') && !raw.startsWith('\t')) {
+        break;
+      }
+      nested.push(raw);
+      index++;
+    }
+    return nested;
+  }
+
+  /** 缩进行中是否存在非列表项的行（即嵌套 map 子键）。 */
+  private static hasMapLines(nested: string[]): boolean {
+    for (const line of nested) {
+      if (!line.trim().startsWith('- ')) {
+        return true;
+      }
+    }
+    return false;
   }
 
   private static collectListItems(lines: string[], start: number): string[] {

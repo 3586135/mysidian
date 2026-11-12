@@ -11,7 +11,8 @@ export class MarkdownParser {
     const normalized: string = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
     const lines: string[] = normalized.split('\n');
     const frontmatter: FrontmatterResult = FrontmatterParser.parse(lines);
-    const blocks = new BlockParser().parse(lines.slice(frontmatter.consumed));
+    // startLine 传入 frontmatter 行数，使列表项记录的行号与原文对齐。
+    const blocks = new BlockParser().parse(lines.slice(frontmatter.consumed), frontmatter.consumed);
     const document: MdDocument = new MdDocument();
     document.frontmatter = frontmatter.frontmatter;
     document.blocks = blocks;

@@ -773,6 +773,10 @@
       "value": "插入笔记"
     },
     {
+      "name": "handwrite_saving",
+      "value": "处理中…"
+    },
+    {
       "name": "form_card_title",
       "value": "MySidian 速记"
     },

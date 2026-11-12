@@ -78,6 +78,7 @@ export class FileHistory {
 
   /**
    * 列出某篇笔记的历史快照（按时间倒序）。
+   * 兼容读取旧编码（斜杠直替 `__`）的历史快照。
    */
   public static async list(vault: VaultInfo, relativePath: string): Promise<HistorySnapshot[]> {
     const items: HistorySnapshot[] = [];
@@ -85,10 +86,10 @@ export class FileHistory {
     if (!fileIo.accessSync(dir)) {
       return items;
     }
-    const prefix: string = `${FileHistory.encodePath(relativePath)}.`;
     const names: string[] = fileIo.listFileSync(dir);
     for (const name of names) {
-      if (!name.startsWith(prefix) || !name.endsWith('.md')) {
+      const prefix: string | null = FileHistory.matchPrefix(name, relativePath);
+      if (prefix === null || !name.endsWith('.md')) {
         continue;
       }
       const item: HistorySnapshot = new HistorySnapshot();
@@ -116,6 +117,8 @@ export class FileHistory {
 
   /**
    * 回滚到指定快照：把快照内容写回笔记文件。
+   * 覆盖前先对现行内容快照——否则回滚目标之后的所有编辑
+   * （若无更早快照兜底）将被永久丢弃。
    */
   public static async rollback(vault: VaultInfo, relativePath: string, name: string): Promise<boolean> {
     const content: string = await FileHistory.read(vault, relativePath, name);
@@ -123,6 +126,24 @@ export class FileHistory {
       return false;
     }
     const absolute: string = VaultPath.absolute(vault.rootPath, relativePath);
+    if (fileIo.accessSync(absolute)) {
+      const dir: string = VaultPath.absolute(vault.rootPath, FileHistory.DIR);
+      if (!fileIo.accessSync(dir)) {
+        fileIo.mkdirSync(dir, true);
+      }
+      const encoded: string = FileHistory.encodePath(relativePath);
+      const currentName: string = `${encoded}.${Date.now()}.md`;
+      const source = fileIo.openSync(absolute, fileIo.OpenMode.READ_ONLY);
+      const target = fileIo.openSync(`${dir}/${currentName}`,
+        fileIo.OpenMode.WRITE_ONLY | fileIo.OpenMode.CREATE | fileIo.OpenMode.TRUNC);
+      try {
+        fileIo.copyFileSync(source.fd, target.fd);
+      } finally {
+        fileIo.closeSync(source);
+        fileIo.closeSync(target);
+      }
+      FileHistory.prune(dir, encoded);
+    }
     const file = fileIo.openSync(absolute,
       fileIo.OpenMode.READ_WRITE | fileIo.OpenMode.CREATE | fileIo.OpenMode.TRUNC);
     try {
@@ -214,18 +235,40 @@ export class FileHistory {
     return result;
   }
 
-  /** 把相对路径编码为文件名（斜杠替换为双下划线）。 */
+  /**
+   * 把相对路径编码为快照文件名前缀。
+   * 先转义字面下划线（`_`→`_u`）再替换斜杠（`/`→`__`），
+   * 否则 `a/b.md` 与字面名 `a__b.md` 编码相同，快照互相污染、
+   * prune 会跨笔记误删。
+   */
   private static encodePath(relativePath: string): string {
+    return relativePath.split('_').join('_u').split('/').join('__');
+  }
+
+  /** 旧编码（斜杠直替双下划线），仅用于兼容读取历史快照。 */
+  private static encodePathLegacy(relativePath: string): string {
     return relativePath.split('/').join('__');
   }
 
-  /** 清理超出数量上限的旧快照。 */
+  /** 判断快照文件名属于该笔记（新/旧编码），命中返回所用前缀，否则 null。 */
+  private static matchPrefix(name: string, relativePath: string): string | null {
+    const modern: string = `${FileHistory.encodePath(relativePath)}.`;
+    if (name.startsWith(modern)) {
+      return modern;
+    }
+    const legacy: string = `${FileHistory.encodePathLegacy(relativePath)}.`;
+    if (legacy !== modern && name.startsWith(legacy)) {
+      return legacy;
+    }
+    return null;
+  }
+
+  /** 清理超出数量上限的旧快照（含旧编码快照，统一计入配额）。 */
   private static prune(dir: string, encoded: string): void {
-    const prefix: string = `${encoded}.`;
     const names: string[] = fileIo.listFileSync(dir);
     const matched: string[] = [];
     for (const name of names) {
-      if (name.startsWith(prefix) && name.endsWith('.md')) {
+      if (name.startsWith(`${encoded}.`) && name.endsWith('.md')) {
         matched.push(name);
       }
     }

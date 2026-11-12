@@ -423,7 +423,18 @@ export struct NoteInfoPanel {
       .width('100%')
       .alignItems(VerticalAlign.Center)
 
-      if (property.type === MdPropType.LIST) {
+      if (property.type === MdPropType.MAP) {
+        // 嵌套 map：按原始块只读展示，避免误当列表/标量编辑导致内容丢失。
+        Text(property.rawBlock)
+          .fontSize(12)
+          .fontColor($r('app.color.hm_text_primary'))
+          .width('100%')
+          .margin({ top: 4 })
+          .padding({ left: 8, right: 8, top: 6, bottom: 6 })
+          .borderRadius(8)
+          .backgroundColor($r('app.color.hm_hover_bg'))
+          .copyOption(CopyOptions.LocalDevice)
+      } else if (property.type === MdPropType.LIST) {
         Flex({ wrap: FlexWrap.Wrap }) {
           ForEach(property.listValue, (item: string, itemIndex: number) => {
             Row() {
