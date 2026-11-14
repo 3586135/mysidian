@@ -1,4 +1,4 @@
-import { curves, KeyboardAvoidMode, mediaquery, promptAction, window } from '@kit.ArkUI';
+import { curves, KeyboardAvoidMode, mediaquery, promptAction, router, window } from '@kit.ArkUI';
 import { picker } from '@kit.CoreFileKit';
 import { BusinessError } from '@kit.BasicServicesKit';
 import { TagRef } from '@ohos/domain';
@@ -309,6 +309,7 @@ struct DesignIndex {
     };
     this.vm.init(context).then((): void => {
       this.initReady = true;
+      this.handleLaunchParams();
       this.vm.loadGraph().then((): void => {
         this.rebuildGraphLayout();
       });
@@ -1562,8 +1563,7 @@ struct DesignIndex {
     });
   }
 
-  /** 打开页内工作台子视图：处理携带参数后切换 viewMode（无 router 跳转）。 */
-  private openWorkspace(params: Record<string, Object>): void {
+  /** 打开页内工作台子视图：处理携带参数后切换 viewMode（无 router 跳转）。 */  private openWorkspace(params: Record<string, Object>): void {
     const openPathRaw: Object | undefined = params['openPath'];
     const openPath: string = typeof openPathRaw === 'string' ? openPathRaw : '';
     if (openPath.length > 0) {
@@ -1613,6 +1613,53 @@ struct DesignIndex {
   /** NONE 避让是否生效（页面不被压缩，需手动让出键盘高度）。 */
   private noneAvoidActive(): boolean {
     return this.editorKeyboardMode && this.viewMode === DesignViewMode.WORKSPACE && !this.isWide;
+  }
+
+  /** 首页路由参数是否已处理（防重入）。 */
+  private launchHandled: boolean = false;
+
+  /**
+   * 处理外部启动路由参数：
+   * openPath 打开笔记 / expandPath 展开目录（均进工作台）、
+   * action 打开指定面板（templates / vaults / settings）。
+   */
+  private handleLaunchParams(): void {
+    if (this.launchHandled) {
+      return;
+    }
+    const params: Record<string, Object> | undefined =
+      router.getParams() as Record<string, Object> | undefined;
+    if (params === undefined) {
+      return;
+    }
+    this.launchHandled = true;
+    const openPathRaw: Object | undefined = params['openPath'];
+    const openPath: string = typeof openPathRaw === 'string' ? openPathRaw : '';
+    if (openPath.length > 0) {
+      this.openWorkspace({ 'openPath': openPath });
+      return;
+    }
+    const expandPathRaw: Object | undefined = params['expandPath'];
+    const expandPath: string = typeof expandPathRaw === 'string' ? expandPathRaw : '';
+    if (expandPath.length > 0) {
+      this.openWorkspace({ 'expandPath': expandPath });
+      return;
+    }
+    const actionRaw: Object | undefined = params['action'];
+    const action: string = typeof actionRaw === 'string' ? actionRaw : '';
+    if (action === 'templates') {
+      this.openWorkspace({ 'action': 'templates' });
+      return;
+    }
+    if (action === 'vaults') {
+      this.getUIContext().animateTo({ duration: 240, curve: Curve.Friction }, () => {
+        this.showVaultManager = true;
+      });
+      return;
+    }
+    if (action === 'settings') {
+      this.showSettingsPanel = true;
+    }
   }
 
   /** 进入 / 退出编辑区键盘交互态。 */

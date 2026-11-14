@@ -20,15 +20,15 @@ export default class DefaultAbility extends UIAbility {
     // Main window is created, set main page for this ability
     hilog.info(DOMAIN, 'testTag', '%{public}s', 'Ability onWindowStageCreate');
 
-    // 正式首页：Material 3 设计页（DesignIndex），编辑工作台在 pages/Index。
+    // 唯一 @Entry：Material 3 单页架构（首页四页签 + 页内工作台全屏子视图）。
     windowStage.loadContent('pages/DesignIndex', (err) => {
       if (err.code) {
         hilog.error(DOMAIN, 'testTag', 'Failed to load the content. Cause: %{public}s', JSON.stringify(err));
         return;
       }
       hilog.info(DOMAIN, 'testTag', 'Succeeded in loading the content.');
-      // 键盘避让默认压缩模式：弹窗与设置页不会被键盘遮挡。
-      // 窄屏编辑器进入键盘交互态时，Index.ets 会临时切换为 NONE 避让，
+      // 键盘避让默认压缩模式：弹窗与浮层不会被键盘遮挡。
+      // 窄屏编辑器进入键盘交互态时，DesignIndex 会临时切换为 NONE 避让，
       // 使底部悬浮导航栏沉到键盘下方、编辑工具栏紧贴键盘上沿。
       windowStage.getMainWindowSync().getUIContext().setKeyboardAvoidMode(KeyboardAvoidMode.RESIZE);
     });
