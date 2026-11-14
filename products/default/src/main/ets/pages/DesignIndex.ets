@@ -1,10 +1,11 @@
-import { curves, mediaquery, promptAction, router, window } from '@kit.ArkUI';
+import { curves, KeyboardAvoidMode, mediaquery, promptAction, window } from '@kit.ArkUI';
 import { picker } from '@kit.CoreFileKit';
 import { BusinessError } from '@kit.BasicServicesKit';
 import { TagRef } from '@ohos/domain';
 import { Logger } from '@ohos/common';
 import { SyncSettings } from '../view/SyncSettings';
 import { SettingsOverlay } from '../view/SettingsOverlay';
+import { WorkspaceView, DesignViewMode } from '../view/design/WorkspaceView';
 import { GraphLayout } from '../viewmodel/GraphLayout';
 import { DesignPalette } from '../viewmodel/DesignPalette';
 import { SearchViewModel } from '../viewmodel/SearchViewModel';
@@ -184,9 +185,9 @@ function formatRelativeTime(openedAt: number): ResourceStr {
 /**
  * Material 3 设计首页：Espresso 深色主题、悬浮分离式胶囊底部栏。
  *
- * 四页签接真实数据：文件（目录 + 最近笔记）、搜索（全文/标签/属性）、
- * 图谱（当前笔记局部关系图）、更多（插件入口 + 设置）。
- * 编辑工作台在 pages/Index，通过 router 携参跳转。
+ * 单页架构：本页为唯一 @Entry，四页签首页（文件/搜索/图谱/更多）与
+ * 工作台（WorkspaceView）通过 viewMode 状态机在页内切换，无 router 跳转。
+ * 键盘避让、窗口订阅与自动同步定时器等 @Entry 级生命周期统一归本页管理。
  */
 @Entry
 @ComponentV2
@@ -217,6 +218,10 @@ struct DesignIndex {
   @Local draftBody: string = '';           // 快速笔记草稿正文
   @Local showSyncPanel: boolean = false;   // 同步设置浮层
   @Local showSettingsPanel: boolean = false; // 外观与设置浮层
+  @Local viewMode: number = DesignViewMode.HOME; // 页面状态机：0 首页 / 1 工作台
+  @Local keyboardHeight: number = 0;       // 键盘高度（vp，NONE 避让下让位）
+  @Local editorKeyboardMode: boolean = false; // 编辑区键盘交互态（切换 NONE 避让）
+  @Local isWide: boolean = false;          // 宽屏形态（键盘避让策略依据）
 
   // ===== 控制器与画布上下文 =====
   private swiperController: SwiperController = new SwiperController();
@@ -225,8 +230,19 @@ struct DesignIndex {
   private graphNodeMap: Map<string, DesignGraphNodeVp> = new Map<string, DesignGraphNodeVp>();
   private searchDebounceId: number = -1;
   private initReady: boolean = false;            // 视图模型初始化完成
-  private returningFromWorkspace: boolean = false; // 从工作台返回需刷新
   private darkModeListener: mediaquery.MediaQueryListener | null = null; // 深浅色切换监听（Canvas 重绘）
+  /** 主窗口：用于订阅键盘高度变化。 */
+  private mainWindow: window.Window | undefined = undefined;
+  /** 键盘高度变化回调（单位 px）。 */
+  private keyboardCallback: (height: number) => void = (height: number): void => {
+    this.keyboardHeight = this.getUIContext().px2vp(height);
+    // 键盘高度变化后重新评估避让策略（含收起时恢复 RESIZE）。
+    this.applyKeyboardAvoidMode();
+  };
+  /** 自动同步周期定时器句柄。 */
+  private autoSyncTimer: number = -1;
+  /** 自动同步周期。 */
+  private static readonly AUTO_SYNC_INTERVAL_MS: number = 30 * 60 * 1000;
 
   // ===== 静态定义 =====
   readonly tabDefs: DesignTabDef[] = [
@@ -276,7 +292,13 @@ struct DesignIndex {
     this.loadWindowInsets();
     this.searchVm.setContext(context);
     this.vm.attachUi(this.getUIContext());
-    this.syncVm.init(context);
+    this.syncVm.init(context).then((): void => {
+      this.restartAutoSyncTimer();
+    });
+    // 同步拉取了新文件后重建索引并刷新文件树，使新笔记可见。
+    this.syncVm.onSyncComplete = (): void => {
+      this.vm.rescanVault();
+    };
     this.vm.init(context).then((): void => {
       this.initReady = true;
       this.vm.loadGraph().then((): void => {
@@ -291,21 +313,81 @@ struct DesignIndex {
   }
 
   aboutToDisappear(): void {
+    this.stopAutoSyncTimer();
+    if (this.mainWindow !== undefined) {
+      this.mainWindow.off('keyboardHeightChange', this.keyboardCallback);
+      this.mainWindow = undefined;
+    }
     if (this.darkModeListener !== null) {
       this.darkModeListener.off('change');
       this.darkModeListener = null;
     }
   }
 
-  onPageShow(): void {
-    if (!this.initReady || !this.returningFromWorkspace) {
-      return;
+  /** 系统返回键：工作台 → 返回首页；首页 → 依次关闭浮层 → 默认退出。 */
+  onBackPress(): boolean {
+    if (this.viewMode === DesignViewMode.WORKSPACE) {
+      this.exitWorkspace();
+      return true;
     }
-    this.returningFromWorkspace = false;
-    this.refreshAfterReturn();
+    if (this.showFabMenu) {
+      this.toggleFabMenu();
+      return true;
+    }
+    if (this.showQuickEditor) {
+      this.closeQuickEditor();
+      return true;
+    }
+    if (this.showSyncPanel) {
+      this.getUIContext().animateTo({ duration: 240, curve: Curve.Friction }, () => {
+        this.showSyncPanel = false;
+      });
+      return true;
+    }
+    if (this.showSettingsPanel) {
+      this.showSettingsPanel = false;
+      return true;
+    }
+    return false;
   }
 
   build() {
+    Stack({ alignContent: Alignment.Bottom }) {
+      if (this.viewMode === DesignViewMode.HOME) {
+        this.homeContent()
+      } else {
+        WorkspaceView({
+          vm: this.vm,
+          keyboardHeight: this.keyboardHeight,
+          isWide: this.isWide,
+          topInset: this.topInset,
+          bottomInset: this.bottomInset,
+          onRequestExit: (): void => {
+            this.exitWorkspace();
+          },
+          onEditorKeyboardMode: (active: boolean): void => {
+            this.setEditorKeyboardMode(active);
+          }
+        })
+        .transition(TransitionEffect.OPACITY.animation({ duration: 260, curve: Curve.Friction }))
+      }
+    }
+    .width('100%')
+    .height('100%')
+    .backgroundColor($r('app.color.design_bg'))
+    .onAreaChange((_oldArea: Area, newArea: Area) => {
+      // 布局形态变化后重新评估键盘避让策略（宽屏无底部悬浮导航栏）。
+      const wide: boolean = Number(newArea.width) >= 600;
+      if (wide !== this.isWide) {
+        this.isWide = wide;
+        this.applyKeyboardAvoidMode();
+      }
+    })
+  }
+
+  /** 首页内容：四页签横滑 + 悬浮底栏 + 各浮层。 */
+  @Builder
+  homeContent() {
     Stack({ alignContent: Alignment.Bottom }) {
       // 内容区：四个页面横滑
       Swiper(this.swiperController) {
@@ -390,6 +472,7 @@ struct DesignIndex {
           },
           onAutoSyncChange: (value: boolean): void => {
             this.syncVm.autoSync = value;
+            this.restartAutoSyncTimer();
           },
           onSyncNow: (): void => {
             this.syncVm.runSync(this.vm.currentVault);
@@ -423,7 +506,7 @@ struct DesignIndex {
     }
     .width('100%')
     .height('100%')
-    .backgroundColor($r('app.color.design_bg'))
+    .transition(TransitionEffect.OPACITY.animation({ duration: 240, curve: Curve.Friction }))
   }
 
   // ==================== 底部悬浮栏 ====================
@@ -502,7 +585,7 @@ struct DesignIndex {
           return;
         }
         if (this.vm.vaults.length === 0) {
-          this.jumpToWorkspace({});
+          this.openWorkspace({});
           return;
         }
         this.openQuickEditor('');
@@ -546,7 +629,7 @@ struct DesignIndex {
         .alignItems(VerticalAlign.Center)
         .layoutWeight(1)
         .onClick(() => {
-          this.jumpToWorkspace({});
+          this.openWorkspace({});
         })
 
         Stack() {
@@ -646,7 +729,7 @@ struct DesignIndex {
         .backgroundColor($r('app.color.design_accent_weak'))
         .margin({ top: 6 })
         .onClick(() => {
-          this.jumpToWorkspace({});
+          this.openWorkspace({});
         })
     }
     .width('100%')
@@ -686,7 +769,7 @@ struct DesignIndex {
     .backgroundColor($r('app.color.design_surface_solid'))
     .border({ width: 1, color: $r('app.color.design_stroke') })
     .onClick(() => {
-      this.jumpToWorkspace({ 'expandPath': folder.path });
+      this.openWorkspace({ 'expandPath': folder.path });
     })
   }
 
@@ -723,7 +806,7 @@ struct DesignIndex {
     .backgroundColor($r('app.color.design_surface_solid'))
     .border({ width: 1, color: $r('app.color.design_stroke') })
     .onClick(() => {
-      this.jumpToWorkspace({ 'openPath': item.path });
+      this.openWorkspace({ 'openPath': item.path });
     })
   }
 
@@ -885,7 +968,7 @@ struct DesignIndex {
         .backgroundColor($r('app.color.design_accent_weak'))
         .margin({ top: 6 })
         .onClick(() => {
-          this.jumpToWorkspace({});
+          this.openWorkspace({});
         })
     }
     .width('100%')
@@ -934,7 +1017,7 @@ struct DesignIndex {
     .backgroundColor($r('app.color.design_surface_solid'))
     .border({ width: 1, color: $r('app.color.design_stroke') })
     .onClick(() => {
-      this.jumpToWorkspace({ 'openPath': row.path });
+      this.openWorkspace({ 'openPath': row.path });
     })
   }
 
@@ -1396,6 +1479,9 @@ struct DesignIndex {
       const nav = win.getWindowAvoidArea(window.AvoidAreaType.TYPE_NAVIGATION_INDICATOR);
       this.topInset = this.getUIContext().px2vp(system.topRect.height);
       this.bottomInset = this.getUIContext().px2vp(nav.bottomRect.height);
+      // 订阅键盘高度变化：键盘弹出时按高度抬升编辑区，使编辑工具栏紧贴键盘上沿。
+      this.mainWindow = win;
+      win.on('keyboardHeightChange', this.keyboardCallback);
     }).catch((error: BusinessError) => {
       LOG.error(`load window insets failed, code=${error.code}, message=${error.message}`);
     });
@@ -1420,12 +1506,89 @@ struct DesignIndex {
     });
   }
 
-  /** 携参跳转到工作台（pages/Index）。 */
-  private jumpToWorkspace(params: Record<string, Object>): void {
-    this.returningFromWorkspace = true;
-    router.pushUrl({ url: 'pages/Index', params: params }).catch((error: BusinessError): void => {
-      LOG.error(`push workspace failed, code=${error.code}, message=${error.message}`);
+  /** 打开页内工作台子视图：处理携带参数后切换 viewMode（无 router 跳转）。 */
+  private openWorkspace(params: Record<string, Object>): void {
+    const openPathRaw: Object | undefined = params['openPath'];
+    const openPath: string = typeof openPathRaw === 'string' ? openPathRaw : '';
+    if (openPath.length > 0) {
+      this.vm.openNote(openPath);
+    } else {
+      const expandPathRaw: Object | undefined = params['expandPath'];
+      const expandPath: string = typeof expandPathRaw === 'string' ? expandPathRaw : '';
+      if (expandPath.length > 0) {
+        for (const item of this.vm.treeItems) {
+          if (item.node.path === expandPath && item.node.isDir && !item.expanded) {
+            this.vm.toggleDir(expandPath);
+            break;
+          }
+        }
+      }
+    }
+    // 'action' 类参数（templates 等）待工作台弹层接入后处理。
+    this.getUIContext().animateTo({ duration: 300, curve: Curve.Friction }, () => {
+      this.viewMode = DesignViewMode.WORKSPACE;
     });
+  }
+
+  /** 退出工作台返回首页：复位键盘态并恢复会话（仓库/笔记/图谱/搜索）。 */
+  private exitWorkspace(): void {
+    this.setEditorKeyboardMode(false);
+    this.getUIContext().animateTo({ duration: 260, curve: Curve.Friction }, () => {
+      this.viewMode = DesignViewMode.HOME;
+    });
+    this.refreshAfterReturn();
+  }
+
+  /**
+   * 应用键盘避让策略。
+   * 窄屏（底部悬浮导航栏形态）下，编辑区进入键盘交互态时改用 NONE 避让：
+   * 页面不被压缩，仅编辑工具栏贴在键盘上沿；其余场景保持 RESIZE
+   * （弹窗与浮层不会被键盘遮挡）。
+   */
+  private applyKeyboardAvoidMode(): void {
+    const useNone: boolean = this.noneAvoidActive();
+    const mode: KeyboardAvoidMode = useNone ? KeyboardAvoidMode.NONE : KeyboardAvoidMode.RESIZE;
+    this.getUIContext().setKeyboardAvoidMode(mode);
+  }
+
+  /** NONE 避让是否生效（页面不被压缩，需手动让出键盘高度）。 */
+  private noneAvoidActive(): boolean {
+    return this.editorKeyboardMode && this.viewMode === DesignViewMode.WORKSPACE && !this.isWide;
+  }
+
+  /** 进入 / 退出编辑区键盘交互态。 */
+  private setEditorKeyboardMode(active: boolean): void {
+    if (this.editorKeyboardMode === active) {
+      return;
+    }
+    this.editorKeyboardMode = active;
+    this.applyKeyboardAvoidMode();
+  }
+
+  /** 自动同步开启时立即触发一次同步（保存 / 新建后调用）。 */
+  private syncNowIfAuto(): void {
+    if (!this.syncVm.autoSync || this.syncVm.serverUrl.length === 0) {
+      return;
+    }
+    this.syncVm.runSync(this.vm.currentVault);
+  }
+
+  /** 依据自动同步开关重建周期同步定时器。 */
+  private restartAutoSyncTimer(): void {
+    this.stopAutoSyncTimer();
+    if (!this.syncVm.autoSync || this.syncVm.serverUrl.length === 0) {
+      return;
+    }
+    this.autoSyncTimer = setInterval((): void => {
+      this.syncNowIfAuto();
+    }, DesignIndex.AUTO_SYNC_INTERVAL_MS);
+  }
+
+  private stopAutoSyncTimer(): void {
+    if (this.autoSyncTimer >= 0) {
+      clearInterval(this.autoSyncTimer);
+      this.autoSyncTimer = -1;
+    }
   }
 
   /** FAB 气泡菜单开关。 */
@@ -1466,7 +1629,7 @@ struct DesignIndex {
         return;
       }
       promptAction.showToast({ message: $r('app.string.design_editor_saved') });
-      this.jumpToWorkspace({ 'openPath': path });
+      this.openWorkspace({ 'openPath': path });
     });
   }
 
@@ -1474,7 +1637,7 @@ struct DesignIndex {
   private onBubbleAction(keyId: string): void {
     this.toggleFabMenu();
     if (this.vm.vaults.length === 0) {
-      this.jumpToWorkspace({});
+      this.openWorkspace({});
       return;
     }
     if (keyId === 'bubble_daily') {
@@ -1486,7 +1649,7 @@ struct DesignIndex {
       return;
     }
     if (keyId === 'bubble_template') {
-      this.jumpToWorkspace({ 'action': 'templates' });
+      this.openWorkspace({ 'action': 'templates' });
       return;
     }
   }
@@ -1494,12 +1657,12 @@ struct DesignIndex {
   /** 打开今天的日记并跳转工作台。 */
   private openDailyAndJump(): void {
     if (this.vm.vaults.length === 0) {
-      this.jumpToWorkspace({});
+      this.openWorkspace({});
       return;
     }
     this.vm.openDailyNote().then((ok: boolean): void => {
       if (ok) {
-        this.jumpToWorkspace({ 'openPath': this.vm.selectedPath });
+        this.openWorkspace({ 'openPath': this.vm.selectedPath });
       }
     });
   }
@@ -1507,11 +1670,11 @@ struct DesignIndex {
   /** 新建空白笔记并跳转工作台。 */
   private createNoteAndJump(): void {
     if (this.vm.vaults.length === 0) {
-      this.jumpToWorkspace({});
+      this.openWorkspace({});
       return;
     }
     this.vm.createNote().then((): void => {
-      this.jumpToWorkspace({ 'openPath': this.vm.selectedPath });
+      this.openWorkspace({ 'openPath': this.vm.selectedPath });
     });
   }
 
@@ -1522,7 +1685,7 @@ struct DesignIndex {
       return;
     }
     if (keyId === 'm_templates') {
-      this.jumpToWorkspace({ 'action': 'templates' });
+      this.openWorkspace({ 'action': 'templates' });
       return;
     }
     if (keyId === 'm_tags') {
@@ -1534,7 +1697,7 @@ struct DesignIndex {
   /** 更多页设置行入口分发。 */
   private onMoreEntry(keyId: string): void {
     if (keyId === 'm_workspace') {
-      this.jumpToWorkspace({});
+      this.openWorkspace({});
       return;
     }
     if (keyId === 'm_sync') {
@@ -1759,7 +1922,7 @@ struct DesignIndex {
       return;
     }
     if (hitPath === this.selectedGraphPath) {
-      this.jumpToWorkspace({ 'openPath': hitPath });
+      this.openWorkspace({ 'openPath': hitPath });
       return;
     }
     this.selectedGraphPath = hitPath;

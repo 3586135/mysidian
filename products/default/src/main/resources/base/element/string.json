@@ -1189,6 +1189,10 @@
       "value": "还没有笔记，点按右下角 + 开始创作"
     },
     {
+      "name": "design_workspace_empty",
+      "value": "未打开笔记，从首页选择一篇开始"
+    },
+    {
       "name": "design_onboard_title",
       "value": "欢迎使用 MySidian"
     },
