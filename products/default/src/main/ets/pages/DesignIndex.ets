@@ -3,8 +3,9 @@ import { picker } from '@kit.CoreFileKit';
 import { BusinessError } from '@kit.BasicServicesKit';
 import { TagRef } from '@ohos/domain';
 import { Logger } from '@ohos/common';
-import { SyncSettings } from '../view/SyncSettings';
-import { SettingsOverlay } from '../view/SettingsOverlay';
+import { SettingsSheet } from '../view/design/SettingsSheet';
+import { SyncSettingsSheet } from '../view/design/SyncSettingsSheet';
+import { VaultManagerSheet } from '../view/design/VaultManagerSheet';
 import { WorkspaceView, DesignViewMode, WorkspaceBackSignal } from '../view/design/WorkspaceView';
 import { CreateVaultRequest, DesignDialogKind, DialogHost } from '../view/design/DialogHost';
 import { GraphLayout } from '../viewmodel/GraphLayout';
@@ -217,8 +218,9 @@ struct DesignIndex {
   @Local fabLongPressConsumed: boolean = false; // 长按已消费标志（防误触发 click）
   @Local draftTitle: string = '';          // 快速笔记草稿标题
   @Local draftBody: string = '';           // 快速笔记草稿正文
-  @Local showSyncPanel: boolean = false;   // 同步设置浮层
-  @Local showSettingsPanel: boolean = false; // 外观与设置浮层
+  @Local showSyncPanel: boolean = false;   // 同步设置浮层（全局，首页/工作台共用）
+  @Local showSettingsPanel: boolean = false; // 外观与设置浮层（全局，首页/工作台共用）
+  @Local showVaultManager: boolean = false; // 仓库管理浮层（全局，首页/工作台共用）
   @Local viewMode: number = DesignViewMode.HOME; // 页面状态机：0 首页 / 1 工作台
   @Local showCreateVaultDialog: boolean = false; // 新建仓库对话框
   @Local keyboardHeight: number = 0;       // 键盘高度（vp，NONE 避让下让位）
@@ -332,16 +334,17 @@ struct DesignIndex {
 
   /** 系统返回键：工作台 → 信号下发工作台返回链；首页 → 依次关闭浮层 → 默认退出。 */
   onBackPress(): boolean {
-    if (this.viewMode === DesignViewMode.WORKSPACE) {
-      this.workspaceBackSignal.request();
+    // 全局浮层优先（首页 / 工作台两模式均可出现）。
+    if (this.showCreateVaultDialog) {
+      this.getUIContext().animateTo({ duration: 240, curve: Curve.Friction }, () => {
+        this.showCreateVaultDialog = false;
+      });
       return true;
     }
-    if (this.showFabMenu) {
-      this.toggleFabMenu();
-      return true;
-    }
-    if (this.showQuickEditor) {
-      this.closeQuickEditor();
+    if (this.showVaultManager) {
+      this.getUIContext().animateTo({ duration: 240, curve: Curve.Friction }, () => {
+        this.showVaultManager = false;
+      });
       return true;
     }
     if (this.showSyncPanel) {
@@ -354,6 +357,18 @@ struct DesignIndex {
       this.showSettingsPanel = false;
       return true;
     }
+    if (this.viewMode === DesignViewMode.WORKSPACE) {
+      this.workspaceBackSignal.request();
+      return true;
+    }
+    if (this.showFabMenu) {
+      this.toggleFabMenu();
+      return true;
+    }
+    if (this.showQuickEditor) {
+      this.closeQuickEditor();
+      return true;
+    }
     return false;
   }
 
@@ -364,12 +379,14 @@ struct DesignIndex {
       } else {
         WorkspaceView({
           vm: this.vm,
+          searchVm: this.searchVm,
           keyboardHeight: this.keyboardHeight,
           isWide: this.isWide,
           topInset: this.topInset,
           bottomInset: this.bottomInset,
           backSignal: this.workspaceBackSignal,
           launchAction: this.workspaceLaunchAction,
+          syncConfigured: this.syncVm.configured,
           onRequestExit: (): void => {
             this.exitWorkspace();
           },
@@ -382,9 +399,96 @@ struct DesignIndex {
           },
           onNoteMutated: (): void => {
             this.syncNowIfAuto();
+          },
+          onRequestCreateVault: (request: CreateVaultRequest): void => {
+            this.createVaultFromDialog(request);
+          },
+          onRequestSync: (): void => {
+            this.getUIContext().animateTo({ duration: 240, curve: Curve.Friction }, () => {
+              this.showSyncPanel = true;
+            });
           }
         })
         .transition(TransitionEffect.OPACITY.animation({ duration: 260, curve: Curve.Friction }))
+      }
+
+      // ===== 全局浮层（首页 / 工作台两模式共用）=====
+
+      // 新建仓库对话框（含 WebDAV 同步配置）
+      if (this.showCreateVaultDialog) {
+        DialogHost({
+          kind: DesignDialogKind.CREATE_VAULT,
+          vm: this.vm,
+          onClose: (): void => {
+            this.getUIContext().animateTo({ duration: 240, curve: Curve.Friction }, () => {
+              this.showCreateVaultDialog = false;
+            });
+          },
+          onCreateVault: (request: CreateVaultRequest): void => {
+            this.createVaultFromDialog(request);
+          }
+        })
+      }
+
+      // 同步设置浮层
+      if (this.showSyncPanel) {
+        SyncSettingsSheet({
+          syncVm: this.syncVm,
+          onImportCert: (): void => {
+            this.pickCertFile();
+          },
+          onAutoSyncChange: (value: boolean): void => {
+            this.syncVm.autoSync = value;
+            this.restartAutoSyncTimer();
+          },
+          onSyncNow: (): void => {
+            this.syncVm.runSync(this.vm.currentVault);
+          },
+          onClose: (): void => {
+            this.getUIContext().animateTo({ duration: 240, curve: Curve.Friction }, () => {
+              this.showSyncPanel = false;
+            });
+          }
+        })
+      }
+
+      // 外观与设置浮层
+      if (this.showSettingsPanel) {
+        SettingsSheet({
+          vm: this.vm,
+          onClose: (): void => {
+            this.showSettingsPanel = false;
+          },
+          onOpenVaultManager: (): void => {
+            this.showVaultManager = true;
+          },
+          onOpenSync: (): void => {
+            this.getUIContext().animateTo({ duration: 240, curve: Curve.Friction }, () => {
+              this.showSyncPanel = true;
+            });
+          },
+          onExport: (): void => {
+            this.exportVault();
+          }
+        })
+      }
+
+      // 仓库管理浮层
+      if (this.showVaultManager) {
+        VaultManagerSheet({
+          vm: this.vm,
+          onCreateVault: (): void => {
+            this.getUIContext().animateTo({ duration: 240, curve: Curve.Friction }, () => {
+              this.showVaultManager = false;
+              this.showCreateVaultDialog = true;
+            });
+          },
+          onClose: (): void => {
+            this.getUIContext().animateTo({ duration: 240, curve: Curve.Friction }, () => {
+              this.showVaultManager = false;
+            });
+          }
+        })
       }
     }
     .width('100%')
@@ -450,89 +554,6 @@ struct DesignIndex {
           this.closeQuickEditor();
         })
         this.editorSheet()
-      }
-
-      // 同步设置浮层（自含遮罩）
-      if (this.showSyncPanel) {
-        SyncSettings({
-          serverUrl: this.syncVm.serverUrl,
-          username: this.syncVm.username,
-          password: this.syncVm.password,
-          remoteRoot: this.syncVm.remoteRoot,
-          caCertPath: this.syncVm.caCertPath,
-          skipCertVerify: this.syncVm.skipCertVerify,
-          autoSync: this.syncVm.autoSync,
-          statusText: this.syncVm.statusText(),
-          conflicts: this.syncVm.conflicts,
-          onServerUrlChange: (value: string): void => {
-            this.syncVm.serverUrl = value;
-          },
-          onUsernameChange: (value: string): void => {
-            this.syncVm.username = value;
-          },
-          onPasswordChange: (value: string): void => {
-            this.syncVm.password = value;
-          },
-          onRemoteRootChange: (value: string): void => {
-            this.syncVm.remoteRoot = value;
-          },
-          onImportCert: (): void => {
-            this.pickCertFile();
-          },
-          onClearCert: (): void => {
-            this.syncVm.clearCert();
-          },
-          onSkipCertChange: (value: boolean): void => {
-            this.syncVm.skipCertVerify = value;
-          },
-          onAutoSyncChange: (value: boolean): void => {
-            this.syncVm.autoSync = value;
-            this.restartAutoSyncTimer();
-          },
-          onSyncNow: (): void => {
-            this.syncVm.runSync(this.vm.currentVault);
-          },
-          onClose: (): void => {
-            this.getUIContext().animateTo({ duration: 240, curve: Curve.Friction }, () => {
-              this.showSyncPanel = false;
-            });
-          }
-        })
-      }
-
-      // 外观与设置浮层（自含遮罩）
-      if (this.showSettingsPanel) {
-        SettingsOverlay({
-          fontSize: this.vm.fontSize,
-          onFontSizeChange: (size: number): void => {
-            this.vm.setFontSize(size);
-          },
-          onReindex: (): void => {
-            this.vm.rescanVault();
-          },
-          onExport: (): void => {
-            this.exportVault();
-          },
-          onClose: (): void => {
-            this.showSettingsPanel = false;
-          }
-        })
-      }
-
-      // 新建仓库对话框（含 WebDAV 同步配置）
-      if (this.showCreateVaultDialog) {
-        DialogHost({
-          kind: DesignDialogKind.CREATE_VAULT,
-          vm: this.vm,
-          onClose: (): void => {
-            this.getUIContext().animateTo({ duration: 240, curve: Curve.Friction }, () => {
-              this.showCreateVaultDialog = false;
-            });
-          },
-          onCreateVault: (request: CreateVaultRequest): void => {
-            this.createVaultFromDialog(request);
-          }
-        })
       }
     }
     .width('100%')

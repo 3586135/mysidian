@@ -1,11 +1,23 @@
-import { MdBlock, MdBlockType, OutlineEntry } from '@ohos/domain';
-import { EmptyState, FileTreeView, Logger } from '@ohos/common';
+import { picker } from '@kit.CoreFileKit';
+import { BusinessError } from '@kit.BasicServicesKit';
+import { MdBlock, MdBlockType, OutlineEntry, VaultInfo } from '@ohos/domain';
+import { FileTreeView, Logger } from '@ohos/common';
 import { MdDocumentView, MdDocumentViewController, MdInlineFlattener } from '@ohos/markdown';
+import { AppCommand } from '../../viewmodel/AppCommand';
+import { SearchViewModel } from '../../viewmodel/SearchViewModel';
 import { VaultViewModel } from '../../viewmodel/VaultViewModel';
-import { DesignDialogKind, DialogHost } from './DialogHost';
+import { CalendarSheet } from './CalendarSheet';
+import { CommandPalette } from './CommandPalette';
+import { CreateVaultRequest, DesignDialogKind, DialogHost } from './DialogHost';
 import { EditorPane } from './EditorPane';
+import { HandwriteSheet } from './HandwriteSheet';
 import { HistorySheet } from './HistorySheet';
 import { NoteInfoSheet } from './NoteInfoSheet';
+import { OnboardView } from './OnboardView';
+import { QuickNoteSheet } from './QuickNoteSheet';
+import { QuickSwitcher } from './QuickSwitcher';
+import { RecentNotesPanel } from './RecentNotesPanel';
+import { SearchOverlay } from './SearchOverlay';
 import { TemplateSheet } from './TemplateSheet';
 import { TrashSheet } from './TrashSheet';
 
@@ -41,6 +53,7 @@ export class WorkspaceBackSignal {
 @ComponentV2
 export struct WorkspaceView {
   @Param vm: VaultViewModel = new VaultViewModel();
+  @Param searchVm: SearchViewModel = new SearchViewModel();
   @Param keyboardHeight: number = 0;    // 键盘高度（vp，NONE 避让下让位）
   @Param isWide: boolean = false;       // 宽屏形态
   @Param topInset: number = 0;          // 状态栏避让高度（vp）
@@ -48,10 +61,17 @@ export struct WorkspaceView {
   @Param backSignal: WorkspaceBackSignal = new WorkspaceBackSignal();
   /** 启动动作（外部进入时携带，如 templates）。 */
   @Param launchAction: string = '';
+  /** 无仓库引导：WebDAV 是否已配置（同步入口描述文案）。 */
+  @Param syncConfigured: boolean = false;
   @Event onRequestExit: () => void = (): void => {};
   @Event onEditorKeyboardMode: (active: boolean) => void = (active: boolean): void => {};
   @Event onOpenTag: (tag: string) => void = (tag: string): void => {};
   @Event onNoteMutated: () => void = (): void => {};
+  /** 无仓库引导：新建仓库（含 WebDAV 配置）上抛 @Entry 落库。 */
+  @Event onRequestCreateVault: (request: CreateVaultRequest) => void =
+    (_request: CreateVaultRequest): void => {};
+  /** 无仓库引导：打开 WebDAV 同步设置。 */
+  @Event onRequestSync: () => void = (): void => {};
 
   /** 窄屏文件侧栏（抽屉）。 */
   @Local showSideBar: boolean = false;
@@ -71,9 +91,27 @@ export struct WorkspaceView {
   @Local showHistorySheet: boolean = false;
   /** 模板选择浮层。 */
   @Local showTemplateSheet: boolean = false;
+  /** 日历浮层。 */
+  @Local showCalendarSheet: boolean = false;
+  /** 手写速记浮层。 */
+  @Local showHandwriteSheet: boolean = false;
+  /** 快速闪念浮层。 */
+  @Local showQuickNoteSheet: boolean = false;
+  /** 命令面板浮层。 */
+  @Local showCommandPalette: boolean = false;
+  /** 快速切换器浮层。 */
+  @Local showQuickSwitcher: boolean = false;
+  /** 最近访问浮层。 */
+  @Local showRecentPanel: boolean = false;
+  /** 全文搜索浮层。 */
+  @Local showSearchOverlay: boolean = false;
+  /** 快速切换器当前处于分屏选择模式（选中笔记后进第二栏）。 */
+  @Local splitPickMode: boolean = false;
 
   private docController: MdDocumentViewController = new MdDocumentViewController();
   private secondaryDocController: MdDocumentViewController = new MdDocumentViewController();
+  /** 命令面板命令集。 */
+  private commands: AppCommand[] = [];
 
   aboutToAppear(): void {
     this.vm.onScrollToHeading = (heading: string): void => {
@@ -82,6 +120,7 @@ export struct WorkspaceView {
     this.vm.onNoteCreated = (path: string): void => {
       this.toast($r('app.string.msg_wiki_created'));
     };
+    this.commands = this.buildCommands();
     // 外部启动动作：templates → 直接打开模板选择浮层。
     if (this.launchAction === 'templates') {
       this.showTemplateSheet = true;
@@ -119,7 +158,7 @@ export struct WorkspaceView {
       })
       .hitTestBehavior(HitTestMode.Default)
 
-      // ===== 弹层（对话框 / 回收站 / 历史 / 模板）=====
+      // ===== 弹层（对话框 / 回收站 / 历史 / 模板 / 日历 / 手写 / 闪念 / 命令面板 / 快切 / 最近 / 搜索）=====
 
       if (this.dialogKind !== DesignDialogKind.NONE) {
         DialogHost({
@@ -132,6 +171,9 @@ export struct WorkspaceView {
           },
           onNoteMutated: (): void => {
             this.onNoteMutated();
+          },
+          onCreateVault: (request: CreateVaultRequest): void => {
+            this.onRequestCreateVault(request);
           }
         })
       }
@@ -174,6 +216,114 @@ export struct WorkspaceView {
           },
           onNoteMutated: (): void => {
             this.onNoteMutated();
+          }
+        })
+      }
+
+      if (this.showCalendarSheet) {
+        CalendarSheet({
+          vm: this.vm,
+          onClose: (): void => {
+            this.animAssign((): void => {
+              this.showCalendarSheet = false;
+            });
+          },
+          onNoteMutated: (): void => {
+            this.onNoteMutated();
+          }
+        })
+      }
+
+      if (this.showHandwriteSheet) {
+        HandwriteSheet({
+          onSave: (data: ArrayBuffer): void => {
+            this.saveHandwrite(data);
+          },
+          onClose: (): void => {
+            this.animAssign((): void => {
+              this.showHandwriteSheet = false;
+            });
+          }
+        })
+      }
+
+      if (this.showQuickNoteSheet) {
+        QuickNoteSheet({
+          vm: this.vm,
+          onClose: (): void => {
+            this.animAssign((): void => {
+              this.showQuickNoteSheet = false;
+            });
+          },
+          onNoteMutated: (): void => {
+            this.onNoteMutated();
+          }
+        })
+      }
+
+      if (this.showCommandPalette) {
+        CommandPalette({
+          commands: this.commands,
+          onRun: (command: AppCommand): void => {
+            this.animAssign((): void => {
+              this.showCommandPalette = false;
+            });
+            command.action();
+          },
+          onClose: (): void => {
+            this.animAssign((): void => {
+              this.showCommandPalette = false;
+            });
+          }
+        })
+      }
+
+      if (this.showQuickSwitcher) {
+        QuickSwitcher({
+          searchVm: this.searchVm,
+          onOpenNote: (path: string): void => {
+            this.openNoteFromQuickSwitcher(path);
+          },
+          onClose: (): void => {
+            this.animAssign((): void => {
+              this.showQuickSwitcher = false;
+              this.splitPickMode = false;
+            });
+          }
+        })
+      }
+
+      if (this.showRecentPanel) {
+        RecentNotesPanel({
+          vm: this.vm,
+          onOpenNote: (path: string): void => {
+            this.animAssign((): void => {
+              this.showRecentPanel = false;
+            });
+            this.openNoteFrom(path);
+          },
+          onClose: (): void => {
+            this.animAssign((): void => {
+              this.showRecentPanel = false;
+            });
+          }
+        })
+      }
+
+      if (this.showSearchOverlay) {
+        SearchOverlay({
+          vm: this.vm,
+          searchVm: this.searchVm,
+          onOpenNote: (path: string): void => {
+            this.animAssign((): void => {
+              this.showSearchOverlay = false;
+            });
+            this.openNoteFrom(path);
+          },
+          onClose: (): void => {
+            this.animAssign((): void => {
+              this.showSearchOverlay = false;
+            });
           }
         })
       }
@@ -503,10 +653,24 @@ export struct WorkspaceView {
     .alignItems(VerticalAlign.Center)
   }
 
-  /** 更多菜单：文件操作与弹层入口。 */
+  /** 更多菜单：文件操作与弹层入口（对标旧工作台全量菜单）。 */
   @Builder
   moreMenuBuilder() {
     Menu() {
+      MenuItem({ content: $r('app.string.menu_quick_switch') })
+        .onClick(() => {
+          this.openQuickSwitcher();
+        })
+      MenuItem({ content: $r('app.string.menu_command_palette') })
+        .onClick(() => {
+          this.animAssign((): void => {
+            this.showCommandPalette = true;
+          });
+        })
+      MenuItem({ content: $r('app.string.action_search') })
+        .onClick(() => {
+          this.openSearchOverlay();
+        })
       MenuItem({ content: $r('app.string.action_new_note') })
         .onClick(() => {
           this.vm.createNote().then((): void => {
@@ -525,6 +689,22 @@ export struct WorkspaceView {
         .onClick(() => {
           this.openMoveDialog();
         })
+      MenuItem({ content: $r('app.string.action_trash') })
+        .onClick(() => {
+          this.confirmTrashNote();
+        })
+      MenuItem({ content: $r('app.string.action_trash_list') })
+        .onClick(() => {
+          this.animAssign((): void => {
+            this.showTrashSheet = true;
+          });
+        })
+      MenuItem({ content: $r('app.string.action_calendar') })
+        .onClick(() => {
+          this.animAssign((): void => {
+            this.showCalendarSheet = true;
+          });
+        })
       MenuItem({ content: $r('app.string.action_template') })
         .onClick(() => {
           this.animAssign((): void => {
@@ -537,11 +717,33 @@ export struct WorkspaceView {
             this.showHistorySheet = true;
           });
         })
-      MenuItem({ content: $r('app.string.action_trash') })
+      MenuItem({ content: $r('app.string.action_split') })
+        .onClick(() => {
+          this.openSplitPicker();
+        })
+      MenuItem({ content: $r('app.string.action_share') })
         .onClick(() => {
           this.animAssign((): void => {
-            this.showTrashSheet = true;
+            this.showQuickNoteSheet = true;
           });
+        })
+      MenuItem({ content: $r('app.string.action_handwrite') })
+        .onClick(() => {
+          this.animAssign((): void => {
+            this.showHandwriteSheet = true;
+          });
+        })
+      MenuItem({ content: $r('app.string.action_import_vault') })
+        .onClick(() => {
+          this.importVault();
+        })
+      MenuItem({ content: $r('app.string.action_export_vault') })
+        .onClick(() => {
+          this.exportVault(this.vm.currentVault);
+        })
+      MenuItem({ content: $r('app.string.recent_notes_title') })
+        .onClick(() => {
+          this.openRecentPanel();
         })
     }
   }
@@ -631,40 +833,24 @@ export struct WorkspaceView {
     })
   }
 
-  /** 仓库为空时的占位视图（完整引导流随新建仓库弹层在阶段 4 接入）。 */
+  /** 仓库为空时的引导视图：新建 / 导入 / WebDAV 同步三入口。 */
   @Builder
   emptyVaultView() {
-    Column() {
-      Row() {
-        SymbolGlyph($r('sys.symbol.chevron_left'))
-          .fontSize(22)
-          .fontColor([$r('app.color.design_text_primary')])
-          .width(40)
-          .height(40)
-          .onClick(() => {
-            this.onRequestExit();
-          })
-        Text($r('app.string.app_title'))
-          .fontSize(22)
-          .fontWeight(FontWeight.Bold)
-          .fontColor($r('app.color.design_text_primary'))
-          .layoutWeight(1)
+    OnboardView({
+      syncConfigured: this.syncConfigured,
+      onRequestExit: (): void => {
+        this.onRequestExit();
+      },
+      onCreateVault: (): void => {
+        this.openDialog(DesignDialogKind.CREATE_VAULT);
+      },
+      onImportVault: (): void => {
+        this.importVault();
+      },
+      onOpenSync: (): void => {
+        this.onRequestSync();
       }
-      .width('100%')
-      .height(56)
-      .padding({ left: 12, right: 12 })
-      .alignItems(VerticalAlign.Center)
-
-      EmptyState({
-        title: $r('app.string.welcome_title'),
-        description: $r('app.string.welcome_desc'),
-        icon: $r('sys.symbol.doc_plaintext'),
-        iconColor: $r('app.color.design_text_secondary')
-      })
-      .layoutWeight(1)
-    }
-    .width('100%')
-    .height('100%')
+    })
   }
 
   // ==================== 布局判定与交互 ====================
@@ -707,6 +893,49 @@ export struct WorkspaceView {
     if (this.showTemplateSheet) {
       this.animAssign((): void => {
         this.showTemplateSheet = false;
+      });
+      return;
+    }
+    if (this.showCalendarSheet) {
+      this.animAssign((): void => {
+        this.showCalendarSheet = false;
+      });
+      return;
+    }
+    if (this.showQuickNoteSheet) {
+      this.animAssign((): void => {
+        this.showQuickNoteSheet = false;
+      });
+      return;
+    }
+    if (this.showHandwriteSheet) {
+      this.animAssign((): void => {
+        this.showHandwriteSheet = false;
+      });
+      return;
+    }
+    if (this.showSearchOverlay) {
+      this.animAssign((): void => {
+        this.showSearchOverlay = false;
+      });
+      return;
+    }
+    if (this.showQuickSwitcher) {
+      this.animAssign((): void => {
+        this.showQuickSwitcher = false;
+        this.splitPickMode = false;
+      });
+      return;
+    }
+    if (this.showRecentPanel) {
+      this.animAssign((): void => {
+        this.showRecentPanel = false;
+      });
+      return;
+    }
+    if (this.showCommandPalette) {
+      this.animAssign((): void => {
+        this.showCommandPalette = false;
       });
       return;
     }
@@ -894,6 +1123,226 @@ export struct WorkspaceView {
       this.toast($r('app.string.msg_move_done'));
       this.onNoteMutated();
     });
+  }
+
+  // ==================== 快切 / 搜索 / 最近 / 命令面板 ====================
+
+  /** 打开快速切换器（笔记跳转）。 */
+  private openQuickSwitcher(): void {
+    this.searchVm.loadNotes(this.vm.currentVault.id);
+    this.animAssign((): void => {
+      this.showQuickSwitcher = true;
+    });
+  }
+
+  /** 打开分屏选择：复用快速切换器选择第二栏笔记。 */
+  private openSplitPicker(): void {
+    this.splitPickMode = true;
+    this.searchVm.loadNotes(this.vm.currentVault.id);
+    this.animAssign((): void => {
+      this.showQuickSwitcher = true;
+    });
+  }
+
+  /** 快速切换器选中笔记：分屏模式下进第二栏，否则直接打开。 */
+  private openNoteFromQuickSwitcher(path: string): void {
+    const splitPick: boolean = this.splitPickMode;
+    this.animAssign((): void => {
+      this.showQuickSwitcher = false;
+      this.splitPickMode = false;
+    });
+    if (splitPick) {
+      this.vm.openSecondary(path);
+      return;
+    }
+    this.openNoteFrom(path);
+  }
+
+  /** 打开全文搜索浮层并展示初始结果。 */
+  private openSearchOverlay(): void {
+    this.animAssign((): void => {
+      this.showSearchOverlay = true;
+    });
+    this.searchVm.search(this.vm.currentVault.id, '');
+  }
+
+  /** 打开最近访问浮层。 */
+  private openRecentPanel(): void {
+    this.vm.loadRecentNotes();
+    this.animAssign((): void => {
+      this.showRecentPanel = true;
+    });
+  }
+
+  /** 命令面板命令集（对标旧 buildCommands）。 */
+  private buildCommands(): AppCommand[] {
+    const commands: AppCommand[] = [];
+    const search: AppCommand = new AppCommand();
+    search.id = 'search';
+    search.title = '搜索全文';
+    search.action = (): void => {
+      this.openSearchOverlay();
+    };
+    commands.push(search);
+
+    const quick: AppCommand = new AppCommand();
+    quick.id = 'quick';
+    quick.title = '快速跳转到笔记';
+    quick.action = (): void => {
+      this.openQuickSwitcher();
+    };
+    commands.push(quick);
+
+    const newNote: AppCommand = new AppCommand();
+    newNote.id = 'new_note';
+    newNote.title = '新建笔记';
+    newNote.action = (): void => {
+      this.vm.createNote().then((): void => {
+        this.onNoteMutated();
+      });
+    };
+    commands.push(newNote);
+
+    const recentNote: AppCommand = new AppCommand();
+    recentNote.id = 'open_recent_note';
+    recentNote.title = '最近访问的笔记';
+    recentNote.action = (): void => {
+      this.openRecentPanel();
+    };
+    commands.push(recentNote);
+
+    const dailyNote: AppCommand = new AppCommand();
+    dailyNote.id = 'open_daily_note';
+    dailyNote.title = '打开今天的日记';
+    dailyNote.action = (): void => {
+      this.vm.openDailyNote().then((): void => {
+        this.onNoteMutated();
+      });
+    };
+    commands.push(dailyNote);
+
+    const exportCommand: AppCommand = new AppCommand();
+    exportCommand.id = 'export';
+    exportCommand.title = '导出仓库为 zip';
+    exportCommand.action = (): void => {
+      this.exportVault(this.vm.currentVault);
+    };
+    commands.push(exportCommand);
+
+    const reindex: AppCommand = new AppCommand();
+    reindex.id = 'reindex';
+    reindex.title = '重建索引';
+    reindex.action = (): void => {
+      this.vm.rescanVault();
+      this.toast($r('app.string.msg_reindex_done'));
+    };
+    commands.push(reindex);
+
+    return commands;
+  }
+
+  // ==================== 手写 / 回收站 / 仓库导入导出 ====================
+
+  /** 保存手写内容为附件并插入编辑器（非编辑态先进入编辑，避免插入丢失）。 */
+  private saveHandwrite(data: ArrayBuffer): void {
+    this.vm.saveImageAttachment(data, 'png').then((relative: string): void => {
+      this.animAssign((): void => {
+        this.showHandwriteSheet = false;
+      });
+      if (relative.length === 0) {
+        return;
+      }
+      const name: string = relative.substring(relative.lastIndexOf('/') + 1);
+      const insert: string = `![[${name}]]`;
+      if (this.vm.editMode) {
+        this.vm.onInsertTextAtCaret(insert, false);
+      } else {
+        // 预览态下无编辑器：先进入编辑，待挂载完成后把图片追加到文末。
+        this.vm.startEdit();
+        setTimeout((): void => {
+          this.vm.onInsertTextAtCaret(insert, true);
+        }, 150);
+      }
+      this.toast($r('app.string.msg_handwrite_saved'));
+    });
+  }
+
+  /** 确认把当前笔记移入回收站。 */
+  private confirmTrashNote(): void {
+    if (this.vm.selectedPath.length === 0) {
+      this.toast($r('app.string.msg_no_note_selected'));
+      return;
+    }
+    const path: string = this.vm.selectedPath;
+    AlertDialog.show({
+      title: $r('app.string.dialog_trash_title'),
+      message: $r('app.string.dialog_trash_msg'),
+      primaryButton: {
+        value: $r('app.string.dialog_cancel'),
+        action: (): void => {
+        }
+      },
+      secondaryButton: {
+        value: $r('app.string.action_trash'),
+        fontColor: $r('app.color.design_danger'),
+        action: (): void => {
+          this.vm.trashNote(path).then((ok: boolean): void => {
+            if (!ok) {
+              this.toast($r('app.string.msg_trash_failed'));
+              return;
+            }
+            this.toast($r('app.string.msg_trash_done'));
+            this.onNoteMutated();
+          });
+        }
+      },
+      alignment: DialogAlignment.Bottom
+    });
+  }
+
+  /** 导入 zip 仓库。 */
+  private async importVault(): Promise<void> {
+    const context = this.getUIContext().getHostContext();
+    if (context === undefined) {
+      return;
+    }
+    try {
+      const documentPicker = new picker.DocumentViewPicker(context);
+      const options = new picker.DocumentSelectOptions();
+      options.maxSelectNumber = 1;
+      const uris: string[] = await documentPicker.select(options);
+      if (uris.length === 0) {
+        return;
+      }
+      await this.vm.importVault(uris[0], 'imported');
+      this.onNoteMutated();
+    } catch (error) {
+      const err = error as BusinessError;
+      LOG.error(`import vault failed, code=${err.code}, message=${err.message}`);
+      this.toast($r('app.string.msg_import_failed'));
+    }
+  }
+
+  /** 导出仓库为 zip。 */
+  private async exportVault(vault: VaultInfo): Promise<void> {
+    const context = this.getUIContext().getHostContext();
+    if (context === undefined) {
+      return;
+    }
+    try {
+      const documentPicker = new picker.DocumentViewPicker(context);
+      const options = new picker.DocumentSaveOptions();
+      options.newFileNames = [`${vault.name}.zip`];
+      const uris: string[] = await documentPicker.save(options);
+      if (uris.length === 0) {
+        return;
+      }
+      await this.vm.exportVault(vault, uris[0]);
+    } catch (error) {
+      const err = error as BusinessError;
+      LOG.error(`export vault failed, code=${err.code}, message=${err.message}`);
+      this.toast($r('app.string.msg_export_failed'));
+    }
   }
 
   /** 轻提示（使用 UIContext 的 PromptAction，避免全局 promptAction 的弃用告警）。 */

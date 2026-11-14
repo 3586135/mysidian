@@ -60,6 +60,24 @@ export struct EditorPane {
   /** 屏幕左右边缘系统返回手势保留区宽度（vp）。 */
   private static readonly EDGE_GESTURE_ZONE: number = 32;
 
+  aboutToAppear(): void {
+    // 注册 VM 注入钩子：光标处插入文本（手写图片等外部内容）。
+    this.vm.onInsertTextAtCaret = (text: string, atEnd: boolean): void => {
+      if (!this.vm.editMode) {
+        return;
+      }
+      if (atEnd) {
+        // 预览态切编辑后插入：光标先落到文末再写。
+        this.textEditorController.caretPosition(this.vm.draftBuffer.length);
+      }
+      this.insertFormat(text);
+    };
+  }
+
+  aboutToDisappear(): void {
+    this.vm.onInsertTextAtCaret = (text: string, atEnd: boolean): void => {};
+  }
+
   /** 切换笔记 / 进出编辑时清空与旧会话绑定的撤销栈与补全浮层。 */
   @Monitor('vm.selectedPath', 'vm.editMode')
   onNoteOrEditModeChanged(): void {

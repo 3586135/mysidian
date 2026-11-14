@@ -102,6 +102,9 @@ export class VaultViewModel {
   public onScrollToHeading: (heading: string) => void = (heading: string): void => {};
   /** 自动创建笔记回调：由页面注入（用于提示用户）。 */
   public onNoteCreated: (path: string) => void = (path: string): void => {};
+  /** 在光标处插入文本回调：由编辑器注入（手写图片插入用；atEnd 表示追加到文末）。 */
+  public onInsertTextAtCaret: (text: string, atEnd: boolean) => void =
+    (text: string, atEnd: boolean): void => {};
 
   /** 绑定 UI 上下文，用于驱动界面过渡动画。 */
   public attachUi(ui: UIContext): void {
