@@ -5,7 +5,7 @@ import { TagRef } from '@ohos/domain';
 import { Logger } from '@ohos/common';
 import { SyncSettings } from '../view/SyncSettings';
 import { SettingsOverlay } from '../view/SettingsOverlay';
-import { WorkspaceView, DesignViewMode } from '../view/design/WorkspaceView';
+import { WorkspaceView, DesignViewMode, WorkspaceBackSignal } from '../view/design/WorkspaceView';
 import { GraphLayout } from '../viewmodel/GraphLayout';
 import { DesignPalette } from '../viewmodel/DesignPalette';
 import { SearchViewModel } from '../viewmodel/SearchViewModel';
@@ -241,6 +241,8 @@ struct DesignIndex {
   };
   /** 自动同步周期定时器句柄。 */
   private autoSyncTimer: number = -1;
+  /** 工作台返回键信号（onBackPress → WorkspaceView 返回链）。 */
+  private workspaceBackSignal: WorkspaceBackSignal = new WorkspaceBackSignal();
   /** 自动同步周期。 */
   private static readonly AUTO_SYNC_INTERVAL_MS: number = 30 * 60 * 1000;
 
@@ -324,10 +326,10 @@ struct DesignIndex {
     }
   }
 
-  /** 系统返回键：工作台 → 返回首页；首页 → 依次关闭浮层 → 默认退出。 */
+  /** 系统返回键：工作台 → 信号下发工作台返回链；首页 → 依次关闭浮层 → 默认退出。 */
   onBackPress(): boolean {
     if (this.viewMode === DesignViewMode.WORKSPACE) {
-      this.exitWorkspace();
+      this.workspaceBackSignal.request();
       return true;
     }
     if (this.showFabMenu) {
@@ -362,11 +364,19 @@ struct DesignIndex {
           isWide: this.isWide,
           topInset: this.topInset,
           bottomInset: this.bottomInset,
+          backSignal: this.workspaceBackSignal,
           onRequestExit: (): void => {
             this.exitWorkspace();
           },
           onEditorKeyboardMode: (active: boolean): void => {
             this.setEditorKeyboardMode(active);
+          },
+          onOpenTag: (tag: string): void => {
+            this.exitWorkspace();
+            this.openWorkspaceTagSearch(tag);
+          },
+          onNoteMutated: (): void => {
+            this.syncNowIfAuto();
           }
         })
         .transition(TransitionEffect.OPACITY.animation({ duration: 260, curve: Curve.Friction }))
@@ -1719,6 +1729,19 @@ struct DesignIndex {
       this.searchVm.setMode(this.vm.currentVault.id, 1).then((): void => {
         this.searchKeyword = this.searchVm.keyword;
         this.rebuildSearchRows();
+      });
+    }
+  }
+
+  /** 工作台上报的标签点击：回首页搜索页并定位该标签下的笔记。 */
+  private openWorkspaceTagSearch(tag: string): void {
+    this.changeTab(1);
+    if (this.vm.currentVault.id > 0) {
+      this.searchVm.setMode(this.vm.currentVault.id, 1).then((): void => {
+        this.searchVm.selectTag(this.vm.currentVault.id, tag).then((): void => {
+          this.searchKeyword = this.searchVm.keyword;
+          this.rebuildSearchRows();
+        });
       });
     }
   }
