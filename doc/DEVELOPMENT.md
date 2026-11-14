@@ -32,7 +32,16 @@
 
 - 编辑模式底部工具栏（`editToolbar`）：标题/加粗/列表/任务/有序列表/分隔线快捷插入；TextArea 聚焦显示、失焦隐藏。
 
-## 近期变更（未发布）
+## 近期变更（未发布，v0.4.0）
+
+### Material 3 首页改版：DesignIndex（2026-11-14）
+
+- **新首页 `pages/DesignIndex.ets`**（约 1785 行，`@Entry`）：Material 3 悬浮分离式胶囊底栏（左侧胶囊页签含滑块指示器 + 右侧 FAB），四个页签——文件（根级目录卡片 + 最近笔记）、搜索（全文/标签/属性三模式 chips，头/命中/尾三段高亮拼接，250ms 防抖）、图谱（力导向布局 Canvas 绘制，选中节点放大加光晕、关联边高亮，再点选中节点跳工作台打开）、更多（同步/导出/模板等入口）。
+- **入口切换**：`DefaultAbility.loadContent` 改为 `pages/DesignIndex`；原 `pages/Index` 降级为编辑工作台，经 `router.pushUrl` 携参进入。`main_pages.json` 注册两个页面。
+- **首页→工作台路由参数**（`Index.handleLaunchParams`，`vm.init` 完成后处理、防重入）：`openPath` 直接打开笔记、`expandPath` 展开目录、`action`（`templates`/`vaults`/`settings`）打开指定面板。
+- **VaultViewModel 扩展**：`RootFolderSummary`（根级目录笔记数摘要 `rootFolders`，`refreshRootFolders` 在 `refreshTree` 后汇总）、`restoreSession()`（从工作台返回首页后恢复上次会话）、`createQuickNote()`（首页闪念/快速笔记：标题非法字符过滤、同名追加时间戳、空标题用「闪念-时间戳」）。
+- **资源**：string.json +452 行；color.json 深浅色各 +48 行（design_* 系列）；版本 0.3.1 → 0.4.0（versionCode 1000007）；`.gitignore` 增加 `/dist/`。
+- **验证**（2026-11-14）：`devecocli check arkts` 无真实错误（仅剩已知资源名误报）；`devecocli build` 成功；三台模拟器（5555 Mate 90 Pro / 5559 Mate X7 / 5557 MatePad）装机启动成功，无 faultlog，hilog 确认 "Succeeded in loading the content"，截图像素分析为暗色主题且内容丰富（非白屏）。a11y 树仍只返回根节点（已知模拟器环境问题），点击级交互验证待模拟器恢复后补验；多模态截图识别工具本轮 400 报错不可用。
 
 ### 全面 bug 排查修复（2026-11-12）
 

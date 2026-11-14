@@ -795,6 +795,458 @@
     {
       "name": "msg_handwrite_saved",
       "value": "手写内容已插入笔记"
+    },
+    {
+      "name": "design_tab_files",
+      "value": "文件"
+    },
+    {
+      "name": "design_tab_search",
+      "value": "搜索"
+    },
+    {
+      "name": "design_tab_graph",
+      "value": "图谱"
+    },
+    {
+      "name": "design_tab_more",
+      "value": "更多"
+    },
+    {
+      "name": "design_vault_name",
+      "value": "Personal Vault"
+    },
+    {
+      "name": "design_collapse",
+      "value": "收起"
+    },
+    {
+      "name": "design_folder_daily",
+      "value": "00-每日笔记"
+    },
+    {
+      "name": "design_folder_tech",
+      "value": "01-技术沉淀"
+    },
+    {
+      "name": "design_folder_reading",
+      "value": "02-读书笔记"
+    },
+    {
+      "name": "design_note1_title",
+      "value": "ArkTS 状态管理实战"
+    },
+    {
+      "name": "design_note1_summary",
+      "value": "@Local 与 @ObservedV2 的深浅观察边界，V1/V2 混用踩坑记录。"
+    },
+    {
+      "name": "design_note1_time",
+      "value": "今天 09:24"
+    },
+    {
+      "name": "design_note2_title",
+      "value": "鸿蒙应用架构笔记"
+    },
+    {
+      "name": "design_note2_summary",
+      "value": "模块化 HAR 拆分与 HSP 共享包的选型对比，跨包状态共享方案。"
+    },
+    {
+      "name": "design_note2_time",
+      "value": "昨天 21:03"
+    },
+    {
+      "name": "design_note3_title",
+      "value": "Markdown 渲染引擎设计"
+    },
+    {
+      "name": "design_note3_summary",
+      "value": "块级解析器 + 行内解析器的两阶段管线，流式渲染与增量索引。"
+    },
+    {
+      "name": "design_note3_time",
+      "value": "昨天 14:40"
+    },
+    {
+      "name": "design_note4_title",
+      "value": "读书笔记：卡片笔记法"
+    },
+    {
+      "name": "design_note4_summary",
+      "value": "渐进式总结的三个层级：摘录、转述、产出，链接先行。"
+    },
+    {
+      "name": "design_note4_time",
+      "value": "11-10"
+    },
+    {
+      "name": "design_search_hint",
+      "value": "搜索笔记、标签、双链…"
+    },
+    {
+      "name": "design_filter_tag",
+      "value": "#标签"
+    },
+    {
+      "name": "design_filter_wikilink",
+      "value": "[[双链]]"
+    },
+    {
+      "name": "design_filter_todo",
+      "value": "未完成待办"
+    },
+    {
+      "name": "design_filter_recent",
+      "value": "最近修改"
+    },
+    {
+      "name": "design_hit1_title_head",
+      "value": ""
+    },
+    {
+      "name": "design_hit1_title_hit",
+      "value": "ArkTS"
+    },
+    {
+      "name": "design_hit1_title_tail",
+      "value": " 笔记引擎架构建模"
+    },
+    {
+      "name": "design_hit1_body_head",
+      "value": "自研 Markdown 引擎的分层架构：解析层用 "
+    },
+    {
+      "name": "design_hit1_body_hit",
+      "value": "ArkTS 纯静态类型实现"
+    },
+    {
+      "name": "design_hit1_body_tail",
+      "value": "，渲染层映射 ArkUI 组件树…"
+    },
+    {
+      "name": "design_hit1_time",
+      "value": "今天 09:24"
+    },
+    {
+      "name": "design_hit2_title_head",
+      "value": ""
+    },
+    {
+      "name": "design_hit2_title_hit",
+      "value": "ArkTS"
+    },
+    {
+      "name": "design_hit2_title_tail",
+      "value": " 性能优化清单"
+    },
+    {
+      "name": "design_hit2_body_head",
+      "value": "减少 ForEach 全量重建、@Trace 精细追踪、"
+    },
+    {
+      "name": "design_hit2_body_hit",
+      "value": "懒加载节点复用"
+    },
+    {
+      "name": "design_hit2_body_tail",
+      "value": "与布局测量缓存…"
+    },
+    {
+      "name": "design_hit2_time",
+      "value": "昨天 21:03"
+    },
+    {
+      "name": "design_hit3_title_head",
+      "value": "从 TypeScript 到 "
+    },
+    {
+      "name": "design_hit3_title_hit",
+      "value": "ArkTS"
+    },
+    {
+      "name": "design_hit3_title_tail",
+      "value": " 迁移指南"
+    },
+    {
+      "name": "design_hit3_body_head",
+      "value": "严格模式禁用 any 与解构赋值，对象字面量必须"
+    },
+    {
+      "name": "design_hit3_body_hit",
+      "value": "显式类型上下文"
+    },
+    {
+      "name": "design_hit3_body_tail",
+      "value": "，类模型替代结构类型…"
+    },
+    {
+      "name": "design_hit3_time",
+      "value": "11-08"
+    },
+    {
+      "name": "design_graph_center",
+      "value": "ArkTS 引擎设计"
+    },
+    {
+      "name": "design_graph_n1",
+      "value": "状态管理"
+    },
+    {
+      "name": "design_graph_n2",
+      "value": "渲染管线"
+    },
+    {
+      "name": "design_graph_n3",
+      "value": "双链实现"
+    },
+    {
+      "name": "design_graph_n4",
+      "value": "搜索索引"
+    },
+    {
+      "name": "design_graph_n5",
+      "value": "同步引擎"
+    },
+    {
+      "name": "design_graph_n6",
+      "value": "模板系统"
+    },
+    {
+      "name": "design_graph_hint",
+      "value": "点按节点高亮，再次点按打开笔记"
+    },
+    {
+      "name": "design_editor_title",
+      "value": "新建笔记"
+    },
+    {
+      "name": "design_editor_cancel",
+      "value": "取消"
+    },
+    {
+      "name": "design_editor_save",
+      "value": "保存"
+    },
+    {
+      "name": "design_editor_title_hint",
+      "value": "笔记标题"
+    },
+    {
+      "name": "design_editor_body_hint",
+      "value": "支持 Markdown 语法…"
+    },
+    {
+      "name": "design_editor_insert_title",
+      "value": "标题"
+    },
+    {
+      "name": "design_editor_insert_wikilink",
+      "value": "双链"
+    },
+    {
+      "name": "design_editor_insert_todo",
+      "value": "待办"
+    },
+    {
+      "name": "design_fab_daily",
+      "value": "今日日记"
+    },
+    {
+      "name": "design_fab_new_note",
+      "value": "新建空白笔记"
+    },
+    {
+      "name": "design_fab_voice",
+      "value": "语音闪念"
+    },
+    {
+      "name": "design_more_section_plugins",
+      "value": "核心插件"
+    },
+    {
+      "name": "design_more_daily",
+      "value": "今日日记"
+    },
+    {
+      "name": "design_more_daily_sub",
+      "value": "每日速记，一键落笔"
+    },
+    {
+      "name": "design_more_templates",
+      "value": "模板库"
+    },
+    {
+      "name": "design_more_templates_sub",
+      "value": "会议纪要 · 周报 · 读书笔记"
+    },
+    {
+      "name": "design_more_tags",
+      "value": "标签管理器"
+    },
+    {
+      "name": "design_more_tags_sub",
+      "value": "共 %d 个标签"
+    },
+    {
+      "name": "design_more_section_settings",
+      "value": "设置"
+    },
+    {
+      "name": "design_more_sync",
+      "value": "WebDAV / Git 同步"
+    },
+    {
+      "name": "design_more_sync_sub",
+      "value": "已同步 · 2 分钟前"
+    },
+    {
+      "name": "design_more_appearance",
+      "value": "外观与编辑器设置"
+    },
+    {
+      "name": "design_more_appearance_sub",
+      "value": "主题 · 字号 · 编辑器"
+    },
+    {
+      "name": "design_tag_arch",
+      "value": "架构"
+    },
+    {
+      "name": "design_tag_hm",
+      "value": "鸿蒙"
+    },
+    {
+      "name": "design_tag_engine",
+      "value": "引擎"
+    },
+    {
+      "name": "design_tag_method",
+      "value": "方法"
+    },
+    {
+      "name": "design_tag_perf",
+      "value": "性能"
+    },
+    {
+      "name": "design_files_recent",
+      "value": "最近编辑"
+    },
+    {
+      "name": "design_folder_daily_count",
+      "value": "12 篇"
+    },
+    {
+      "name": "design_folder_tech_count",
+      "value": "28 篇"
+    },
+    {
+      "name": "design_folder_reading_count",
+      "value": "9 篇"
+    },
+    {
+      "name": "design_search_count",
+      "value": "找到 3 篇相关笔记"
+    },
+    {
+      "name": "design_search_mode_full",
+      "value": "全文"
+    },
+    {
+      "name": "design_search_mode_tag",
+      "value": "标签"
+    },
+    {
+      "name": "design_search_mode_prop",
+      "value": "属性"
+    },
+    {
+      "name": "design_search_result_count",
+      "value": "找到 %d 篇笔记"
+    },
+    {
+      "name": "design_search_no_result",
+      "value": "未找到相关笔记"
+    },
+    {
+      "name": "design_search_tag_hint",
+      "value": "选择标签，查看关联笔记"
+    },
+    {
+      "name": "design_search_prop_hint",
+      "value": "输入「属性名:属性值」检索笔记"
+    },
+    {
+      "name": "design_need_vault",
+      "value": "请先创建仓库"
+    },
+    {
+      "name": "design_files_folder_count",
+      "value": "%d 篇"
+    },
+    {
+      "name": "design_files_empty",
+      "value": "还没有笔记，点按右下角 + 开始创作"
+    },
+    {
+      "name": "design_onboard_title",
+      "value": "欢迎使用 MySidian"
+    },
+    {
+      "name": "design_onboard_sub",
+      "value": "创建第一个仓库，开始你的笔记之旅"
+    },
+    {
+      "name": "design_onboard_create",
+      "value": "创建仓库"
+    },
+    {
+      "name": "design_time_now",
+      "value": "刚刚"
+    },
+    {
+      "name": "design_time_min",
+      "value": "%d 分钟前"
+    },
+    {
+      "name": "design_time_hour",
+      "value": "%d 小时前"
+    },
+    {
+      "name": "design_time_yesterday",
+      "value": "昨天"
+    },
+    {
+      "name": "design_more_workspace",
+      "value": "工作台"
+    },
+    {
+      "name": "design_more_workspace_sub",
+      "value": "完整编辑器与全部功能"
+    },
+    {
+      "name": "design_fab_template",
+      "value": "从模板新建"
+    },
+    {
+      "name": "design_editor_saved",
+      "value": "已保存"
+    },
+    {
+      "name": "design_graph_source",
+      "value": "关系图谱"
+    },
+    {
+      "name": "design_graph_empty",
+      "value": "先打开一篇笔记，这里会展示它的关联关系"
+    },
+    {
+      "name": "design_more_sync_configured",
+      "value": "已配置 WebDAV 服务器"
+    },
+    {
+      "name": "design_more_sync_not_configured",
+      "value": "未配置 WebDAV 服务器"
     }
   ]
 }

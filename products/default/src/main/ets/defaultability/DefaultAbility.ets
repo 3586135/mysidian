@@ -20,7 +20,8 @@ export default class DefaultAbility extends UIAbility {
     // Main window is created, set main page for this ability
     hilog.info(DOMAIN, 'testTag', '%{public}s', 'Ability onWindowStageCreate');
 
-    windowStage.loadContent('pages/Index', (err) => {
+    // 正式首页：Material 3 设计页（DesignIndex），编辑工作台在 pages/Index。
+    windowStage.loadContent('pages/DesignIndex', (err) => {
       if (err.code) {
         hilog.error(DOMAIN, 'testTag', 'Failed to load the content. Cause: %{public}s', JSON.stringify(err));
         return;

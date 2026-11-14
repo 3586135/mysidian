@@ -1,4 +1,4 @@
-import { KeyboardAvoidMode, promptAction, window } from '@kit.ArkUI';
+import { KeyboardAvoidMode, promptAction, router, window } from '@kit.ArkUI';
 import { picker } from '@kit.CoreFileKit';
 import { BusinessError } from '@kit.BasicServicesKit';
 import { photoAccessHelper } from '@kit.MediaLibraryKit';
@@ -161,7 +161,9 @@ struct Index {
     this.vm.onNoteCreated = (path: string): void => {
       this.toast($r('app.string.msg_wiki_created'));
     };
-    this.vm.init(context);
+    this.vm.init(context).then((): void => {
+      this.handleLaunchParams();
+    });
     this.syncVm.init(context).then((): void => {
       this.restartAutoSyncTimer();
     });
@@ -178,6 +180,58 @@ struct Index {
     if (this.mainWindow !== undefined) {
       this.mainWindow.off('keyboardHeightChange', this.keyboardCallback);
       this.mainWindow = undefined;
+    }
+  }
+
+  /** 首页路由参数是否已处理（防重入）。 */
+  private launchHandled: boolean = false;
+
+  /** 处理首页（DesignIndex）路由参数：openPath 打开笔记、expandPath 展开目录、action 打开指定面板。 */
+  private handleLaunchParams(): void {
+    if (this.launchHandled) {
+      return;
+    }
+    const params: Record<string, Object> | undefined =
+      router.getParams() as Record<string, Object> | undefined;
+    if (params === undefined) {
+      return;
+    }
+    this.launchHandled = true;
+    const openPathRaw: Object | undefined = params['openPath'];
+    const openPath: string = typeof openPathRaw === 'string' ? openPathRaw : '';
+    if (openPath.length > 0) {
+      this.vm.openNote(openPath);
+      return;
+    }
+    const expandPathRaw: Object | undefined = params['expandPath'];
+    const expandPath: string = typeof expandPathRaw === 'string' ? expandPathRaw : '';
+    if (expandPath.length > 0) {
+      for (const item of this.vm.treeItems) {
+        if (item.node.path === expandPath && item.node.isDir && !item.expanded) {
+          this.vm.toggleDir(expandPath);
+          break;
+        }
+      }
+      return;
+    }
+    const actionRaw: Object | undefined = params['action'];
+    const action: string = typeof actionRaw === 'string' ? actionRaw : '';
+    if (action.length === 0) {
+      return;
+    }
+    if (action === 'templates') {
+      this.openTemplates();
+      return;
+    }
+    if (action === 'vaults') {
+      this.animAssign((): void => {
+        this.showVaults = true;
+      });
+      return;
+    }
+    if (action === 'settings') {
+      this.currentTab = 1;
+      return;
     }
   }
 

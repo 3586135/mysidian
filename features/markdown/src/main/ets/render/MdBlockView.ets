@@ -711,7 +711,7 @@ export struct MdBlockView {
       Text(MathRenderer.toPlain(this.block.rawContent))
         .fontSize(17)
         .fontFamily('serif')
-        .fontColor($r('app.color.hm_text_primary'))
+        .fontColor($r('app.color.design_text_primary'))
         .textAlign(TextAlign.Center)
         .width('100%')
     }

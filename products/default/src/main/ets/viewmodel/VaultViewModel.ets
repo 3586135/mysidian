@@ -32,6 +32,13 @@ export class RecentNoteItem {
   openedAt: number = 0;
 }
 
+/** 根级目录摘要（首页文件页展示）。 */
+export class RootFolderSummary {
+  name: string = '';
+  path: string = '';
+  noteCount: number = 0;
+}
+
 /**
  * 仓库视图模型：负责仓库列表、文件树、笔记读取编辑、索引与信息面板。
  */
@@ -40,6 +47,8 @@ export class VaultViewModel {
   @Trace vaults: VaultInfo[] = [];
   @Trace currentVault: VaultInfo = new VaultInfo();
   @Trace treeItems: FlatFileNode[] = [];
+  /** 根级目录摘要（首页文件页展示）。 */
+  @Trace rootFolders: RootFolderSummary[] = [];
   @Trace selectedPath: string = '';
   @Trace noteTitle: string = '';
   @Trace noteContent: string = '';
@@ -139,6 +148,14 @@ export class VaultViewModel {
       return;
     }
     await this.openNote(lastNotePath);
+  }
+
+  /** 恢复上次会话的仓库与笔记（首页从工作台返回时刷新状态）。 */
+  public async restoreSession(): Promise<void> {
+    if (this.vaults.length === 0) {
+      return;
+    }
+    await this.restoreLastSession();
   }
 
   private async readNumberPref(context: common.Context, key: string, def: number):
@@ -1409,7 +1426,32 @@ export class VaultViewModel {
     this.tree = await manager.buildTree(this.currentVault);
     this.refreshTreeItems();
     this.vaultFiles = await manager.listVaultFiles(this.currentVault);
+    this.refreshRootFolders();
     await this.refreshAllTags();
+  }
+
+  /** 汇总根级目录及各目录笔记数（首页文件页展示）。 */
+  private refreshRootFolders(): void {
+    const folders: RootFolderSummary[] = [];
+    for (const item of this.treeItems) {
+      if (item.depth === 0 && item.node.isDir) {
+        const summary: RootFolderSummary = new RootFolderSummary();
+        summary.name = item.node.name;
+        summary.path = item.node.path;
+        folders.push(summary);
+      }
+    }
+    for (const folder of folders) {
+      const prefix: string = `${folder.path}/`;
+      let count: number = 0;
+      for (const file of this.vaultFiles) {
+        if (file.startsWith(prefix) && file.toLowerCase().endsWith('.md')) {
+          count++;
+        }
+      }
+      folder.noteCount = count;
+    }
+    this.rootFolders = folders;
   }
 
   /** 刷新仓库内全部标签（供 # 标签补全使用）。 */
@@ -1531,6 +1573,36 @@ export class VaultViewModel {
     await manager.refreshNote(this.currentVault, path);
     await this.refreshTree();
     await this.openNote(path);
+  }
+
+  /**
+   * 快速笔记：以标题（为空时用时间戳）在根目录新建笔记并写入内容。
+   * 同名文件已存在时追加时间戳后缀避免覆盖。返回新建笔记路径（失败返回空串）。
+   */
+  public async createQuickNote(title: string, content: string): Promise<string> {
+    const manager: VaultManager | null = this.manager;
+    if (manager === null || this.currentVault.rootPath.length === 0) {
+      return '';
+    }
+    const now: Date = new Date();
+    const pad = (value: number): string => value < 10 ? `0${value}` : `${value}`;
+    const stamp: string = `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}` +
+      `${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
+    let safeTitle: string = title.trim().replace(/[\\/:*?"<>|#\[\]]/g, '');
+    if (safeTitle.length === 0) {
+      safeTitle = `闪念-${stamp}`;
+    }
+    let path: string = `${safeTitle}.md`;
+    if (this.vaultFiles.includes(path)) {
+      path = `${safeTitle}-${stamp}.md`;
+    }
+    const body: string = content.trim();
+    const noteContent: string = body.length > 0 ? `# ${safeTitle}\n\n${body}\n` : `# ${safeTitle}\n\n`;
+    await manager.writeNote(this.currentVault, path, noteContent);
+    await manager.refreshNote(this.currentVault, path);
+    await this.refreshTree();
+    await this.openNote(path);
+    return path;
   }
 
   /** 列出仓库内的模板文件。 */

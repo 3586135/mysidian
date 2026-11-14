@@ -63,6 +63,54 @@
     {
       "name": "hm_danger",
       "value": "#FF6B5E"
+    },
+    {
+      "name": "design_bg",
+      "value": "#141211"
+    },
+    {
+      "name": "design_surface",
+      "value": "#E6231F1E"
+    },
+    {
+      "name": "design_surface_solid",
+      "value": "#231F1E"
+    },
+    {
+      "name": "design_elevated",
+      "value": "#3B3533"
+    },
+    {
+      "name": "design_text_primary",
+      "value": "#F5EFEA"
+    },
+    {
+      "name": "design_text_secondary",
+      "value": "#9E9590"
+    },
+    {
+      "name": "design_accent",
+      "value": "#9D8DF1"
+    },
+    {
+      "name": "design_accent_weak",
+      "value": "#269D8DF1"
+    },
+    {
+      "name": "design_stroke",
+      "value": "#14FFFFFF"
+    },
+    {
+      "name": "design_divider",
+      "value": "#26F5EFEA"
+    },
+    {
+      "name": "design_dim",
+      "value": "#99000000"
+    },
+    {
+      "name": "design_shadow",
+      "value": "#59000000"
     }
   ]
 }

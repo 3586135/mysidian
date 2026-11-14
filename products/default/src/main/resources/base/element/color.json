@@ -63,6 +63,54 @@
     {
       "name": "hm_danger",
       "value": "#E84026"
+    },
+    {
+      "name": "design_bg",
+      "value": "#F7F4F1"
+    },
+    {
+      "name": "design_surface",
+      "value": "#F2FFFFFF"
+    },
+    {
+      "name": "design_surface_solid",
+      "value": "#FFFFFF"
+    },
+    {
+      "name": "design_elevated",
+      "value": "#EFEAE4"
+    },
+    {
+      "name": "design_text_primary",
+      "value": "#1D1B18"
+    },
+    {
+      "name": "design_text_secondary",
+      "value": "#6E6660"
+    },
+    {
+      "name": "design_accent",
+      "value": "#6F5BD6"
+    },
+    {
+      "name": "design_accent_weak",
+      "value": "#1A6F5BD6"
+    },
+    {
+      "name": "design_stroke",
+      "value": "#14292521"
+    },
+    {
+      "name": "design_divider",
+      "value": "#261D1B18"
+    },
+    {
+      "name": "design_dim",
+      "value": "#4D1D1B18"
+    },
+    {
+      "name": "design_shadow",
+      "value": "#1A000000"
     }
   ]
 }

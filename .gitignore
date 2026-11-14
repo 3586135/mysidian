@@ -21,3 +21,4 @@
 /build-profile.signed.json5
 .tmp-ui/
 /.deveco/
+/dist/
