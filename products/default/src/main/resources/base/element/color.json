@@ -111,6 +111,10 @@
     {
       "name": "design_shadow",
       "value": "#1A000000"
+    },
+    {
+      "name": "design_danger",
+      "value": "#C13525"
     }
   ]
 }

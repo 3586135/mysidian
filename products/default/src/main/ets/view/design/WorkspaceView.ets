@@ -2,8 +2,12 @@ import { MdBlock, MdBlockType, OutlineEntry } from '@ohos/domain';
 import { EmptyState, FileTreeView, Logger } from '@ohos/common';
 import { MdDocumentView, MdDocumentViewController, MdInlineFlattener } from '@ohos/markdown';
 import { VaultViewModel } from '../../viewmodel/VaultViewModel';
+import { DesignDialogKind, DialogHost } from './DialogHost';
 import { EditorPane } from './EditorPane';
+import { HistorySheet } from './HistorySheet';
 import { NoteInfoSheet } from './NoteInfoSheet';
+import { TemplateSheet } from './TemplateSheet';
+import { TrashSheet } from './TrashSheet';
 
 const LOG: Logger = new Logger('WorkspaceView');
 
@@ -42,6 +46,8 @@ export struct WorkspaceView {
   @Param topInset: number = 0;          // 状态栏避让高度（vp）
   @Param bottomInset: number = 0;       // 导航条避让高度（vp）
   @Param backSignal: WorkspaceBackSignal = new WorkspaceBackSignal();
+  /** 启动动作（外部进入时携带，如 templates）。 */
+  @Param launchAction: string = '';
   @Event onRequestExit: () => void = (): void => {};
   @Event onEditorKeyboardMode: (active: boolean) => void = (active: boolean): void => {};
   @Event onOpenTag: (tag: string) => void = (tag: string): void => {};
@@ -57,6 +63,14 @@ export struct WorkspaceView {
   @Local editorKeyboardMode: boolean = false;
   /** 内容区实际宽度（边缘手势保留区 / 信息面板并排阈值判定）。 */
   @Local contentWidth: number = 0;
+  /** 当前对话框场景（DesignDialogKind.NONE 表示无）。 */
+  @Local dialogKind: string = DesignDialogKind.NONE;
+  /** 回收站浮层。 */
+  @Local showTrashSheet: boolean = false;
+  /** 历史版本浮层。 */
+  @Local showHistorySheet: boolean = false;
+  /** 模板选择浮层。 */
+  @Local showTemplateSheet: boolean = false;
 
   private docController: MdDocumentViewController = new MdDocumentViewController();
   private secondaryDocController: MdDocumentViewController = new MdDocumentViewController();
@@ -68,6 +82,10 @@ export struct WorkspaceView {
     this.vm.onNoteCreated = (path: string): void => {
       this.toast($r('app.string.msg_wiki_created'));
     };
+    // 外部启动动作：templates → 直接打开模板选择浮层。
+    if (this.launchAction === 'templates') {
+      this.showTemplateSheet = true;
+    }
   }
 
   aboutToDisappear(): void {
@@ -82,23 +100,86 @@ export struct WorkspaceView {
   }
 
   build() {
-    Column() {
-      if (this.vm.vaults.length === 0) {
-        this.emptyVaultView()
-      } else if (this.isWide) {
-        this.wideLayout()
-      } else {
-        this.narrowLayout()
+    Stack() {
+      Column() {
+        if (this.vm.vaults.length === 0) {
+          this.emptyVaultView()
+        } else if (this.isWide) {
+          this.wideLayout()
+        } else {
+          this.narrowLayout()
+        }
+      }
+      .width('100%')
+      .height('100%')
+      .backgroundColor($r('app.color.design_bg'))
+      .padding({ top: this.topInset, bottom: this.bottomInset })
+      .onAreaChange((_oldArea: Area, newArea: Area) => {
+        this.contentWidth = Number(newArea.width);
+      })
+      .hitTestBehavior(HitTestMode.Default)
+
+      // ===== 弹层（对话框 / 回收站 / 历史 / 模板）=====
+
+      if (this.dialogKind !== DesignDialogKind.NONE) {
+        DialogHost({
+          kind: this.dialogKind,
+          vm: this.vm,
+          onClose: (): void => {
+            this.animAssign((): void => {
+              this.dialogKind = DesignDialogKind.NONE;
+            });
+          },
+          onNoteMutated: (): void => {
+            this.onNoteMutated();
+          }
+        })
+      }
+
+      if (this.showTrashSheet) {
+        TrashSheet({
+          vm: this.vm,
+          onClose: (): void => {
+            this.animAssign((): void => {
+              this.showTrashSheet = false;
+            });
+          },
+          onNoteMutated: (): void => {
+            this.onNoteMutated();
+          }
+        })
+      }
+
+      if (this.showHistorySheet) {
+        HistorySheet({
+          vm: this.vm,
+          onClose: (): void => {
+            this.animAssign((): void => {
+              this.showHistorySheet = false;
+            });
+          },
+          onNoteMutated: (): void => {
+            this.onNoteMutated();
+          }
+        })
+      }
+
+      if (this.showTemplateSheet) {
+        TemplateSheet({
+          vm: this.vm,
+          onClose: (): void => {
+            this.animAssign((): void => {
+              this.showTemplateSheet = false;
+            });
+          },
+          onNoteMutated: (): void => {
+            this.onNoteMutated();
+          }
+        })
       }
     }
     .width('100%')
     .height('100%')
-    .backgroundColor($r('app.color.design_bg'))
-    .padding({ top: this.topInset, bottom: this.bottomInset })
-    .onAreaChange((_oldArea: Area, newArea: Area) => {
-      this.contentWidth = Number(newArea.width);
-    })
-    .hitTestBehavior(HitTestMode.Default)
   }
 
   // ==================== 宽屏布局 ====================
@@ -148,6 +229,9 @@ export struct WorkspaceView {
               this.animAssign((): void => {
                 this.showRightPanel = !this.showRightPanel;
               });
+            },
+            onRequestRename: (): void => {
+              this.openRenameDialog();
             },
             onDismissOverlays: (): void => {
             },
@@ -296,6 +380,9 @@ export struct WorkspaceView {
                 this.showInfo = !this.showInfo;
               });
             },
+            onRequestRename: (): void => {
+              this.openRenameDialog();
+            },
             onDismissOverlays: (): void => {
               this.dismissOverlays();
             },
@@ -416,7 +503,7 @@ export struct WorkspaceView {
     .alignItems(VerticalAlign.Center)
   }
 
-  /** 更多菜单：高频操作入口（弹层类入口随阶段 4/5 接入）。 */
+  /** 更多菜单：文件操作与弹层入口。 */
   @Builder
   moreMenuBuilder() {
     Menu() {
@@ -424,6 +511,36 @@ export struct WorkspaceView {
         .onClick(() => {
           this.vm.createNote().then((): void => {
             this.onNoteMutated();
+          });
+        })
+      MenuItem({ content: $r('app.string.action_new_folder') })
+        .onClick(() => {
+          this.openDialog(DesignDialogKind.NEW_FOLDER);
+        })
+      MenuItem({ content: $r('app.string.action_rename') })
+        .onClick(() => {
+          this.openRenameDialog();
+        })
+      MenuItem({ content: $r('app.string.action_move') })
+        .onClick(() => {
+          this.openMoveDialog();
+        })
+      MenuItem({ content: $r('app.string.action_template') })
+        .onClick(() => {
+          this.animAssign((): void => {
+            this.showTemplateSheet = true;
+          });
+        })
+      MenuItem({ content: $r('app.string.action_history') })
+        .onClick(() => {
+          this.animAssign((): void => {
+            this.showHistorySheet = true;
+          });
+        })
+      MenuItem({ content: $r('app.string.action_trash') })
+        .onClick(() => {
+          this.animAssign((): void => {
+            this.showTrashSheet = true;
           });
         })
     }
@@ -567,8 +684,32 @@ export struct WorkspaceView {
     this.getUIContext().animateTo({ duration: 240, curve: Curve.Friction }, action);
   }
 
-  /** 系统返回链：退出编辑（自动保存）→ 收窄屏浮层 → 返回首页。 */
+  /** 系统返回链：关闭弹层 → 退出编辑（自动保存）→ 收窄屏浮层 → 返回首页。 */
   private handleBack(): void {
+    if (this.dialogKind !== DesignDialogKind.NONE) {
+      this.animAssign((): void => {
+        this.dialogKind = DesignDialogKind.NONE;
+      });
+      return;
+    }
+    if (this.showTrashSheet) {
+      this.animAssign((): void => {
+        this.showTrashSheet = false;
+      });
+      return;
+    }
+    if (this.showHistorySheet) {
+      this.animAssign((): void => {
+        this.showHistorySheet = false;
+      });
+      return;
+    }
+    if (this.showTemplateSheet) {
+      this.animAssign((): void => {
+        this.showTemplateSheet = false;
+      });
+      return;
+    }
     if (this.vm.editMode) {
       this.exitEditWithSave();
       return;
@@ -716,6 +857,31 @@ export struct WorkspaceView {
       text += segment.text;
     }
     return text.trim();
+  }
+
+  /** 打开指定场景对话框。 */
+  private openDialog(kind: string): void {
+    this.animAssign((): void => {
+      this.dialogKind = kind;
+    });
+  }
+
+  /** 打开重命名对话框（无选中笔记时提示）。 */
+  private openRenameDialog(): void {
+    if (this.vm.selectedPath.length === 0) {
+      this.toast($r('app.string.msg_no_note_selected'));
+      return;
+    }
+    this.openDialog(DesignDialogKind.RENAME);
+  }
+
+  /** 打开移动目标目录选择对话框（无选中笔记时提示）。 */
+  private openMoveDialog(): void {
+    if (this.vm.selectedPath.length === 0) {
+      this.toast($r('app.string.msg_no_note_selected'));
+      return;
+    }
+    this.openDialog(DesignDialogKind.MOVE);
   }
 
   /** 文件树拖拽：把笔记移动到目标目录。 */

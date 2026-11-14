@@ -6,6 +6,7 @@ import { Logger } from '@ohos/common';
 import { SyncSettings } from '../view/SyncSettings';
 import { SettingsOverlay } from '../view/SettingsOverlay';
 import { WorkspaceView, DesignViewMode, WorkspaceBackSignal } from '../view/design/WorkspaceView';
+import { CreateVaultRequest, DesignDialogKind, DialogHost } from '../view/design/DialogHost';
 import { GraphLayout } from '../viewmodel/GraphLayout';
 import { DesignPalette } from '../viewmodel/DesignPalette';
 import { SearchViewModel } from '../viewmodel/SearchViewModel';
@@ -219,6 +220,7 @@ struct DesignIndex {
   @Local showSyncPanel: boolean = false;   // 同步设置浮层
   @Local showSettingsPanel: boolean = false; // 外观与设置浮层
   @Local viewMode: number = DesignViewMode.HOME; // 页面状态机：0 首页 / 1 工作台
+  @Local showCreateVaultDialog: boolean = false; // 新建仓库对话框
   @Local keyboardHeight: number = 0;       // 键盘高度（vp，NONE 避让下让位）
   @Local editorKeyboardMode: boolean = false; // 编辑区键盘交互态（切换 NONE 避让）
   @Local isWide: boolean = false;          // 宽屏形态（键盘避让策略依据）
@@ -243,6 +245,8 @@ struct DesignIndex {
   private autoSyncTimer: number = -1;
   /** 工作台返回键信号（onBackPress → WorkspaceView 返回链）。 */
   private workspaceBackSignal: WorkspaceBackSignal = new WorkspaceBackSignal();
+  /** 本次进入工作台携带的启动动作（如 templates，退出时复位）。 */
+  private workspaceLaunchAction: string = '';
   /** 自动同步周期。 */
   private static readonly AUTO_SYNC_INTERVAL_MS: number = 30 * 60 * 1000;
 
@@ -365,6 +369,7 @@ struct DesignIndex {
           topInset: this.topInset,
           bottomInset: this.bottomInset,
           backSignal: this.workspaceBackSignal,
+          launchAction: this.workspaceLaunchAction,
           onRequestExit: (): void => {
             this.exitWorkspace();
           },
@@ -510,6 +515,22 @@ struct DesignIndex {
           },
           onClose: (): void => {
             this.showSettingsPanel = false;
+          }
+        })
+      }
+
+      // 新建仓库对话框（含 WebDAV 同步配置）
+      if (this.showCreateVaultDialog) {
+        DialogHost({
+          kind: DesignDialogKind.CREATE_VAULT,
+          vm: this.vm,
+          onClose: (): void => {
+            this.getUIContext().animateTo({ duration: 240, curve: Curve.Friction }, () => {
+              this.showCreateVaultDialog = false;
+            });
+          },
+          onCreateVault: (request: CreateVaultRequest): void => {
+            this.createVaultFromDialog(request);
           }
         })
       }
@@ -739,7 +760,9 @@ struct DesignIndex {
         .backgroundColor($r('app.color.design_accent_weak'))
         .margin({ top: 6 })
         .onClick(() => {
-          this.openWorkspace({});
+          this.getUIContext().animateTo({ duration: 240, curve: Curve.Friction }, () => {
+            this.showCreateVaultDialog = true;
+          });
         })
     }
     .width('100%')
@@ -978,7 +1001,9 @@ struct DesignIndex {
         .backgroundColor($r('app.color.design_accent_weak'))
         .margin({ top: 6 })
         .onClick(() => {
-          this.openWorkspace({});
+          this.getUIContext().animateTo({ duration: 240, curve: Curve.Friction }, () => {
+            this.showCreateVaultDialog = true;
+          });
         })
     }
     .width('100%')
@@ -1534,15 +1559,18 @@ struct DesignIndex {
         }
       }
     }
-    // 'action' 类参数（templates 等）待工作台弹层接入后处理。
+    // 启动动作（templates 等）经 launchAction 传入工作台，由其在挂载时消费。
+    const actionRaw: Object | undefined = params['action'];
+    this.workspaceLaunchAction = typeof actionRaw === 'string' ? actionRaw : '';
     this.getUIContext().animateTo({ duration: 300, curve: Curve.Friction }, () => {
       this.viewMode = DesignViewMode.WORKSPACE;
     });
   }
 
-  /** 退出工作台返回首页：复位键盘态并恢复会话（仓库/笔记/图谱/搜索）。 */
+  /** 退出工作台返回首页：复位键盘态与启动动作并恢复会话（仓库/笔记/图谱/搜索）。 */
   private exitWorkspace(): void {
     this.setEditorKeyboardMode(false);
+    this.workspaceLaunchAction = '';
     this.getUIContext().animateTo({ duration: 260, curve: Curve.Friction }, () => {
       this.viewMode = DesignViewMode.HOME;
     });
@@ -1997,5 +2025,40 @@ struct DesignIndex {
       LOG.error(`export vault failed, code=${err.code}, message=${err.message}`);
       promptAction.showToast({ message: $r('app.string.msg_export_failed') });
     }
+  }
+
+  /** 新建仓库对话框确认：创建仓库并按需保存 WebDAV 配置、触发首次同步。 */
+  private async createVaultFromDialog(request: CreateVaultRequest): Promise<void> {
+    try {
+      await this.vm.createVault(request.name);
+      await this.applyCreateSyncConfig(request);
+    } catch (error) {
+      const err = error as BusinessError;
+      LOG.error(`create vault failed, code=${err.code}, message=${err.message}`);
+      this.toast($r('app.string.msg_create_failed'));
+    }
+  }
+
+  /** 新建仓库时同时保存 WebDAV 配置，启用自动同步并触发首次同步。 */
+  private async applyCreateSyncConfig(request: CreateVaultRequest): Promise<void> {
+    const url: string = request.serverUrl.trim();
+    if (!request.withSync || url.length === 0) {
+      return;
+    }
+    this.syncVm.serverUrl = url;
+    this.syncVm.username = request.username.trim();
+    this.syncVm.password = request.password;
+    const root: string = request.remoteRoot.trim();
+    this.syncVm.remoteRoot = root.length > 0 ? root : 'mysidian';
+    this.syncVm.autoSync = true;
+    await this.syncVm.save();
+    this.restartAutoSyncTimer();
+    this.toast($r('app.string.msg_sync_config_saved'));
+    await this.syncVm.runSync(this.vm.currentVault);
+  }
+
+  /** 轻提示（使用 UIContext 的 PromptAction，避免全局 promptAction 的弃用告警）。 */
+  private toast(message: ResourceStr): void {
+    this.getUIContext().getPromptAction().showToast({ message: message });
   }
 }
