@@ -7,6 +7,8 @@ import { CompletionCandidate, EditorTextUtils, ListContinuation } from '../../vi
 import { VaultViewModel } from '../../viewmodel/VaultViewModel';
 import { CompletionPopup } from './CompletionPopup';
 import { EditorToolbar } from './EditorToolbar';
+import { FindReplaceBar } from './FindReplaceBar';
+import { FindReplaceUtils } from '../../viewmodel/FindReplaceUtils';
 
 const LOG: Logger = new Logger('EditorPane');
 
@@ -34,6 +36,7 @@ export struct EditorPane {
   @Event onOpenTag: (tag: string) => void = (tag: string): void => {};
   @Event onRequestRename: () => void = (): void => {};
   @Event onNoteMutated: () => void = (): void => {};
+  @Event onPreviewImage: (uri: string) => void = (_uri: string): void => {};
 
   /** 编辑工具栏显示状态。 */
   @Local showToolbar: boolean = false;
@@ -45,6 +48,10 @@ export struct EditorPane {
   /** 撤销 / 重做栈深度（工具栏禁用态）。 */
   @Local undoDepth: number = 0;
   @Local redoDepth: number = 0;
+  /** 页内查找 / 替换栏：显示开关、匹配起点集合、当前匹配序号。 */
+  @Local showFind: boolean = false;
+  @Local findMatches: number[] = [];
+  @Local findIndex: number = -1;
 
   /** 编辑器控制器：用于工具栏在光标处插入语法。 */
   private textEditorController: TextAreaController = new TextAreaController();
@@ -59,6 +66,10 @@ export struct EditorPane {
   private swipeStartX: number = -1;
   /** 屏幕左右边缘系统返回手势保留区宽度（vp）。 */
   private static readonly EDGE_GESTURE_ZONE: number = 32;
+  /** 编辑器 TextArea 的组件 id（查找定位时用于重新获取焦点）。 */
+  private static readonly EDITOR_ID: string = 'editor_text_area';
+  /** 当前查找关键词。 */
+  private findKeyword: string = '';
 
   aboutToAppear(): void {
     // 注册 VM 注入钩子：光标处插入文本（手写图片等外部内容）。
@@ -88,6 +99,7 @@ export struct EditorPane {
     this.redoDepth = 0;
     this.showCompletion = false;
     this.completionItems = [];
+    this.closeFind();
   }
 
   build() {
@@ -107,6 +119,32 @@ export struct EditorPane {
           .animation({ duration: 240, curve: Curve.Friction }))
       } else {
         this.editorHeader()
+        if (this.vm.editMode && this.showFind) {
+          FindReplaceBar({
+            matchCount: this.findMatches.length,
+            currentIndex: this.findIndex,
+            onQueryChange: (keyword: string): void => {
+              this.findKeyword = keyword;
+              this.refreshMatches();
+              this.findIndex = -1;
+            },
+            onPrev: (): void => {
+              this.stepMatch(-1);
+            },
+            onNext: (): void => {
+              this.stepMatch(1);
+            },
+            onReplace: (replacement: string): void => {
+              this.replaceCurrent(replacement);
+            },
+            onReplaceAll: (replacement: string): void => {
+              this.replaceEveryMatch(replacement);
+            },
+            onClose: (): void => {
+              this.closeFind();
+            }
+          })
+        }
         if (this.vm.editMode) {
           Stack({ alignContent: Alignment.TopStart }) {
             TextArea({
@@ -121,6 +159,7 @@ export struct EditorPane {
               .fontColor($r('app.color.design_text_primary'))
               .placeholderColor($r('app.color.design_text_secondary'))
               .caretColor($r('app.color.design_accent'))
+              .id(EditorPane.EDITOR_ID)
               .padding({ left: 20, right: 20, top: 8, bottom: 8 })
               .gesture(this.contentPanGesture())
               .onTouch((event: TouchEvent) => {
@@ -213,6 +252,9 @@ export struct EditorPane {
             },
             onResolveAsset: (target: string, onResult: (uri: string) => void): void => {
               onResult(this.vm.resolveAsset(target));
+            },
+            onPreviewImage: (uri: string): void => {
+              this.onPreviewImage(uri);
             }
           })
           .layoutWeight(1)
@@ -243,6 +285,7 @@ export struct EditorPane {
           .width(36)
           .height(36)
           .margin({ left: -8 })
+          .accessibilityText($r('app.string.action_back'))
           .onClick(() => {
             this.onRequestExit();
           })
@@ -251,6 +294,7 @@ export struct EditorPane {
           .fontColor([$r('app.color.design_text_secondary')])
           .width(36)
           .height(36)
+          .accessibilityText($r('app.string.design_tab_files'))
           .onClick(() => {
             this.onToggleSidebar();
           })
@@ -269,6 +313,19 @@ export struct EditorPane {
           }
         })
       if (this.vm.editMode) {
+        SymbolGlyph($r('sys.symbol.magnifyingglass'))
+          .fontSize(20)
+          .fontColor([$r('app.color.design_text_primary')])
+          .width(36)
+          .height(36)
+          .accessibilityText($r('app.string.find_open'))
+          .onClick(() => {
+            if (this.showFind) {
+              this.closeFind();
+            } else {
+              this.showFind = true;
+            }
+          })
         Text($r('app.string.action_cancel'))
           .fontSize(15)
           .fontColor($r('app.color.design_text_secondary'))
@@ -299,6 +356,7 @@ export struct EditorPane {
           .width(36)
           .height(36)
           .margin({ left: 4 })
+          .accessibilityText($r('app.string.action_edit'))
           .onClick(() => {
             this.vm.startEdit();
           })
@@ -309,6 +367,7 @@ export struct EditorPane {
             .width(36)
             .height(36)
             .margin({ left: 4 })
+            .accessibilityText($r('app.string.action_info'))
             .onClick(() => {
               this.onToggleInfoPanel();
             })
@@ -319,6 +378,7 @@ export struct EditorPane {
             .width(36)
             .height(36)
             .margin({ left: 4 })
+            .accessibilityText($r('app.string.action_info'))
             .onClick(() => {
               this.onToggleInfoPanel();
             })
@@ -474,6 +534,89 @@ export struct EditorPane {
     this.undoDepth = this.undoStack.length;
     this.redoDepth = this.redoStack.length;
     this.replaceEditorText(popped, popped.length);
+  }
+
+  // ==================== 页内查找 / 替换 ====================
+
+  /** 按当前草稿重新计算匹配集合（当前匹配序号越界时回退为未定位）。 */
+  private refreshMatches(): void {
+    this.findMatches = FindReplaceUtils.findAll(this.vm.draftBuffer, this.findKeyword);
+    if (this.findIndex >= this.findMatches.length) {
+      this.findIndex = -1;
+    }
+  }
+
+  /** 关闭查找栏并清空状态。 */
+  private closeFind(): void {
+    this.showFind = false;
+    this.findKeyword = '';
+    this.findMatches = [];
+    this.findIndex = -1;
+  }
+
+  /** 跳到上一个 / 下一个匹配（环形）。 */
+  private stepMatch(step: number): void {
+    this.refreshMatches();
+    const next: number = FindReplaceUtils.cycle(this.findIndex, this.findMatches.length, step);
+    this.selectMatch(next);
+  }
+
+  /** 选中第 index 个匹配：先让编辑器重新获得焦点，再设置选区并滚动到可见处。 */
+  private selectMatch(index: number): void {
+    this.findIndex = index;
+    if (index < 0 || index >= this.findMatches.length) {
+      return;
+    }
+    const start: number = this.findMatches[index];
+    const end: number = start + this.findKeyword.length;
+    this.getUIContext().getFocusController().requestFocus(EditorPane.EDITOR_ID);
+    setTimeout((): void => {
+      this.textEditorController.setTextSelection(start, end, { menuPolicy: MenuPolicy.HIDE });
+    }, 60);
+  }
+
+  /** 替换当前匹配（尚未定位时先定位到第一个）。 */
+  private replaceCurrent(replacement: string): void {
+    this.refreshMatches();
+    if (this.findMatches.length === 0) {
+      return;
+    }
+    if (this.findIndex < 0) {
+      this.selectMatch(0);
+      return;
+    }
+    const start: number = this.findMatches[this.findIndex];
+    const prev: string = this.vm.draftBuffer;
+    const next: string = FindReplaceUtils.replaceAt(prev, start, this.findKeyword.length, replacement);
+    // 替换是离散操作：强制压入撤销快照，不与前一次输入合并。
+    this.lastUndoPushAt = 0;
+    this.recordUndo(prev);
+    const caret: number = start + replacement.length;
+    this.replaceEditorText(next, caret);
+    this.refreshMatches();
+    // 定位到替换点之后的下一个匹配；没有则回到第一个。
+    let target: number = this.findMatches.findIndex((position: number): boolean => position >= caret);
+    if (target < 0 && this.findMatches.length > 0) {
+      target = 0;
+    }
+    this.selectMatch(target);
+  }
+
+  /** 全部替换，并提示替换数量。 */
+  private replaceEveryMatch(replacement: string): void {
+    this.refreshMatches();
+    const count: number = this.findMatches.length;
+    if (count === 0) {
+      return;
+    }
+    const prev: string = this.vm.draftBuffer;
+    const next: string = FindReplaceUtils.replaceAll(prev, this.findKeyword, replacement);
+    this.lastUndoPushAt = 0;
+    this.recordUndo(prev);
+    this.replaceEditorText(next, Math.min(next.length, this.findMatches[0] + replacement.length));
+    this.refreshMatches();
+    this.findIndex = -1;
+    this.toast($r('app.string.msg_replace_done', count));
   }
 
   /** 更新 wiki 链接 / 标签补全浮层。 */

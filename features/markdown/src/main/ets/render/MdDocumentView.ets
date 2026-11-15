@@ -31,6 +31,8 @@ export struct MdDocumentView {
   /** 解析图片资源 URI。 */
   @Event onResolveAsset: (target: string, onResult: (uri: string) => void) => void =
     (target: string, onResult: (uri: string) => void): void => {};
+  /** 点击图片全屏预览。 */
+  @Event onPreviewImage: (uri: string) => void = (_uri: string): void => {};
   private scroller: Scroller = new Scroller();
 
   aboutToAppear(): void {
@@ -68,6 +70,9 @@ export struct MdDocumentView {
             },
             onResolveAsset: (target: string, onResult: (uri: string) => void): void => {
               this.onResolveAsset(target, onResult);
+            },
+            onPreviewImage: (uri: string): void => {
+              this.onPreviewImage(uri);
             }
           })
         }

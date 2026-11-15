@@ -44,6 +44,8 @@ export struct MdBlockView {
   /** 解析图片资源为可加载的 URI。 */
   @Event onResolveAsset: (target: string, onResult: (uri: string) => void) => void =
     (target: string, onResult: (uri: string) => void): void => {};
+  /** 点击图片全屏预览。 */
+  @Event onPreviewImage: (uri: string) => void = (_uri: string): void => {};
   @Local dataTasks: DataViewTask[] = [];
   @Local dataLoaded: boolean = false;
   private dataViewQuery: DataViewQuery | null = null;
@@ -832,6 +834,11 @@ export struct MdBlockView {
           .width(this.imageWidth())
           .objectFit(ImageFit.Contain)
           .borderRadius(8)
+          .onClick(() => {
+            if (this.assetUri.length > 0) {
+              this.onPreviewImage(this.assetUri);
+            }
+          })
       } else {
         Text($r('app.string.md_image_missing'))
           .fontSize(this.fontSize - 2)
@@ -884,6 +891,9 @@ export struct MdBlockView {
             },
             onResolveAsset: (target: string, onResult: (uri: string) => void): void => {
               this.onResolveAsset(target, onResult);
+            },
+            onPreviewImage: (uri: string): void => {
+              this.onPreviewImage(uri);
             }
           })
         }, (block: MdBlock, index: number): string =>

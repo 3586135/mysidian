@@ -20,6 +20,8 @@ import { RecentNotesPanel } from './RecentNotesPanel';
 import { SearchOverlay } from './SearchOverlay';
 import { TemplateSheet } from './TemplateSheet';
 import { TrashSheet } from './TrashSheet';
+import { ImagePreviewOverlay } from './ImagePreviewOverlay';
+import { TreeItemMenuSheet } from './TreeItemMenuSheet';
 
 const LOG: Logger = new Logger('WorkspaceView');
 
@@ -61,6 +63,8 @@ export struct WorkspaceView {
   @Param backSignal: WorkspaceBackSignal = new WorkspaceBackSignal();
   /** 启动动作（外部进入时携带，如 templates）。 */
   @Param launchAction: string = '';
+  /** 进入时展开了目录（首页文件夹卡片）：窄屏自动展开文件侧栏，避免只见空态。 */
+  @Param launchExpandFolder: boolean = false;
   /** 无仓库引导：WebDAV 是否已配置（同步入口描述文案）。 */
   @Param syncConfigured: boolean = false;
   @Event onRequestExit: () => void = (): void => {};
@@ -107,6 +111,11 @@ export struct WorkspaceView {
   @Local showSearchOverlay: boolean = false;
   /** 快速切换器当前处于分屏选择模式（选中笔记后进第二栏）。 */
   @Local splitPickMode: boolean = false;
+  /** 图片全屏预览 URI（非空时展示预览浮层）。 */
+  @Local previewImageUri: string = '';
+  /** 文件树条目菜单目标路径与目录标志。 */
+  @Local treeMenuPath: string = '';
+  @Local treeMenuIsDir: boolean = false;
 
   private docController: MdDocumentViewController = new MdDocumentViewController();
   private secondaryDocController: MdDocumentViewController = new MdDocumentViewController();
@@ -124,6 +133,10 @@ export struct WorkspaceView {
     // 外部启动动作：templates → 直接打开模板选择浮层。
     if (this.launchAction === 'templates') {
       this.showTemplateSheet = true;
+    }
+    // 从首页文件夹卡片进入：窄屏下文件树在抽屉里，自动展开让用户看到目录内容。
+    if (this.launchExpandFolder && !this.isWide) {
+      this.showSideBar = true;
     }
   }
 
@@ -327,6 +340,62 @@ export struct WorkspaceView {
           }
         })
       }
+
+      if (this.treeMenuPath.length > 0) {
+        TreeItemMenuSheet({
+          targetPath: this.treeMenuPath,
+          isDir: this.treeMenuIsDir,
+          onClose: (): void => {
+            this.animAssign((): void => {
+              this.treeMenuPath = '';
+            });
+          },
+          onNewNoteInFolder: (folder: string): void => {
+            this.vm.createNote(folder).then((): void => {
+              this.onNoteMutated();
+            });
+          },
+          onNewSubfolder: (folder: string): void => {
+            this.vm.pendingFolderPrefix = `${folder}/`;
+            this.openDialog(DesignDialogKind.NEW_FOLDER);
+          },
+          onOpenNote: (path: string): void => {
+            this.openNoteFrom(path);
+          },
+          onSplitOpen: (path: string): void => {
+            if (this.isWide) {
+              this.showRightPanel = false;
+            }
+            this.vm.openSecondary(path);
+          },
+          onRenameNote: (path: string): void => {
+            this.vm.openNote(path).then((): void => {
+              this.openRenameDialog();
+            });
+          },
+          onMoveNote: (path: string): void => {
+            this.vm.openNote(path).then((): void => {
+              this.openMoveDialog();
+            });
+          },
+          onTrashNote: (path: string): void => {
+            this.vm.openNote(path).then((): void => {
+              this.confirmTrashNote();
+            });
+          }
+        })
+      }
+
+      if (this.previewImageUri.length > 0) {
+        ImagePreviewOverlay({
+          uri: this.previewImageUri,
+          onClose: (): void => {
+            this.animAssign((): void => {
+              this.previewImageUri = '';
+            });
+          }
+        })
+      }
     }
     .width('100%')
     .height('100%')
@@ -353,6 +422,12 @@ export struct WorkspaceView {
             },
             onMoveNote: (path: string, destDir: string): void => {
               this.moveNoteTo(path, destDir);
+            },
+            onItemAction: (path: string, isDir: boolean): void => {
+              this.animAssign((): void => {
+                this.treeMenuPath = path;
+                this.treeMenuIsDir = isDir;
+              });
             }
           })
         }
@@ -393,6 +468,11 @@ export struct WorkspaceView {
             },
             onNoteMutated: (): void => {
               this.onNoteMutated();
+            },
+            onPreviewImage: (uri: string): void => {
+              this.animAssign((): void => {
+                this.previewImageUri = uri;
+              });
             }
           })
         }
@@ -499,6 +579,12 @@ export struct WorkspaceView {
             },
             onMoveNote: (path: string, destDir: string): void => {
               this.moveNoteTo(path, destDir);
+            },
+            onItemAction: (path: string, isDir: boolean): void => {
+              this.animAssign((): void => {
+                this.treeMenuPath = path;
+                this.treeMenuIsDir = isDir;
+              });
             }
           })
         }
@@ -544,6 +630,11 @@ export struct WorkspaceView {
             },
             onNoteMutated: (): void => {
               this.onNoteMutated();
+            },
+            onPreviewImage: (uri: string): void => {
+              this.animAssign((): void => {
+                this.previewImageUri = uri;
+              });
             }
           })
         }
@@ -630,6 +721,7 @@ export struct WorkspaceView {
         .width(40)
         .height(40)
         .margin({ left: -4 })
+        .accessibilityText($r('app.string.action_back'))
         .onClick(() => {
           this.onRequestExit();
         })
@@ -645,6 +737,7 @@ export struct WorkspaceView {
         .fontColor([$r('app.color.design_text_primary')])
         .width(40)
         .height(40)
+        .accessibilityText($r('app.string.design_tab_more'))
         .bindMenu(this.moreMenuBuilder)
     }
     .width('100%')
@@ -798,6 +891,11 @@ export struct WorkspaceView {
         controller: this.secondaryDocController,
         onOpenLink: (target: string, kind: string): void => {
           this.vm.openLink(target, kind);
+        },
+        onPreviewImage: (uri: string): void => {
+          this.animAssign((): void => {
+            this.previewImageUri = uri;
+          });
         }
       })
       .layoutWeight(1)
@@ -823,6 +921,7 @@ export struct WorkspaceView {
     .shadow({ radius: 20, color: $r('app.color.design_shadow'), offsetY: 6 })
     .justifyContent(FlexAlign.Center)
     .margin({ right: 20, bottom: bottomMargin })
+    .accessibilityText($r('app.string.action_new_note'))
     .transition(TransitionEffect.scale({ x: 0, y: 0 })
       .combine(TransitionEffect.opacity(0))
       .animation({ duration: 250, curve: Curve.Friction }))
@@ -872,6 +971,18 @@ export struct WorkspaceView {
 
   /** 系统返回链：关闭弹层 → 退出编辑（自动保存）→ 收窄屏浮层 → 返回首页。 */
   private handleBack(): void {
+    if (this.previewImageUri.length > 0) {
+      this.animAssign((): void => {
+        this.previewImageUri = '';
+      });
+      return;
+    }
+    if (this.treeMenuPath.length > 0) {
+      this.animAssign((): void => {
+        this.treeMenuPath = '';
+      });
+      return;
+    }
     if (this.dialogKind !== DesignDialogKind.NONE) {
       this.animAssign((): void => {
         this.dialogKind = DesignDialogKind.NONE;

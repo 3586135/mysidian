@@ -23,6 +23,9 @@ export struct FileTreeView {
   /** 拖动文件到目标目录（目标目录为空串表示仓库根目录）。 */
   @Event onMoveNote: (path: string, destDir: string) => void =
     (path: string, destDir: string): void => {};
+  /** 点击条目右侧更多按钮（目录 / 笔记菜单）。 */
+  @Event onItemAction: (path: string, isDir: boolean) => void =
+    (_path: string, _isDir: boolean): void => {};
   private dataSource: FileTreeDataSource = new FileTreeDataSource();
 
   aboutToAppear(): void {
@@ -71,6 +74,15 @@ export struct FileTreeView {
               .maxLines(1)
               .textOverflow({ overflow: TextOverflow.Ellipsis })
               .layoutWeight(1)
+            SymbolGlyph($r('sys.symbol.more'))
+              .fontSize(15)
+              .fontColor([$r('sys.color.ohos_id_color_text_secondary')])
+              .width(28)
+              .height(28)
+              .opacity(0.75)
+              .onClick(() => {
+                this.onItemAction(item.node.path, item.node.isDir);
+              })
           }
           .width('100%')
           .height(38)
