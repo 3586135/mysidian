@@ -115,6 +115,104 @@ export class VaultManager {
     await ZipTransfer.exportZip(this.context, vault.rootPath, uri);
   }
 
+  /** 创建当前仓库的本地 zip 备份快照，并按上限清理旧备份。 */
+  public async createBackup(vault: VaultInfo, maxKeep: number = 5): Promise<string> {
+    if (vault.rootPath.length === 0 || !fileIo.accessSync(vault.rootPath)) {
+      return '';
+    }
+    const backupsDir: string = `${this.context.filesDir}/backups`;
+    if (!fileIo.accessSync(backupsDir)) {
+      fileIo.mkdirSync(backupsDir, true);
+    }
+    const now: number = Date.now();
+    const fileName: string = `vault_${vault.id}_${now}.zip`;
+    const destPath: string = `${backupsDir}/${fileName}`;
+    await ZipTransfer.compressToFile(vault.rootPath, destPath);
+    const all: VaultBackupInfo[] = this.listBackups(vault);
+    for (let i = maxKeep; i < all.length; i++) {
+      try {
+        if (fileIo.accessSync(all[i].path)) {
+          fileIo.unlinkSync(all[i].path);
+        }
+      } catch (error) {
+        LOG.warn(`prune backup failed: ${all[i].name}`);
+      }
+    }
+    return fileName;
+  }
+
+  /** 列出指定仓库的本地备份快照（按创建时间倒序）。 */
+  public listBackups(vault: VaultInfo): VaultBackupInfo[] {
+    const backupsDir: string = `${this.context.filesDir}/backups`;
+    const list: VaultBackupInfo[] = [];
+    if (!fileIo.accessSync(backupsDir)) {
+      return list;
+    }
+    const prefix: string = `vault_${vault.id}_`;
+    const names: string[] = fileIo.listFileSync(backupsDir);
+    for (const name of names) {
+      if (!name.startsWith(prefix) || !name.endsWith('.zip')) {
+        continue;
+      }
+      const fullPath: string = `${backupsDir}/${name}`;
+      const stat = fileIo.statSync(fullPath);
+      if (stat.isDirectory()) {
+        continue;
+      }
+      const stampStr: string = name.substring(prefix.length, name.length - 4);
+      const stamp: number = Number(stampStr);
+      const info: VaultBackupInfo = new VaultBackupInfo();
+      info.name = name;
+      info.path = fullPath;
+      info.createdAt = Number.isNaN(stamp) ? stat.mtime * 1000 : stamp;
+      info.sizeBytes = stat.size;
+      list.push(info);
+    }
+    list.sort((a: VaultBackupInfo, b: VaultBackupInfo): number => b.createdAt - a.createdAt);
+    return list;
+  }
+
+  /** 从本地备份快照恢复仓库内容并重新扫描索引。 */
+  public async restoreBackup(vault: VaultInfo, backupName: string): Promise<boolean> {
+    const backupsDir: string = `${this.context.filesDir}/backups`;
+    const backupFile: string = `${backupsDir}/${backupName}`;
+    if (vault.rootPath.length === 0 || !fileIo.accessSync(backupFile)) {
+      return false;
+    }
+    const tempDir: string = `${this.context.cacheDir}/restore_${Date.now()}`;
+    fileIo.mkdirSync(tempDir, true);
+    try {
+      await ZipTransfer.decompressFromFile(backupFile, tempDir);
+      const extractedRoot: string = this.resolveImportRoot(tempDir);
+      this.removeDirectoryContent(vault.rootPath);
+      this.copyDirectoryContent(extractedRoot, vault.rootPath);
+      await NoteDao.removeByVault(this.context, vault.id);
+      await this.scanVault(vault);
+      return true;
+    } catch (error) {
+      LOG.error('restore backup failed');
+      return false;
+    } finally {
+      this.removeDirectory(tempDir);
+    }
+  }
+
+  private copyDirectoryContent(srcDir: string, dstDir: string): void {
+    if (!fileIo.accessSync(dstDir)) {
+      fileIo.mkdirSync(dstDir, true);
+    }
+    const names: string[] = fileIo.listFileSync(srcDir);
+    for (const name of names) {
+      const sFull: string = `${srcDir}/${name}`;
+      const dFull: string = `${dstDir}/${name}`;
+      if (fileIo.statSync(sFull).isDirectory()) {
+        this.copyDirectoryContent(sFull, dFull);
+      } else {
+        fileIo.copyFileSync(sFull, dFull);
+      }
+    }
+  }
+
   /** 删除仓库（包含磁盘目录）。 */
   public async deleteVault(vault: VaultInfo): Promise<void> {
     await NoteDao.removeByVault(this.context, vault.id);
@@ -596,4 +694,12 @@ export class FileStatInfo {
   mtime: number = 0;
   /** 文件大小（字节）。 */
   size: number = 0;
+}
+
+/** 仓库本地 zip 备份快照信息。 */
+export class VaultBackupInfo {
+  name: string = '';
+  path: string = '';
+  createdAt: number = 0;
+  sizeBytes: number = 0;
 }

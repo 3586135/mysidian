@@ -29,24 +29,54 @@ export class PropDao {
     const properties: MdProperty[] = [];
     if (result.goToFirstRow()) {
       do {
-        const property: MdProperty = new MdProperty();
-        property.key = result.getString(0);
-        property.value = result.getString(1);
-        const vtype: string = result.getString(2);
-        if (vtype === 'list') {
-          property.type = MdPropType.LIST;
-          property.listValue = property.value.split(',');
-        } else if (vtype === 'number') {
-          property.type = MdPropType.NUMBER;
-        } else if (vtype === 'boolean') {
-          property.type = MdPropType.BOOLEAN;
-        } else {
-          property.type = MdPropType.STRING;
-        }
-        properties.push(property);
+        properties.push(PropDao.parseRow(
+          result.getString(0), result.getString(1), result.getString(2)));
       } while (result.goToNextRow());
     }
     result.close();
     return properties;
+  }
+
+  /** 批量查询指定仓库下每篇笔记的 frontmatter 属性（noteId -> properties）。 */
+  public static async propsByVault(context: common.Context,
+    vaultId: number): Promise<Map<number, MdProperty[]>> {
+    const store = await DbHelper.getStore();
+    const args: Array<relationalStore.ValueType> = [vaultId];
+    const result = await store.querySql(
+      'SELECT p.note_id, p.prop_key, p.prop_value, p.vtype FROM prop p ' +
+      'JOIN note n ON n.id = p.note_id WHERE n.vault_id = ? ORDER BY p.note_id ASC', args);
+    const map: Map<number, MdProperty[]> = new Map<number, MdProperty[]>();
+    if (result.goToFirstRow()) {
+      do {
+        const noteId: number = result.getLong(0);
+        const prop: MdProperty = PropDao.parseRow(
+          result.getString(1), result.getString(2), result.getString(3));
+        let list: MdProperty[] | undefined = map.get(noteId);
+        if (list === undefined) {
+          list = [];
+          map.set(noteId, list);
+        }
+        list.push(prop);
+      } while (result.goToNextRow());
+    }
+    result.close();
+    return map;
+  }
+
+  private static parseRow(key: string, value: string, vtype: string): MdProperty {
+    const property: MdProperty = new MdProperty();
+    property.key = key;
+    property.value = value;
+    if (vtype === 'list') {
+      property.type = MdPropType.LIST;
+      property.listValue = value.length > 0 ? value.split(',') : [];
+    } else if (vtype === 'number') {
+      property.type = MdPropType.NUMBER;
+    } else if (vtype === 'boolean') {
+      property.type = MdPropType.BOOLEAN;
+    } else {
+      property.type = MdPropType.STRING;
+    }
+    return property;
   }
 }

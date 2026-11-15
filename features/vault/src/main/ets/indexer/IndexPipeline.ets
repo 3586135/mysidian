@@ -149,7 +149,7 @@ export class IndexPipeline {
     }
   }
 
-  /** 收集文档中的标签（含 frontmatter 标签）。 */
+  /** 收集文档中的标签（含 frontmatter 标签与列表项内标签）。 */
   private static collectTags(document: MdDocument): string[] {
     const tags: string[] = [];
     for (const tag of document.frontmatter.tags) {
@@ -159,8 +159,20 @@ export class IndexPipeline {
       for (const inline of block.inlines) {
         IndexPipeline.collectInlineTags(inline, tags);
       }
+      for (const item of block.items) {
+        IndexPipeline.collectItemTags(item, tags);
+      }
     }
     return tags;
+  }
+
+  private static collectItemTags(item: MdListItem, tags: string[]): void {
+    for (const inline of item.inlines) {
+      IndexPipeline.collectInlineTags(inline, tags);
+    }
+    for (const child of item.children) {
+      IndexPipeline.collectItemTags(child, tags);
+    }
   }
 
   private static collectInlineTags(inline: MdInline, tags: string[]): void {

@@ -1,6 +1,6 @@
 import { relationalStore } from '@kit.ArkData';
 import { common } from '@kit.AbilityKit';
-import { MdBlock, MdBlockType, MdInline, OutlineEntry } from '@ohos/domain';
+import { MdBlock, MdBlockType, MdInline, MdListItem, OutlineEntry } from '@ohos/domain';
 import { DbHelper } from './DbHelper';
 
 /** 块级索引数据访问（大纲来源于此）。 */
@@ -91,9 +91,44 @@ export class BlockDao {
     return map;
   }
 
-  /** 提取块内纯文本。 */
+  /**
+   * 批量查询指定路径集合（如当月日记 YYYY-MM-DD.md）的列表块文本，
+   * 供日历视图直接从 RDB 统计未完成任务数。
+   */
+  public static async listBlocksByPaths(context: common.Context, vaultId: number,
+    paths: string[]): Promise<Map<string, string>> {
+    const map: Map<string, string> = new Map<string, string>();
+    if (paths.length === 0) {
+      return map;
+    }
+    const store = await DbHelper.getStore();
+    const placeholders: string = paths.map((): string => '?').join(',');
+    const args: Array<relationalStore.ValueType> = [vaultId, MdBlockType.LIST];
+    for (const p of paths) {
+      args.push(p);
+    }
+    const result = await store.querySql(
+      `SELECT n.path, b.block_text FROM block b JOIN note n ON n.id = b.note_id ` +
+      `WHERE n.vault_id = ? AND b.type = ? AND n.path IN (${placeholders}) ` +
+      `ORDER BY n.path ASC, b.ordinal ASC`, args);
+    if (result.goToFirstRow()) {
+      do {
+        const notePath: string = result.getString(0);
+        const text: string = result.getString(1);
+        const prev: string | undefined = map.get(notePath);
+        map.set(notePath, prev === undefined ? text : `${prev}\n${text}`);
+      } while (result.goToNextRow());
+    }
+    result.close();
+    return map;
+  }
+
+  /** 提取块内纯文本（含列表块的所有列表项源码行）。 */
   public static plainTextOfBlock(block: MdBlock): string {
     if (block.inlines.length === 0) {
+      if (block.items.length > 0) {
+        return BlockDao.itemsText(block.items);
+      }
       return block.rawContent;
     }
     let text: string = '';
@@ -101,6 +136,22 @@ export class BlockDao {
       text += BlockDao.inlineText(inline);
     }
     return text;
+  }
+
+  private static itemsText(items: MdListItem[]): string {
+    const lines: string[] = [];
+    for (const item of items) {
+      if (item.rawLine.length > 0) {
+        lines.push(item.rawLine);
+      }
+      if (item.children.length > 0) {
+        const childText: string = BlockDao.itemsText(item.children);
+        if (childText.length > 0) {
+          lines.push(childText);
+        }
+      }
+    }
+    return lines.join('\n');
   }
 
   private static plainText(block: MdBlock): string {

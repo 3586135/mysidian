@@ -16,6 +16,16 @@ export class ZipTransfer {
     parallel: zlib.ParallelStrategy.PARALLEL_STRATEGY_SEQUENTIAL
   };
 
+  /** 将沙箱目录直接压缩为指定 zip 文件路径（供定期/手动备份快照使用）。 */
+  public static async compressToFile(srcDir: string, destFile: string): Promise<void> {
+    await zlib.compressFile(srcDir, destFile, ZipTransfer.OPTIONS);
+  }
+
+  /** 将沙箱内 zip 备份文件解压到目标目录。 */
+  public static async decompressFromFile(srcFile: string, destDir: string): Promise<void> {
+    await zlib.decompressFile(srcFile, destDir, ZipTransfer.OPTIONS);
+  }
+
   /**
    * 将用户选择的 zip（uri）导入到目标目录。
    */

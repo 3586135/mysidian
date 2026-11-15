@@ -72,4 +72,29 @@ export class TagDao {
     result.close();
     return paths;
   }
+
+  /** 批量查询指定仓库下每篇笔记的标签集合（noteId -> tags）。 */
+  public static async tagsByVault(context: common.Context,
+    vaultId: number): Promise<Map<number, string[]>> {
+    const store = await DbHelper.getStore();
+    const args: Array<relationalStore.ValueType> = [vaultId];
+    const result = await store.querySql(
+      'SELECT t.note_id, t.tag FROM tag t JOIN note n ON n.id = t.note_id ' +
+      'WHERE n.vault_id = ? ORDER BY t.note_id ASC, t.tag ASC', args);
+    const map: Map<number, string[]> = new Map<number, string[]>();
+    if (result.goToFirstRow()) {
+      do {
+        const noteId: number = result.getLong(0);
+        const tag: string = result.getString(1);
+        let list: string[] | undefined = map.get(noteId);
+        if (list === undefined) {
+          list = [];
+          map.set(noteId, list);
+        }
+        list.push(tag);
+      } while (result.goToNextRow());
+    }
+    result.close();
+    return map;
+  }
 }
