@@ -8,7 +8,7 @@ import { SyncSettingsSheet } from '../view/design/SyncSettingsSheet';
 import { VaultManagerSheet } from '../view/design/VaultManagerSheet';
 import { WorkspaceView, DesignViewMode, WorkspaceBackSignal } from '../view/design/WorkspaceView';
 import { CreateVaultRequest, DesignDialogKind, DialogHost } from '../view/design/DialogHost';
-import { GraphLayout } from '../viewmodel/GraphLayout';
+import { GraphLayout, GraphLayoutStats } from '../viewmodel/GraphLayout';
 import { DesignPalette } from '../viewmodel/DesignPalette';
 import { SearchViewModel } from '../viewmodel/SearchViewModel';
 import { SyncViewModel } from '../viewmodel/SyncViewModel';
@@ -26,6 +26,9 @@ const SLIDER_WIDTH_VP: number = 60;           // 滑块指示器宽度
 const SLIDER_HEIGHT_VP: number = 54;          // 滑块指示器高度
 const SLIDER_RADIUS_VP: number = 27;          // 滑块指示器圆角
 const GRAPH_CANVAS_HEIGHT_VP: number = 340;   // 图谱画布高度
+const GRAPH_MAX_SCALE: number = 16;            // 图谱双指缩放上限倍数（足够把最密的簇完全展开）
+const GRAPH_ZOOM_STEP: number = 1.3;          // 缩放按钮单步倍率
+const GRAPH_PINCH_COOLDOWN_MS: number = 300;  // 捏合结束后抑制误触点击的窗口期
 const DOUBLE_PI: number = Math.PI * 2;
 const SEARCH_DEBOUNCE_MS: number = 250;       // 搜索防抖时长
 
@@ -79,7 +82,7 @@ class DesignSearchRow {
   }
 }
 
-// ===== 图谱页：换算为 vp 后的节点（标签叠加定位用） =====
+// ===== 图谱页：换算为 vp 后的节点（命中测试/画布绘制用） =====
 class DesignGraphNodeVp {
   keyId: string;
   x: number;
@@ -87,14 +90,31 @@ class DesignGraphNodeVp {
   radiusVp: number;
   label: string;
   isRoot: boolean;
+  /** 连线度数（标签按度数分级披露，只标注枢纽节点）。 */
+  degree: number;
+  /** 截断后的短标签（首帧 measureText 计算后缓存，避免逐帧测量）。 */
+  shortLabel: string = '';
 
-  constructor(keyId: string, x: number, y: number, radiusVp: number, label: string, isRoot: boolean) {
+  constructor(keyId: string, x: number, y: number, radiusVp: number, label: string,
+    isRoot: boolean, degree: number) {
     this.keyId = keyId;
     this.x = x;
     this.y = y;
     this.radiusVp = radiusVp;
     this.label = label;
     this.isRoot = isRoot;
+    this.degree = degree;
+  }
+}
+
+/** 图谱边（端点直接持有节点引用，绘制免查表）。 */
+class DesignGraphEdgeVp {
+  fromNode: DesignGraphNodeVp;
+  toNode: DesignGraphNodeVp;
+
+  constructor(fromNode: DesignGraphNodeVp, toNode: DesignGraphNodeVp) {
+    this.fromNode = fromNode;
+    this.toNode = toNode;
   }
 }
 
@@ -212,7 +232,15 @@ struct DesignIndex {
   @Local searchRows: DesignSearchRow[] = [];// 搜索页：命中结果（含高亮分段）
   @Local selectedGraphPath: string = '';   // 图谱页：选中节点路径（默认当前笔记）
   @Local graphCanvasWidthVp: number = 0;   // 图谱画布实际宽度
-  @Local graphNodeVpList: DesignGraphNodeVp[] = []; // 图谱节点 vp 坐标（标签叠加用）
+  @Local graphCanvasHeightVp: number = GRAPH_CANVAS_HEIGHT_VP; // 图谱画布高度（随节点数自适应）
+  @Local graphClusterCount: number = 0;    // 图谱页：链接群簇数（洞见行）
+  @Local graphOrphanCount: number = 0;     // 图谱页：未链接笔记数（洞见行）
+  private graphNodeVpList: DesignGraphNodeVp[] = []; // 图谱节点 vp 坐标（命中测试/绘制用）
+  private graphEdgeVpList: DesignGraphEdgeVp[] = []; // 图谱边端点引用（绘制用，避免逐帧 Map 查找）
+  private graphNeighbors: Map<string, Set<string>> = new Map<string, Set<string>>(); // 邻接表（聚焦暗化）
+  private graphScale: number = 1;             // 图谱缩放倍数（双指捏合 / 按钮）
+  private graphOffsetXVp: number = 0;         // 图谱平移偏移 x（vp）
+  private graphOffsetYVp: number = 0;         // 图谱平移偏移 y（vp）
   @Local showFabMenu: boolean = false;     // FAB 长按气泡菜单
   @Local showQuickEditor: boolean = false; // 快速笔记半模态
   @Local fabLongPressConsumed: boolean = false; // 长按已消费标志（防误触发 click）
@@ -232,6 +260,16 @@ struct DesignIndex {
   private canvasSettings: RenderingContextSettings = new RenderingContextSettings(true);
   private canvasContext: CanvasRenderingContext2D = new CanvasRenderingContext2D(this.canvasSettings);
   private graphNodeMap: Map<string, DesignGraphNodeVp> = new Map<string, DesignGraphNodeVp>();
+  private graphPrevPinchDist: number = 0;    // 捏合基线：双指间距（vp）
+  private graphPrevMidXVp: number = 0;       // 捏合基线：双指中点 x（vp）
+  private graphPrevMidYVp: number = 0;       // 捏合基线：双指中点 y（vp）
+  private graphPinchEndTime: number = 0;     // 最近一次捏合结束时刻（抑制误触点击）
+  private graphPageScroller: Scroller = new Scroller(); // 图谱页滚动控制器（单指拖动回落为页面滚动）
+  private graphInteracting: boolean = false; // 交互进行中（捏合/单指平移）：快速重绘省略标签
+  private graphLastDrawMs: number = 0;       // 最近一次绘制时间戳（节流：一帧最多画一次）
+  private graphPanBaseXVp: number = 0;       // 单指平移手势起点：图谱偏移 x
+  private graphPanBaseYVp: number = 0;       // 单指平移手势起点：图谱偏移 y
+  private graphPanLastYVp: number = 0;       // 未缩放回落页面滚动：上次累计 y
   private searchDebounceId: number = -1;
   private initReady: boolean = false;            // 视图模型初始化完成
   private darkModeListener: mediaquery.MediaQueryListener | null = null; // 深浅色切换监听（Canvas 重绘）
@@ -249,6 +287,8 @@ struct DesignIndex {
   private workspaceBackSignal: WorkspaceBackSignal = new WorkspaceBackSignal();
   /** 本次进入工作台携带的启动动作（如 templates，退出时复位）。 */
   private workspaceLaunchAction: string = '';
+  /** 本次进入工作台是否展开了目录（首页文件夹卡片入口，退出时复位）。 */
+  private workspaceLaunchExpand: boolean = false;
   /** 自动同步周期。 */
   private static readonly AUTO_SYNC_INTERVAL_MS: number = 30 * 60 * 1000;
 
@@ -310,7 +350,7 @@ struct DesignIndex {
     this.vm.init(context).then((): void => {
       this.initReady = true;
       this.handleLaunchParams();
-      this.vm.loadGraph().then((): void => {
+      this.vm.loadVaultGraph().then((): void => {
         this.rebuildGraphLayout();
       });
     });
@@ -387,6 +427,7 @@ struct DesignIndex {
           bottomInset: this.bottomInset,
           backSignal: this.workspaceBackSignal,
           launchAction: this.workspaceLaunchAction,
+          launchExpandFolder: this.workspaceLaunchExpand,
           syncConfigured: this.syncVm.configured,
           onRequestExit: (): void => {
             this.exitWorkspace();
@@ -435,6 +476,7 @@ struct DesignIndex {
       if (this.showSyncPanel) {
         SyncSettingsSheet({
           syncVm: this.syncVm,
+          vault: this.vm.currentVault,
           onImportCert: (): void => {
             this.pickCertFile();
           },
@@ -1083,7 +1125,7 @@ struct DesignIndex {
   @Builder
   graphPage() {
     Column() {
-      Scroll() {
+      Scroll(this.graphPageScroller) {
         Column({ space: 10 }) {
           Row() {
             Text($r('app.string.design_graph_source'))
@@ -1095,7 +1137,17 @@ struct DesignIndex {
           .width('100%')
 
           if (this.vm.currentVault.name.length > 0) {
-            Text(this.vm.noteTitle)
+            Text($r('app.string.design_graph_scope', this.vm.currentVault.name,
+              this.vm.vaultGraph.nodes.length))
+              .fontSize(12)
+              .fontColor($r('app.color.design_text_secondary'))
+              .maxLines(1)
+              .textOverflow({ overflow: TextOverflow.Ellipsis })
+              .width('100%')
+          }
+
+          if (this.graphClusterCount > 0 || this.graphOrphanCount > 0) {
+            Text($r('app.string.design_graph_stats', this.graphClusterCount, this.graphOrphanCount))
               .fontSize(12)
               .fontColor($r('app.color.design_text_secondary'))
               .maxLines(1)
@@ -1106,7 +1158,7 @@ struct DesignIndex {
           if (this.vm.vaults.length === 0) {
             this.needVaultCard()
           } else {
-            if (this.vm.graph.nodes.length === 0) {
+            if (this.vm.vaultGraph.nodes.length === 0) {
               Column() {
                 Text($r('app.string.design_graph_empty'))
                   .fontSize(13)
@@ -1119,34 +1171,63 @@ struct DesignIndex {
               .backgroundColor($r('app.color.design_surface_solid'))
               .border({ width: 1, color: $r('app.color.design_stroke') })
             } else {
-              // 画布绘制连线与节点圆点，节点标题用 Text 叠加保证字体清晰
-              Stack() {
+              // 画布一体绘制：连线、节点、标签均走 Canvas（无组件层标签，
+              // 捏合缩放只触发重绘，不触发任何 ArkUI 组件重排）
+              Stack({ alignContent: Alignment.TopEnd }) {
                 Canvas(this.canvasContext)
                   .width('100%')
-                  .height(GRAPH_CANVAS_HEIGHT_VP)
+                  .height(this.graphCanvasHeightVp)
                   .onReady(() => {
                     this.drawGraph();
                   })
+                  .onTouch((event: TouchEvent) => {
+                    this.handleGraphTouch(event);
+                  })
+                  // 互斥手势组：单指平移（放大后拖图 / 未放大滚页面）与双指捏合
+                  .gesture(GestureGroup(GestureMode.Exclusive,
+                    PanGesture({ fingers: 1 })
+                      .onActionStart((event: GestureEvent) => {
+                        this.graphPanBaseXVp = this.graphOffsetXVp;
+                        this.graphPanBaseYVp = this.graphOffsetYVp;
+                        this.graphPanLastYVp = 0;
+                        if (this.graphScale > 1) {
+                          this.graphInteracting = true;
+                        }
+                      })
+                      .onActionUpdate((event: GestureEvent) => {
+                        if (this.graphScale > 1) {
+                          // 已放大：单指直接平移图谱
+                          this.graphOffsetXVp = this.clampGraphOffset(
+                            this.graphPanBaseXVp + event.offsetX,
+                            this.graphCanvasWidthVp, this.graphScale);
+                          this.graphOffsetYVp = this.clampGraphOffset(
+                            this.graphPanBaseYVp + event.offsetY,
+                            this.graphCanvasHeightVp, this.graphScale);
+                          this.requestGraphDraw();
+                        } else {
+                          // 未放大：单指拖动回落为页面滚动
+                          const deltaYVp: number = event.offsetY - this.graphPanLastYVp;
+                          this.graphPanLastYVp = event.offsetY;
+                          if (Math.abs(deltaYVp) > 0.01) {
+                            this.graphPageScroller.scrollBy(0, -deltaYVp);
+                          }
+                        }
+                      })
+                      .onActionEnd(() => {
+                        if (this.graphInteracting) {
+                          this.graphInteracting = false;
+                          this.drawGraph();
+                        }
+                      }),
+                    PinchGesture({ fingers: 2 })
+                  ))
                   .onClick((event: ClickEvent) => {
                     this.handleGraphClick(event);
                   })
-                ForEach(this.graphNodeVpList, (node: DesignGraphNodeVp) => {
-                  Text(node.label)
-                    .fontSize(node.isRoot ? 13 : 11)
-                    .fontWeight(node.keyId === this.selectedGraphPath ? FontWeight.Bold : FontWeight.Medium)
-                    .fontColor(node.keyId === this.selectedGraphPath ?
-                      $r('app.color.design_accent') : $r('app.color.design_text_secondary'))
-                    .maxLines(1)
-                    .textOverflow({ overflow: TextOverflow.Ellipsis })
-                    .width(76)
-                    .textAlign(TextAlign.Center)
-                    .position({ x: node.x, y: node.y + node.radiusVp + 12 })
-                    .markAnchor({ x: '50%', y: '0%' })
-                    .hitTestBehavior(HitTestMode.Transparent)
-                }, (node: DesignGraphNodeVp) => node.keyId)
+                this.graphZoomControls()
               }
               .width('100%')
-              .height(GRAPH_CANVAS_HEIGHT_VP)
+              .height(this.graphCanvasHeightVp)
               .onAreaChange((_oldArea: Area, newArea: Area) => {
                 const widthVp: number = Number(newArea.width);
                 if (Math.abs(widthVp - this.graphCanvasWidthVp) > 0.5) {
@@ -1179,6 +1260,58 @@ struct DesignIndex {
     .width('100%')
     .height('100%')
     .padding({ top: this.topInset + 16 })
+  }
+
+  /** 图谱缩放控件组（画布右上角悬浮）：放大 / 缩小 / 复位。 */
+  @Builder
+  graphZoomControls() {
+    Column({ space: 8 }) {
+      Stack() {
+        SymbolGlyph($r('sys.symbol.plus'))
+          .fontSize(15)
+          .fontColor([$r('app.color.design_text_primary')])
+      }
+      .width(34)
+      .height(34)
+      .borderRadius(17)
+      .backgroundColor($r('app.color.design_elevated'))
+      .border({ width: 1, color: $r('app.color.design_stroke') })
+      .shadow({ radius: 12, color: $r('app.color.design_shadow'), offsetY: 4 })
+      .onClick(() => {
+        this.zoomGraphBy(GRAPH_ZOOM_STEP);
+      })
+
+      Stack() {
+        SymbolGlyph($r('sys.symbol.minus'))
+          .fontSize(15)
+          .fontColor([$r('app.color.design_text_primary')])
+      }
+      .width(34)
+      .height(34)
+      .borderRadius(17)
+      .backgroundColor($r('app.color.design_elevated'))
+      .border({ width: 1, color: $r('app.color.design_stroke') })
+      .shadow({ radius: 12, color: $r('app.color.design_shadow'), offsetY: 4 })
+      .onClick(() => {
+        this.zoomGraphBy(1 / GRAPH_ZOOM_STEP);
+      })
+
+      Stack() {
+        SymbolGlyph($r('sys.symbol.arrow_counterclockwise'))
+          .fontSize(15)
+          .fontColor([$r('app.color.design_text_primary')])
+      }
+      .width(34)
+      .height(34)
+      .borderRadius(17)
+      .backgroundColor($r('app.color.design_elevated'))
+      .border({ width: 1, color: $r('app.color.design_stroke') })
+      .shadow({ radius: 12, color: $r('app.color.design_shadow'), offsetY: 4 })
+      .onClick(() => {
+        this.resetGraphZoom();
+      })
+    }
+    .margin({ top: 10, right: 10 })
   }
 
   // ==================== 更多页 ====================
@@ -1564,6 +1697,7 @@ struct DesignIndex {
   }
 
   /** 打开页内工作台子视图：处理携带参数后切换 viewMode（无 router 跳转）。 */  private openWorkspace(params: Record<string, Object>): void {
+    this.workspaceLaunchExpand = false;
     const openPathRaw: Object | undefined = params['openPath'];
     const openPath: string = typeof openPathRaw === 'string' ? openPathRaw : '';
     if (openPath.length > 0) {
@@ -1572,6 +1706,7 @@ struct DesignIndex {
       const expandPathRaw: Object | undefined = params['expandPath'];
       const expandPath: string = typeof expandPathRaw === 'string' ? expandPathRaw : '';
       if (expandPath.length > 0) {
+        this.workspaceLaunchExpand = true;
         for (const item of this.vm.treeItems) {
           if (item.node.path === expandPath && item.node.isDir && !item.expanded) {
             this.vm.toggleDir(expandPath);
@@ -1592,6 +1727,7 @@ struct DesignIndex {
   private exitWorkspace(): void {
     this.setEditorKeyboardMode(false);
     this.workspaceLaunchAction = '';
+    this.workspaceLaunchExpand = false;
     this.getUIContext().animateTo({ duration: 260, curve: Curve.Friction }, () => {
       this.viewMode = DesignViewMode.HOME;
     });
@@ -1916,7 +2052,7 @@ struct DesignIndex {
   /** 从工作台返回：恢复最近会话（仓库/笔记/图谱/搜索）。 */
   private refreshAfterReturn(): void {
     this.vm.restoreSession().then((): void => {
-      this.vm.loadGraph().then((): void => {
+      this.vm.loadVaultGraph().then((): void => {
         this.selectedGraphPath = '';
         this.rebuildGraphLayout();
       });
@@ -1926,16 +2062,39 @@ struct DesignIndex {
     });
   }
 
-  /** 按画布实际宽度重算图谱布局（力导向）并重绘。 */
+  /** 标签分级披露：缩放越小只标枢纽，放大后逐步显示全部（像地图一样渐进披露细节）。 */
+  private labelMinDegree(scale: number): number {
+    if (scale >= 2.6) {
+      return 0;
+    }
+    if (scale >= 1.6) {
+      return 1;
+    }
+    return this.graphNodeVpList.length > 150 ? 3 : 1;
+  }
+
+  /** 按画布实际宽度重算图谱布局（分簇力导向）并重绘。 */
   private rebuildGraphLayout(): void {
     const widthVp: number = this.graphCanvasWidthVp;
-    const graph = this.vm.graph;
+    const graph = this.vm.vaultGraph;
     if (widthVp <= 0 || graph.nodes.length === 0) {
       this.graphNodeVpList = [];
       this.graphNodeMap = new Map<string, DesignGraphNodeVp>();
+      this.graphEdgeVpList = [];
+      this.graphNeighbors = new Map<string, Set<string>>();
+      this.graphClusterCount = 0;
+      this.graphOrphanCount = 0;
       return;
     }
-    GraphLayout.compute(graph, widthVp, GRAPH_CANVAS_HEIGHT_VP);
+    // 画布高度随节点数自适应：节点越多画布越高（页面本身可滚动）。
+    this.graphCanvasHeightVp = Math.max(GRAPH_CANVAS_HEIGHT_VP,
+      Math.min(900, 260 + graph.nodes.length * 1.0));
+    const startedAt: number = Date.now();
+    const stats: GraphLayoutStats = GraphLayout.compute(graph, widthVp, this.graphCanvasHeightVp);
+    LOG.info(`graph layout: nodes=${graph.nodes.length} clusters=${stats.clusters}` +
+      ` orphans=${stats.orphans} cost=${Date.now() - startedAt}ms`);
+    this.graphClusterCount = stats.clusters;
+    this.graphOrphanCount = stats.orphans;
     if (this.selectedGraphPath.length === 0) {
       for (const node of graph.nodes) {
         if (node.root) {
@@ -1944,16 +2103,52 @@ struct DesignIndex {
         }
       }
     }
+    // 度数统计 + 邻接表（标签分级 / 聚焦暗化依据）
+    const degrees: Map<string, number> = new Map<string, number>();
+    const neighbors: Map<string, Set<string>> = new Map<string, Set<string>>();
+    for (const edge of graph.edges) {
+      degrees.set(edge.from, (degrees.get(edge.from) ?? 0) + 1);
+      degrees.set(edge.to, (degrees.get(edge.to) ?? 0) + 1);
+      const fromSet: Set<string> | undefined = neighbors.get(edge.from);
+      if (fromSet === undefined) {
+        neighbors.set(edge.from, new Set<string>([edge.to]));
+      } else {
+        fromSet.add(edge.to);
+      }
+      const toSet: Set<string> | undefined = neighbors.get(edge.to);
+      if (toSet === undefined) {
+        neighbors.set(edge.to, new Set<string>([edge.from]));
+      } else {
+        toSet.add(edge.from);
+      }
+    }
+    this.graphNeighbors = neighbors;
     const list: DesignGraphNodeVp[] = [];
     const map: Map<string, DesignGraphNodeVp> = new Map<string, DesignGraphNodeVp>();
     for (const node of graph.nodes) {
       const vpNode: DesignGraphNodeVp = new DesignGraphNodeVp(node.path, node.x, node.y,
-        node.radius, node.title, node.root);
+        node.radius, node.title, node.root, degrees.get(node.path) ?? 0);
       list.push(vpNode);
       map.set(node.path, vpNode);
     }
     this.graphNodeVpList = list;
     this.graphNodeMap = map;
+    // 边端点引用列表（绘制免逐帧查 Map）
+    const edgeList: DesignGraphEdgeVp[] = [];
+    for (const edge of graph.edges) {
+      const fromNode: DesignGraphNodeVp | undefined = map.get(edge.from);
+      const toNode: DesignGraphNodeVp | undefined = map.get(edge.to);
+      if (fromNode === undefined || toNode === undefined) {
+        continue;
+      }
+      edgeList.push(new DesignGraphEdgeVp(fromNode, toNode));
+    }
+    this.graphEdgeVpList = edgeList;
+    // 布局重算后坐标系已变化：复位缩放/平移，避免旧偏移指向错误区域
+    this.graphScale = 1;
+    this.graphOffsetXVp = 0;
+    this.graphOffsetYVp = 0;
+    this.graphPrevPinchDist = 0;
     this.drawGraph();
   }
 
@@ -1961,77 +2156,192 @@ struct DesignIndex {
   private paletteColor(name: string): string {
     const context = this.getUIContext().getHostContext();
     if (context === undefined) {
-      return '#808080';
+      return DesignPalette.FALLBACK;
     }
     return DesignPalette.color(context.resourceManager, name);
   }
 
-  /** 绘制图谱：连线（选中关联高亮）+ 节点圆点（选中放大加光晕）。 */
+  /**
+   * 绘制图谱（画布一体绘制，捏合缩放零组件重排）：
+   * - 连线按「活跃 / 普通 / 暗化」三类各自合并成单次描边（数千条边也只有 3 次绘制调用）
+   * - 节点圆点按「选中 / 邻居 / 无关」分批填充
+   * - 选中即聚焦：无关连线与节点淡出，突出当前笔记的知识邻域（Obsidian 式聚焦）
+   * - 标签画布内绘制（描边勾底保证可读），随缩放分级披露 + 视口裁剪
+   */
   private drawGraph(): void {
     const ctx: CanvasRenderingContext2D = this.canvasContext;
     const widthVp: number = this.graphCanvasWidthVp;
     if (widthVp <= 0) {
       return;
     }
-    ctx.clearRect(0, 0, widthVp, GRAPH_CANVAS_HEIGHT_VP);
+    this.graphLastDrawMs = Date.now();
+    ctx.clearRect(0, 0, widthVp, this.graphCanvasHeightVp);
     if (this.graphNodeVpList.length === 0) {
       return;
     }
     // 色板按当前深浅模式解析
     const accent: string = this.paletteColor('design_accent');
     const elevated: string = this.paletteColor('design_elevated');
-    const edgeActive: string = DesignPalette.rgba(accent, 0.8);
-    const edgeIdle: string = DesignPalette.rgba(this.paletteColor('design_text_secondary'), 0.28);
-    const haloColor: string = DesignPalette.rgba(accent, 0.16);
-    const nodeStroke: string = DesignPalette.rgba(this.paletteColor('design_text_primary'), 0.14);
-    // 连线
-    for (const edge of this.vm.graph.edges) {
-      const fromNode: DesignGraphNodeVp | undefined = this.graphNodeMap.get(edge.from);
-      const toNode: DesignGraphNodeVp | undefined = this.graphNodeMap.get(edge.to);
-      if (fromNode === undefined || toNode === undefined) {
-        continue;
-      }
-      const active: boolean = edge.from === this.selectedGraphPath || edge.to === this.selectedGraphPath;
-      ctx.strokeStyle = active ? edgeActive : edgeIdle;
-      ctx.lineWidth = active ? 2 : 1.2;
+    const textSecondary: string = this.paletteColor('design_text_secondary');
+    const background: string = this.paletteColor('design_bg');
+    const selected: string = this.selectedGraphPath;
+    const focusMode: boolean = selected.length > 0;
+    const neighborSet: Set<string> | undefined = focusMode ? this.graphNeighbors.get(selected) : undefined;
+    // 整体变换：清屏在恒等变换下完成，内容按缩放/平移绘制
+    ctx.save();
+    ctx.translate(this.graphOffsetXVp, this.graphOffsetYVp);
+    ctx.scale(this.graphScale, this.graphScale);
+    // 线宽随缩放反向补偿：屏幕厚度恒定，放大后线条不会变粗
+    const invScale: number = 1 / this.graphScale;
+    // ===== 连线（三类合并描边） =====
+    if (focusMode) {
+      // 无关连线暗化
+      ctx.strokeStyle = DesignPalette.rgba(textSecondary, 0.06);
+      ctx.lineWidth = invScale;
       ctx.beginPath();
-      ctx.moveTo(fromNode.x, fromNode.y);
-      ctx.quadraticCurveTo((fromNode.x + toNode.x) / 2, (fromNode.y + toNode.y) / 2 - 16, toNode.x, toNode.y);
+      for (const edge of this.graphEdgeVpList) {
+        if (edge.fromNode.keyId !== selected && edge.toNode.keyId !== selected) {
+          ctx.moveTo(edge.fromNode.x, edge.fromNode.y);
+          ctx.lineTo(edge.toNode.x, edge.toNode.y);
+        }
+      }
+      ctx.stroke();
+      // 选中连线高亮
+      ctx.strokeStyle = DesignPalette.rgba(accent, 0.75);
+      ctx.lineWidth = 1.6 * invScale;
+      ctx.beginPath();
+      for (const edge of this.graphEdgeVpList) {
+        if (edge.fromNode.keyId === selected || edge.toNode.keyId === selected) {
+          ctx.moveTo(edge.fromNode.x, edge.fromNode.y);
+          ctx.lineTo(edge.toNode.x, edge.toNode.y);
+        }
+      }
+      ctx.stroke();
+    } else {
+      ctx.strokeStyle = DesignPalette.rgba(textSecondary, 0.22);
+      ctx.lineWidth = 1.1 * invScale;
+      ctx.beginPath();
+      for (const edge of this.graphEdgeVpList) {
+        ctx.moveTo(edge.fromNode.x, edge.fromNode.y);
+        ctx.lineTo(edge.toNode.x, edge.toNode.y);
+      }
       ctx.stroke();
     }
-    // 节点
-    for (const node of this.graphNodeVpList) {
-      const selected: boolean = node.keyId === this.selectedGraphPath;
-      const radiusVp: number = selected ? node.radiusVp * 1.15 : node.radiusVp;
-      if (selected) {
+    // ===== 节点（分批填充） =====
+    if (focusMode) {
+      // 无关节点淡出
+      ctx.fillStyle = DesignPalette.rgba(elevated, 0.35);
+      ctx.beginPath();
+      for (const node of this.graphNodeVpList) {
+        if (node.keyId === selected || (neighborSet !== undefined && neighborSet.has(node.keyId))) {
+          continue;
+        }
+        ctx.moveTo(node.x + node.radiusVp, node.y);
+        ctx.arc(node.x, node.y, node.radiusVp, 0, DOUBLE_PI);
+      }
+      ctx.fill();
+      // 邻居节点正常显示
+      if (neighborSet !== undefined) {
+        ctx.fillStyle = elevated;
         ctx.beginPath();
-        ctx.fillStyle = haloColor;
-        ctx.arc(node.x, node.y, node.radiusVp * 1.7, 0, DOUBLE_PI);
+        for (const node of this.graphNodeVpList) {
+          if (node.keyId === selected || !neighborSet.has(node.keyId)) {
+            continue;
+          }
+          ctx.moveTo(node.x + node.radiusVp, node.y);
+          ctx.arc(node.x, node.y, node.radiusVp, 0, DOUBLE_PI);
+        }
         ctx.fill();
       }
+    } else {
+      ctx.fillStyle = elevated;
       ctx.beginPath();
-      ctx.fillStyle = selected ? accent : elevated;
-      ctx.arc(node.x, node.y, radiusVp, 0, DOUBLE_PI);
+      for (const node of this.graphNodeVpList) {
+        ctx.moveTo(node.x + node.radiusVp, node.y);
+        ctx.arc(node.x, node.y, node.radiusVp, 0, DOUBLE_PI);
+      }
+      ctx.fill();
+    }
+    // 选中节点：光晕 + 强调色
+    const selectedNode: DesignGraphNodeVp | undefined = this.graphNodeMap.get(selected);
+    if (selectedNode !== undefined) {
+      ctx.beginPath();
+      ctx.fillStyle = DesignPalette.rgba(accent, 0.16);
+      ctx.arc(selectedNode.x, selectedNode.y, selectedNode.radiusVp * 1.7, 0, DOUBLE_PI);
       ctx.fill();
       ctx.beginPath();
-      ctx.strokeStyle = nodeStroke;
-      ctx.lineWidth = 1;
-      ctx.arc(node.x, node.y, radiusVp, 0, DOUBLE_PI);
-      ctx.stroke();
+      ctx.fillStyle = accent;
+      ctx.moveTo(selectedNode.x + selectedNode.radiusVp, selectedNode.y);
+      ctx.arc(selectedNode.x, selectedNode.y, selectedNode.radiusVp * 1.15, 0, DOUBLE_PI);
+      ctx.fill();
     }
+    ctx.restore();
+    // ===== 标签（屏幕空间绘制：字号恒定不随缩放膨胀，截断缓存跨缩放有效） =====
+    // 交互进行中（捏合/平移）省略标签：strokeText 成本高，留到手势结束再补画
+    if (!this.graphInteracting) {
+      const scale: number = this.graphScale;
+      const minDegree: number = this.labelMinDegree(scale);
+      const canvasH: number = this.graphCanvasHeightVp;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'top';
+      ctx.lineJoin = 'round';
+      let labelCount: number = 0;
+      for (const node of this.graphNodeVpList) {
+        if (labelCount >= 90) {
+          break;
+        }
+        const isSelected: boolean = node.keyId === selected;
+        if (!isSelected && node.degree < minDegree) {
+          continue;
+        }
+        const screenX: number = node.x * scale + this.graphOffsetXVp;
+        const screenY: number = (node.y + node.radiusVp) * scale + this.graphOffsetYVp + 6;
+        if (screenX < -60 || screenX > widthVp + 60 ||
+          screenY < -16 || screenY > canvasH + 16) {
+          continue;
+        }
+        // 短标签截断（首帧计算后缓存）
+        if (node.shortLabel.length === 0) {
+          ctx.font = '400 11px sans-serif';
+          node.shortLabel = GraphLayoutStats.clipLabel(ctx, node.label, 84);
+        }
+        ctx.font = isSelected ? '600 12px sans-serif' : '400 11px sans-serif';
+        ctx.lineWidth = 3;
+        ctx.strokeStyle = DesignPalette.rgba(background, 0.85);
+        ctx.strokeText(node.shortLabel, screenX, screenY);
+        ctx.fillStyle = isSelected ? accent : textSecondary;
+        ctx.fillText(node.shortLabel, screenX, screenY);
+        labelCount += 1;
+      }
+    }
+  }
+
+  /** 交互期节流重绘：触摸事件频率高于刷新率，一帧内只画一次。 */
+  private requestGraphDraw(): void {
+    const now: number = Date.now();
+    if (now - this.graphLastDrawMs < 16) {
+      return;
+    }
+    this.drawGraph();
   }
 
   /** 点击画布：命中未选中节点则高亮；命中已选中节点则在工作台打开。 */
   private handleGraphClick(event: ClickEvent): void {
-    const xVp: number = event.x;
-    const yVp: number = event.y;
+    // 捏合刚结束的短时间内抑制误触点击
+    if (Date.now() - this.graphPinchEndTime < GRAPH_PINCH_COOLDOWN_MS) {
+      return;
+    }
+    // 逆变换：屏幕坐标 → 图谱世界坐标
+    const xVp: number = (event.x - this.graphOffsetXVp) / this.graphScale;
+    const yVp: number = (event.y - this.graphOffsetYVp) / this.graphScale;
     let hitPath: string = '';
     let bestDistance: number = 1e9;
     for (const node of this.graphNodeVpList) {
       const dxVp: number = node.x - xVp;
       const dyVp: number = node.y - yVp;
       const distance: number = dxVp * dxVp + dyVp * dyVp;
-      const hitRadiusVp: number = node.radiusVp + 12;
+      // 命中垫量随缩放反向补偿，保证指尖命中区域视觉恒定
+      const hitRadiusVp: number = node.radiusVp + 12 / this.graphScale;
       if (distance <= hitRadiusVp * hitRadiusVp && distance < bestDistance) {
         bestDistance = distance;
         hitPath = node.keyId;
@@ -2046,6 +2356,110 @@ struct DesignIndex {
     }
     this.selectedGraphPath = hitPath;
     this.drawGraph();
+  }
+
+  /**
+   * 画布原始触摸：双指捏合缩放 + 双指拖动平移（锚点数学保证指下内容跟手）。
+   * 单指拖动由 PanGesture 处理（放大后平移图谱 / 未放大滚动页面）。
+   */
+  private handleGraphTouch(event: TouchEvent): void {
+    const touches: TouchObject[] = event.touches;
+    if (touches.length < 2) {
+      // 有捏合在进行时抬指/取消：记录结束时刻用于抑制误触点击，并补画标签
+      if (this.graphPrevPinchDist > 0 &&
+        (event.type === TouchType.Up || event.type === TouchType.Cancel)) {
+        this.graphPinchEndTime = Date.now();
+        this.graphInteracting = false;
+        this.drawGraph();
+      }
+      this.graphPrevPinchDist = 0;
+      return;
+    }
+    const first: TouchObject = touches[0];
+    const second: TouchObject = touches[1];
+    const dxVp: number = second.x - first.x;
+    const dyVp: number = second.y - first.y;
+    const distVp: number = Math.sqrt(dxVp * dxVp + dyVp * dyVp);
+    const midXVp: number = (first.x + second.x) / 2;
+    const midYVp: number = (first.y + second.y) / 2;
+    // 基线缺失（双指刚按下 / 抬指后首帧）：只重建基线，不产生跳变
+    if (event.type !== TouchType.Move || this.graphPrevPinchDist <= 0 || distVp <= 0) {
+      this.graphPrevPinchDist = distVp;
+      this.graphPrevMidXVp = midXVp;
+      this.graphPrevMidYVp = midYVp;
+      return;
+    }
+    const oldScale: number = this.graphScale;
+    let newScale: number = oldScale * (distVp / this.graphPrevPinchDist);
+    if (newScale > GRAPH_MAX_SCALE) {
+      newScale = GRAPH_MAX_SCALE;
+    }
+    if (newScale < 1) {
+      newScale = 1;
+    }
+    // 锚点：保持指下内容不动（同时覆盖缩放与平移）
+    const worldX: number = (this.graphPrevMidXVp - this.graphOffsetXVp) / oldScale;
+    const worldY: number = (this.graphPrevMidYVp - this.graphOffsetYVp) / oldScale;
+    this.graphScale = newScale;
+    this.graphOffsetXVp = this.clampGraphOffset(midXVp - worldX * newScale,
+      this.graphCanvasWidthVp, newScale);
+    this.graphOffsetYVp = this.clampGraphOffset(midYVp - worldY * newScale,
+      this.graphCanvasHeightVp, newScale);
+    this.graphPrevPinchDist = distVp;
+    this.graphPrevMidXVp = midXVp;
+    this.graphPrevMidYVp = midYVp;
+    // 捏合进行中：节流重绘（省略标签），手势结束再补画
+    this.graphInteracting = true;
+    this.requestGraphDraw();
+  }
+
+  /** 缩放按钮：围绕画布中心缩放一步。 */
+  private zoomGraphBy(factor: number): void {
+    const oldScale: number = this.graphScale;
+    let newScale: number = oldScale * factor;
+    if (newScale > GRAPH_MAX_SCALE) {
+      newScale = GRAPH_MAX_SCALE;
+    }
+    if (newScale < 1) {
+      newScale = 1;
+    }
+    if (newScale === oldScale) {
+      return;
+    }
+    const centerXVp: number = this.graphCanvasWidthVp / 2;
+    const centerYVp: number = this.graphCanvasHeightVp / 2;
+    const worldX: number = (centerXVp - this.graphOffsetXVp) / oldScale;
+    const worldY: number = (centerYVp - this.graphOffsetYVp) / oldScale;
+    this.graphScale = newScale;
+    this.graphOffsetXVp = this.clampGraphOffset(centerXVp - worldX * newScale,
+      this.graphCanvasWidthVp, newScale);
+    this.graphOffsetYVp = this.clampGraphOffset(centerYVp - worldY * newScale,
+      this.graphCanvasHeightVp, newScale);
+    this.drawGraph();
+  }
+
+  /** 复位缩放与平移。 */
+  private resetGraphZoom(): void {
+    if (this.graphScale === 1 && this.graphOffsetXVp === 0 && this.graphOffsetYVp === 0) {
+      return;
+    }
+    this.graphScale = 1;
+    this.graphOffsetXVp = 0;
+    this.graphOffsetYVp = 0;
+    this.graphPrevPinchDist = 0;
+    this.drawGraph();
+  }
+
+  /** 平移偏移钳制：缩放后的内容不脱离画布视口。 */
+  private clampGraphOffset(value: number, extentVp: number, scale: number): number {
+    const minVp: number = extentVp * (1 - scale);
+    if (value > 0) {
+      return 0;
+    }
+    if (value < minVp) {
+      return minVp;
+    }
+    return value;
   }
 
   /** 从文件选择器导入 PEM 证书。 */

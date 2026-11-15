@@ -47,6 +47,23 @@ export class NoteDao {
     return row;
   }
 
+  /** 查询 FTS 虚表中已存在的笔记主键集合（FTS 不可用时返回空集合）。 */
+  public static async listFtsRowIds(context: common.Context): Promise<Set<number>> {
+    const ids: Set<number> = new Set<number>();
+    if (!DbHelper.isFtsReady()) {
+      return ids;
+    }
+    const store = await DbHelper.getStore();
+    const result = await store.querySql('SELECT rowid FROM note_fts');
+    if (result.goToFirstRow()) {
+      do {
+        ids.add(result.getLong(0));
+      } while (result.goToNextRow());
+    }
+    result.close();
+    return ids;
+  }
+
   /** 查询仓库下全部笔记。 */
   public static async listByVault(context: common.Context,
     vaultId: number): Promise<NoteRow[]> {

@@ -9,6 +9,9 @@ import { Tokenizer } from '../indexer/Tokenizer';
  * 优先使用 FTS5 虚表（MATCH），平台不支持时退化为 LIKE 扫描。
  */
 export class SearchDao {
+  /** ??????????????? SQLite ?????? */
+  private static readonly SNIPPET_BATCH: number = 200;
+
   /** 执行检索。 */
   public static async search(context: common.Context, vaultId: number,
     query: SearchQuery): Promise<SearchHit[]> {
@@ -19,7 +22,11 @@ export class SearchDao {
     }
     let hits: SearchHit[] = [];
     if (DbHelper.isFtsReady()) {
-      hits = await SearchDao.searchByFts(vaultId, query);
+      try {
+        hits = await SearchDao.searchByFts(vaultId, query);
+      } catch (error) {
+        hits = [];
+      }
       if (hits.length > 0 || keyword.length === 0) {
         await SearchDao.fillSnippets(vaultId, hits, keyword);
         await SearchDao.fillPropSnippets(hits, query);
@@ -38,7 +45,8 @@ export class SearchDao {
     const args: Array<relationalStore.ValueType> = [];
     let sql: string = 'SELECT n.id, n.path, n.title FROM note_fts f JOIN note n ON n.id = f.rowid ';
     if (expression.length > 0) {
-      sql += 'WHERE f.terms MATCH ? ';
+      // 表级 MATCH 同时覆盖标题与正文两列；FTS5 不允许两列 MATCH 以 OR 连接。
+      sql += 'WHERE note_fts MATCH ? ';
       args.push(expression);
     } else {
       sql += 'WHERE 1 = 1 ';
@@ -54,7 +62,10 @@ export class SearchDao {
       args.push(query.tag);
     }
     sql = SearchDao.appendPropFilter(sql, args, query, 'n');
-    sql += 'ORDER BY n.mtime DESC LIMIT ?';
+    // 有关键词时按 BM25 相关度排序（标题权重 10 倍于正文词），同分按最近修改；
+    // 无关键词（仅标签/属性过滤）时按最近修改。
+    sql += expression.length > 0 ? 'ORDER BY bm25(note_fts, 10.0, 1.0) ASC, n.mtime DESC LIMIT ?' :
+      'ORDER BY n.mtime DESC LIMIT ?';
     args.push(query.limit);
     const result = await store.querySql(sql, args);
     const hits: SearchHit[] = [];
@@ -122,21 +133,44 @@ export class SearchDao {
     return result;
   }
 
-  /** 用块索引补齐命中片段。 */
+  /** 用块索引补齐命中片段（单次批量查询，避免逐条命中各查一次）。 */
   private static async fillSnippets(vaultId: number, hits: SearchHit[], keyword: string): Promise<void> {
-    if (keyword.length === 0) {
+    if (keyword.length === 0 || hits.length === 0) {
       return;
     }
     const store = await DbHelper.getStore();
+    const byNote: Map<number, SearchHit> = new Map<number, SearchHit>();
     for (const hit of hits) {
-      const args: Array<relationalStore.ValueType> = [hit.noteId, `%${keyword}%`];
+      byNote.set(hit.noteId, hit);
+    }
+    const pattern: string = `%${SearchDao.escapeLike(keyword)}%`;
+    const ids: number[] = Array.from(byNote.keys());
+    for (let start: number = 0; start < ids.length; start += SearchDao.SNIPPET_BATCH) {
+      const batch: number[] = ids.slice(start, start + SearchDao.SNIPPET_BATCH);
+      const marks: string = batch.map((): string => '?').join(',');
+      const args: Array<relationalStore.ValueType> = [];
+      for (const id of batch) {
+        args.push(id);
+      }
+      args.push(pattern);
       const result = await store.querySql(
-        'SELECT block_text FROM block WHERE note_id = ? AND block_text LIKE ? LIMIT 1', args);
+        `SELECT note_id, block_text FROM block WHERE note_id IN (${marks}) ` +
+        `AND block_text LIKE ? ESCAPE '\\' ORDER BY note_id, ordinal`, args);
       if (result.goToFirstRow()) {
-        hit.snippet = result.getString(0);
+        do {
+          const hit: SearchHit | undefined = byNote.get(result.getLong(0));
+          if (hit !== undefined && hit.snippet.length === 0) {
+            hit.snippet = result.getString(1);
+          }
+        } while (result.goToNextRow());
       }
       result.close();
     }
+  }
+
+  /** 转义 LIKE 通配符，使用户输入的 % _ \ 按字面匹配。 */
+  private static escapeLike(text: string): string {
+    return text.replace(/\\/g, '\\\\').replace(/%/g, '\\%').replace(/_/g, '\\_');
   }
 
   /** 属性过滤时，用命中的属性行补齐片段。 */

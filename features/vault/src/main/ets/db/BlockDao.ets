@@ -62,6 +62,35 @@ export class BlockDao {
     return entries;
   }
 
+  /**
+   * 在块索引中批量检索包含指定标题文本的笔记及首个命中块文本，
+   * 供「未链接提及」直接走 RDB 索引，避免逐篇读文件。
+   */
+  public static async findMentions(context: common.Context, vaultId: number,
+    keyword: string, excludePath: string): Promise<Map<string, string>> {
+    const map: Map<string, string> = new Map<string, string>();
+    if (keyword.length === 0) {
+      return map;
+    }
+    const store = await DbHelper.getStore();
+    const escaped: string = keyword.replace(/\\/g, '\\\\').replace(/%/g, '\\%').replace(/_/g, '\\_');
+    const args: Array<relationalStore.ValueType> = [vaultId, excludePath, `%${escaped}%`];
+    const result = await store.querySql(
+      'SELECT n.path, b.block_text FROM block b JOIN note n ON n.id = b.note_id ' +
+      'WHERE n.vault_id = ? AND n.path != ? AND b.block_text LIKE ? ESCAPE \'\\\' ' +
+      'ORDER BY n.path ASC, b.ordinal ASC', args);
+    if (result.goToFirstRow()) {
+      do {
+        const notePath: string = result.getString(0);
+        if (!map.has(notePath)) {
+          map.set(notePath, result.getString(1));
+        }
+      } while (result.goToNextRow());
+    }
+    result.close();
+    return map;
+  }
+
   /** 提取块内纯文本。 */
   public static plainTextOfBlock(block: MdBlock): string {
     if (block.inlines.length === 0) {

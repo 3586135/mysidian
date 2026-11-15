@@ -73,6 +73,27 @@ export class LinkDao {
     return links;
   }
 
+  /** 查询仓库内全部链接（仅源笔记主键与目标路径，供整库图谱构图）。 */
+  public static async listByVault(context: common.Context,
+    vaultId: number): Promise<LinkRef[]> {
+    const store = await DbHelper.getStore();
+    const args: Array<relationalStore.ValueType> = [vaultId];
+    const result = await store.querySql(
+      'SELECT source_note_id, target_path FROM link WHERE source_note_id IN ' +
+      '(SELECT id FROM note WHERE vault_id = ?) AND target_path IS NOT NULL', args);
+    const links: LinkRef[] = [];
+    if (result.goToFirstRow()) {
+      do {
+        const link: LinkRef = new LinkRef();
+        link.sourceNoteId = result.getLong(0);
+        link.targetPath = result.getString(1);
+        links.push(link);
+      } while (result.goToNextRow());
+    }
+    result.close();
+    return links;
+  }
+
   private static parseKind(value: string): LinkKind {
     if (value === 'embed') {
       return LinkKind.EMBED;
