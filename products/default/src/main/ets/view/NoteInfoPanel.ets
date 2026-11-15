@@ -33,6 +33,7 @@ export struct NoteInfoPanel {
     (path: string, title: string): void => {};
   /** 图谱节点点击。 */
   @Event onOpenGraphNode: (path: string) => void = (path: string): void => {};
+  @Param showGraphTab: boolean = false;
   private tabsController: TabsController = new TabsController();
   /** 正在编辑的属性 key。 */
   @Local editingKey: string = '';
@@ -53,10 +54,13 @@ export struct NoteInfoPanel {
         this.tabButton(1, $r('app.string.tab_backlinks'))
         this.tabButton(2, $r('app.string.tab_tags'))
         this.tabButton(3, $r('app.string.tab_props'))
-        this.tabButton(4, $r('app.string.tab_graph'))
+        if (this.showGraphTab) {
+          this.tabButton(4, $r('app.string.tab_graph'))
+        }
       }
       .width('100%')
       .height(48)
+      .border({ width: { bottom: 1 }, color: $r('app.color.design_divider') })
 
       Tabs({ index: this.currentTab, controller: this.tabsController }) {
         TabContent() {
@@ -93,14 +97,14 @@ export struct NoteInfoPanel {
       Text(label)
         .fontSize(14)
         .fontWeight(this.currentTab === index ? FontWeight.Medium : FontWeight.Normal)
-        .fontColor(this.currentTab === index ? $r('app.color.hm_accent')
-          : $r('app.color.hm_text_secondary'))
+        .fontColor(this.currentTab === index ? $r('app.color.design_accent')
+          : $r('app.color.design_text_secondary'))
         .maxLines(1)
       Column()
         .width(18)
         .height(2)
         .borderRadius(1)
-        .backgroundColor(this.currentTab === index ? $r('app.color.hm_accent')
+        .backgroundColor(this.currentTab === index ? $r('app.color.design_accent')
           : Color.Transparent)
     }
     .layoutWeight(1)
@@ -118,12 +122,13 @@ export struct NoteInfoPanel {
         if (this.outlineEntries.length === 0) {
           Text($r('app.string.empty_outline'))
             .fontSize(13)
-            .fontColor($r('app.color.hm_text_secondary'))
+            .fontColor($r('app.color.design_text_secondary'))
+            .padding({ top: 12 })
         } else {
           ForEach(this.outlineEntries, (entry: OutlineEntry, index: number) => {
             Text(entry.text)
               .fontSize(14)
-              .fontColor($r('app.color.hm_text_primary'))
+              .fontColor($r('app.color.design_text_primary'))
               .width('100%')
               .maxLines(1)
               .textOverflow({ overflow: TextOverflow.Ellipsis })
@@ -132,15 +137,18 @@ export struct NoteInfoPanel {
               .onClick(() => {
                 this.onOutlineClick(entry);
               })
-          }, (entry: OutlineEntry, index: number): string => `outline_${index}`)
+          }, (entry: OutlineEntry, index: number): string => `outline_${index}_${entry.level}_${entry.text}`)
         }
       }
       .width('100%')
       .alignItems(HorizontalAlign.Start)
-      .padding({ left: 8, right: 8 })
+      .padding({ left: 8, right: 8, top: 6, bottom: 12 })
     }
     .width('100%')
     .height('100%')
+    .align(Alignment.Top)
+    .scrollBar(BarState.Off)
+    .edgeEffect(EdgeEffect.Spring)
   }
 
   @Builder
@@ -150,13 +158,14 @@ export struct NoteInfoPanel {
         if (this.backlinks.length === 0 && this.unlinked.length === 0) {
           Text($r('app.string.empty_backlinks'))
             .fontSize(13)
-            .fontColor($r('app.color.hm_text_secondary'))
+            .fontColor($r('app.color.design_text_secondary'))
+            .padding({ top: 12 })
         } else {
           if (this.backlinks.length > 0) {
             Text($r('app.string.backlinks_linked'))
               .fontSize(12)
               .fontWeight(FontWeight.Medium)
-              .fontColor($r('app.color.hm_text_secondary'))
+              .fontColor($r('app.color.design_text_secondary'))
               .width('100%')
               .margin({ top: 8, bottom: 2 })
             ForEach(this.backlinks, (item: BacklinkItem, index: number) => {
@@ -164,13 +173,13 @@ export struct NoteInfoPanel {
                 Text(item.sourceTitle)
                   .fontSize(14)
                   .fontWeight(FontWeight.Medium)
-                  .fontColor($r('app.color.hm_accent'))
+                  .fontColor($r('app.color.design_accent'))
                   .width('100%')
                   .maxLines(1)
                   .textOverflow({ overflow: TextOverflow.Ellipsis })
                 Text(item.context)
                   .fontSize(12)
-                  .fontColor($r('app.color.hm_text_secondary'))
+                  .fontColor($r('app.color.design_text_secondary'))
                   .maxLines(2)
                   .textOverflow({ overflow: TextOverflow.Ellipsis })
                   .width('100%')
@@ -179,8 +188,9 @@ export struct NoteInfoPanel {
               .width('100%')
               .alignItems(HorizontalAlign.Start)
               .padding(10)
-              .borderRadius(10)
-              .backgroundColor($r('app.color.hm_hover_bg'))
+              .borderRadius(12)
+              .backgroundColor($r('app.color.design_elevated'))
+              .border({ width: 1, color: $r('app.color.design_stroke') })
               .margin({ top: 6 })
               .onClick(() => {
                 this.onOpenNote(item.sourcePath);
@@ -191,7 +201,7 @@ export struct NoteInfoPanel {
             Text($r('app.string.backlinks_unlinked'))
               .fontSize(12)
               .fontWeight(FontWeight.Medium)
-              .fontColor($r('app.color.hm_text_secondary'))
+              .fontColor($r('app.color.design_text_secondary'))
               .width('100%')
               .margin({ top: 12, bottom: 2 })
             ForEach(this.unlinked, (item: UnlinkedMention, index: number) => {
@@ -200,16 +210,16 @@ export struct NoteInfoPanel {
                   Text(item.title)
                     .fontSize(14)
                     .fontWeight(FontWeight.Medium)
-                    .fontColor($r('app.color.hm_text_primary'))
+                    .fontColor($r('app.color.design_text_primary'))
                     .maxLines(1)
                     .textOverflow({ overflow: TextOverflow.Ellipsis })
                     .layoutWeight(1)
                   Text($r('app.string.backlinks_link_it'))
                     .fontSize(12)
-                    .fontColor($r('app.color.hm_accent'))
+                    .fontColor($r('app.color.design_accent'))
                     .padding({ left: 8, right: 8, top: 3, bottom: 3 })
                     .borderRadius(8)
-                    .backgroundColor($r('app.color.hm_accent_weak'))
+                    .backgroundColor($r('app.color.design_accent_weak'))
                     .onClick(() => {
                       this.onLinkMention(item.path, item.title);
                     })
@@ -217,7 +227,7 @@ export struct NoteInfoPanel {
                 .width('100%')
                 Text(item.context)
                   .fontSize(12)
-                  .fontColor($r('app.color.hm_text_secondary'))
+                  .fontColor($r('app.color.design_text_secondary'))
                   .maxLines(2)
                   .textOverflow({ overflow: TextOverflow.Ellipsis })
                   .width('100%')
@@ -226,8 +236,9 @@ export struct NoteInfoPanel {
               .width('100%')
               .alignItems(HorizontalAlign.Start)
               .padding(10)
-              .borderRadius(10)
-              .backgroundColor($r('app.color.hm_hover_bg'))
+              .borderRadius(12)
+              .backgroundColor($r('app.color.design_elevated'))
+              .border({ width: 1, color: $r('app.color.design_stroke') })
               .margin({ top: 6 })
               .onClick(() => {
                 this.onOpenNote(item.path);
@@ -238,10 +249,13 @@ export struct NoteInfoPanel {
       }
       .width('100%')
       .alignItems(HorizontalAlign.Start)
-      .padding({ left: 8, right: 8 })
+      .padding({ left: 8, right: 8, bottom: 12 })
     }
     .width('100%')
     .height('100%')
+    .align(Alignment.Top)
+    .scrollBar(BarState.Off)
+    .edgeEffect(EdgeEffect.Spring)
   }
 
   @Builder
@@ -251,31 +265,35 @@ export struct NoteInfoPanel {
         if (this.tags.length === 0) {
           Text($r('app.string.empty_tags'))
             .fontSize(13)
-            .fontColor($r('app.color.hm_text_secondary'))
+            .fontColor($r('app.color.design_text_secondary'))
+            .padding({ top: 6 })
         } else {
           Flex({ wrap: FlexWrap.Wrap }) {
             ForEach(this.tags, (tag: string, index: number) => {
               Text(`#${tag}`)
                 .fontSize(13)
-                .fontColor($r('app.color.hm_accent'))
-                .padding({ left: 10, right: 10, top: 4, bottom: 4 })
-                .borderRadius(10)
-                .backgroundColor($r('app.color.hm_accent_weak'))
-                .margin({ right: 6, top: 6 })
+                .fontColor($r('app.color.design_accent'))
+                .padding({ left: 12, right: 12, top: 6, bottom: 6 })
+                .borderRadius(12)
+                .backgroundColor($r('app.color.design_accent_weak'))
+                .margin({ right: 8, bottom: 8 })
                 .onClick(() => {
                   this.onOpenTag(tag);
                 })
-            }, (tag: string, index: number): string => `tag_${index}`)
+            }, (tag: string, index: number): string => `tag_${index}_${tag}`)
           }
           .width('100%')
         }
       }
       .width('100%')
       .alignItems(HorizontalAlign.Start)
-      .padding({ left: 8, right: 8 })
+      .padding({ left: 10, right: 10, top: 10, bottom: 12 })
     }
     .width('100%')
     .height('100%')
+    .align(Alignment.Top)
+    .scrollBar(BarState.Off)
+    .edgeEffect(EdgeEffect.Spring)
   }
 
   @Builder
@@ -285,7 +303,8 @@ export struct NoteInfoPanel {
         if (this.properties.length === 0) {
           Text($r('app.string.empty_props'))
             .fontSize(13)
-            .fontColor($r('app.color.hm_text_secondary'))
+            .fontColor($r('app.color.design_text_secondary'))
+            .padding({ top: 6 })
         } else {
           ForEach(this.properties, (property: MdProperty, index: number) => {
             this.propertyRow(property)
@@ -296,10 +315,11 @@ export struct NoteInfoPanel {
         } else {
           Text($r('app.string.props_add_new'))
             .fontSize(13)
-            .fontColor($r('app.color.hm_accent'))
-            .padding({ left: 10, right: 10, top: 6, bottom: 6 })
-            .borderRadius(8)
-            .backgroundColor($r('app.color.hm_hover_bg'))
+            .fontWeight(FontWeight.Medium)
+            .fontColor($r('app.color.design_accent'))
+            .padding({ left: 12, right: 12, top: 7, bottom: 7 })
+            .borderRadius(12)
+            .backgroundColor($r('app.color.design_accent_weak'))
             .margin({ top: 10 })
             .onClick(() => {
               this.addingProp = true;
@@ -310,10 +330,13 @@ export struct NoteInfoPanel {
       }
       .width('100%')
       .alignItems(HorizontalAlign.Start)
-      .padding({ left: 8, right: 8 })
+      .padding({ left: 10, right: 10, top: 6, bottom: 12 })
     }
     .width('100%')
     .height('100%')
+    .align(Alignment.Top)
+    .scrollBar(BarState.Off)
+    .edgeEffect(EdgeEffect.Spring)
   }
 
   /** 新增属性表单：属性名 + 类型选择。 */
@@ -322,10 +345,15 @@ export struct NoteInfoPanel {
     Column() {
       TextInput({ placeholder: $r('app.string.props_key_hint'), text: this.newPropKey })
         .fontSize(13)
-        .height(32)
+        .height(36)
         .width('100%')
-        .backgroundColor($r('app.color.hm_input_bg'))
-        .placeholderColor($r('app.color.hm_text_secondary'))
+        .padding({ left: 12, right: 12 })
+        .borderRadius(10)
+        .backgroundColor($r('app.color.design_elevated'))
+        .border({ width: 1, color: $r('app.color.design_stroke') })
+        .placeholderColor($r('app.color.design_text_secondary'))
+        .fontColor($r('app.color.design_text_primary'))
+        .caretColor($r('app.color.design_accent'))
         .onChange((value: string): void => {
           this.newPropKey = value;
         })
@@ -339,15 +367,18 @@ export struct NoteInfoPanel {
       Row() {
         Text($r('app.string.props_add'))
           .fontSize(13)
-          .fontColor($r('app.color.hm_accent'))
-          .padding({ left: 8, right: 8, top: 4, bottom: 4 })
+          .fontWeight(FontWeight.Medium)
+          .fontColor($r('app.color.design_accent'))
+          .padding({ left: 10, right: 10, top: 5, bottom: 5 })
+          .borderRadius(10)
+          .backgroundColor($r('app.color.design_accent_weak'))
           .onClick(() => {
             this.commitNewProperty();
           })
         Text($r('app.string.dialog_cancel'))
           .fontSize(13)
-          .fontColor($r('app.color.hm_text_secondary'))
-          .padding({ left: 12, right: 8, top: 4, bottom: 4 })
+          .fontColor($r('app.color.design_text_secondary'))
+          .padding({ left: 12, right: 8, top: 5, bottom: 5 })
           .onClick(() => {
             this.addingProp = false;
           })
@@ -364,13 +395,13 @@ export struct NoteInfoPanel {
   propTypeChip(index: number, label: Resource) {
     Text(label)
       .fontSize(12)
-      .fontColor(this.newPropTypeIndex === index ? $r('app.color.hm_accent')
-        : $r('app.color.hm_text_secondary'))
+      .fontColor(this.newPropTypeIndex === index ? $r('app.color.design_accent')
+        : $r('app.color.design_text_secondary'))
       .padding({ left: 10, right: 10, top: 4, bottom: 4 })
       .margin({ right: 6 })
       .borderRadius(10)
-      .backgroundColor(this.newPropTypeIndex === index ? $r('app.color.hm_accent_weak')
-        : $r('app.color.hm_hover_bg'))
+      .backgroundColor(this.newPropTypeIndex === index ? $r('app.color.design_accent_weak')
+        : $r('app.color.design_elevated'))
       .onClick(() => {
         this.newPropTypeIndex = index;
       })
@@ -401,11 +432,11 @@ export struct NoteInfoPanel {
       Row() {
         Text(property.key)
           .fontSize(13)
-          .fontColor($r('app.color.hm_text_secondary'))
+          .fontColor($r('app.color.design_text_secondary'))
           .layoutWeight(1)
         SymbolGlyph($r('sys.symbol.xmark'))
           .fontSize(11)
-          .fontColor([$r('app.color.hm_text_secondary')])
+          .fontColor([$r('app.color.design_text_secondary')])
           .width(18)
           .height(18)
           .margin({ right: 6 })
@@ -414,7 +445,7 @@ export struct NoteInfoPanel {
           })
         if (property.type === MdPropType.BOOLEAN) {
           Toggle({ type: ToggleType.Switch, isOn: property.value === 'true' })
-            .selectedColor($r('app.color.hm_accent'))
+            .selectedColor($r('app.color.design_accent'))
             .onChange((isOn: boolean): void => {
               this.onUpdateProperty(property.key, isOn ? 'true' : 'false', []);
             })
@@ -427,12 +458,12 @@ export struct NoteInfoPanel {
         // 嵌套 map：按原始块只读展示，避免误当列表/标量编辑导致内容丢失。
         Text(property.rawBlock)
           .fontSize(12)
-          .fontColor($r('app.color.hm_text_primary'))
+          .fontColor($r('app.color.design_text_primary'))
           .width('100%')
           .margin({ top: 4 })
           .padding({ left: 8, right: 8, top: 6, bottom: 6 })
           .borderRadius(8)
-          .backgroundColor($r('app.color.hm_hover_bg'))
+          .backgroundColor($r('app.color.design_elevated'))
           .copyOption(CopyOptions.LocalDevice)
       } else if (property.type === MdPropType.LIST) {
         Flex({ wrap: FlexWrap.Wrap }) {
@@ -440,10 +471,10 @@ export struct NoteInfoPanel {
             Row() {
               Text(item)
                 .fontSize(12)
-                .fontColor($r('app.color.hm_text_primary'))
+                .fontColor($r('app.color.design_text_primary'))
               SymbolGlyph($r('sys.symbol.xmark'))
                 .fontSize(11)
-                .fontColor([$r('app.color.hm_text_secondary')])
+                .fontColor([$r('app.color.design_text_secondary')])
                 .width(16)
                 .height(16)
                 .margin({ left: 4 })
@@ -453,7 +484,7 @@ export struct NoteInfoPanel {
             }
             .padding({ left: 8, right: 6, top: 3, bottom: 3 })
             .borderRadius(10)
-            .backgroundColor($r('app.color.hm_hover_bg'))
+            .backgroundColor($r('app.color.design_elevated'))
             .margin({ right: 6, top: 6 })
           }, (item: string, itemIndex: number): string => `pv_${property.key}_${itemIndex}`)
         }
@@ -461,19 +492,24 @@ export struct NoteInfoPanel {
         Row() {
           TextInput({ placeholder: $r('app.string.props_new_item'), text: this.listInput })
             .fontSize(12)
-            .height(30)
+            .height(34)
+            .padding({ left: 10, right: 10 })
+            .borderRadius(10)
             .layoutWeight(1)
-            .backgroundColor($r('app.color.hm_input_bg'))
-            .placeholderColor($r('app.color.hm_text_secondary'))
+            .backgroundColor($r('app.color.design_elevated'))
+            .border({ width: 1, color: $r('app.color.design_stroke') })
+            .placeholderColor($r('app.color.design_text_secondary'))
+            .fontColor($r('app.color.design_text_primary'))
+            .caretColor($r('app.color.design_accent'))
             .onChange((value: string): void => {
               this.listInput = value;
             })
           Button($r('app.string.props_add'))
             .type(ButtonType.Capsule)
-            .height(30)
+            .height(32)
             .fontSize(12)
-            .backgroundColor($r('app.color.hm_hover_bg'))
-            .fontColor($r('app.color.hm_text_primary'))
+            .backgroundColor($r('app.color.design_elevated'))
+            .fontColor($r('app.color.design_text_primary'))
             .margin({ left: 6 })
             .onClick(() => {
               this.addListItem(property);
@@ -486,9 +522,14 @@ export struct NoteInfoPanel {
           Row() {
             TextInput({ text: this.editValue })
               .fontSize(13)
-              .height(32)
+              .height(34)
+              .padding({ left: 10, right: 10 })
+              .borderRadius(10)
               .layoutWeight(1)
-              .backgroundColor($r('app.color.hm_input_bg'))
+              .backgroundColor($r('app.color.design_elevated'))
+              .border({ width: 1, color: $r('app.color.design_stroke') })
+              .fontColor($r('app.color.design_text_primary'))
+              .caretColor($r('app.color.design_accent'))
               .onChange((value: string): void => {
                 this.editValue = value;
               })
@@ -497,14 +538,15 @@ export struct NoteInfoPanel {
               })
             Text($r('app.string.props_save'))
               .fontSize(12)
-              .fontColor($r('app.color.hm_accent'))
+              .fontWeight(FontWeight.Medium)
+              .fontColor($r('app.color.design_accent'))
               .padding({ left: 8, right: 4 })
               .onClick(() => {
                 this.commitEdit(property);
               })
             Text($r('app.string.dialog_cancel'))
               .fontSize(12)
-              .fontColor($r('app.color.hm_text_secondary'))
+              .fontColor($r('app.color.design_text_secondary'))
               .padding({ left: 4 })
               .onClick(() => {
                 this.editingKey = '';
@@ -516,17 +558,17 @@ export struct NoteInfoPanel {
           Row() {
             Text(this.propertyValue(property))
               .fontSize(13)
-              .fontColor($r('app.color.hm_text_primary'))
+              .fontColor($r('app.color.design_text_primary'))
               .layoutWeight(1)
               .maxLines(1)
               .textOverflow({ overflow: TextOverflow.Ellipsis })
             if (this.isDateLike(property.value)) {
               Text($r('app.string.props_pick_date'))
                 .fontSize(12)
-                .fontColor($r('app.color.hm_accent'))
+                .fontColor($r('app.color.design_accent'))
                 .padding({ left: 8, right: 8, top: 3, bottom: 3 })
                 .borderRadius(8)
-                .backgroundColor($r('app.color.hm_accent_weak'))
+                .backgroundColor($r('app.color.design_accent_weak'))
                 .onClick(() => {
                   this.pickDate(property);
                 })
@@ -544,7 +586,7 @@ export struct NoteInfoPanel {
     .width('100%')
     .alignItems(HorizontalAlign.Start)
     .padding({ top: 8, bottom: 8 })
-    .border({ width: { bottom: 1 }, color: $r('app.color.hm_divider') })
+    .border({ width: { bottom: 1 }, color: $r('app.color.design_divider') })
   }
 
   /** 局部关系图谱。 */
@@ -554,7 +596,7 @@ export struct NoteInfoPanel {
       if (this.graph.nodes.length <= 1) {
         Text($r('app.string.graph_empty'))
           .fontSize(13)
-          .fontColor($r('app.color.hm_text_secondary'))
+          .fontColor($r('app.color.design_text_secondary'))
       } else {
         GraphView({
           graph: this.graph,

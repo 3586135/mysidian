@@ -10,7 +10,7 @@ import { Logger } from '@ohos/common';
 import { DataViewQuery, FrontmatterSerializer, MarkdownParser, TaskMetadata } from '@ohos/markdown';
 import { AttachmentResolver, BlockDao, DbHelper, DiffLine, FileHistory, FileStatInfo, HistorySnapshot,
   IndexPipeline, LinkDao, LinkRewriter, NoteDao, NoteResolver, PropDao, TagDao, TemplateEngine,
-  TemplateRenderResult, VaultBackupInfo, VaultManager, VaultPath } from '@ohos/vault';
+  TemplateRenderResult, TrashFolderResult, VaultBackupInfo, VaultManager, VaultPath } from '@ohos/vault';
 import { AbilityContextHolder } from '../defaultability/AbilityContextHolder';
 
 const LOG: Logger = new Logger('MySidianVM');
@@ -50,7 +50,16 @@ export class VaultViewModel {
   /** 根级目录摘要（首页文件页展示）。 */
   @Trace rootFolders: RootFolderSummary[] = [];
   @Trace selectedPath: string = '';
+  /** 当前打开的外部文件 URI（非空且 selectedPath 为空时表示外部只读预览态）。 */
+  @Trace externalUri: string = '';
+  /** 外部打开的文件名（含扩展名）。 */
+  @Trace externalFileName: string = '';
   @Trace noteTitle: string = '';
+
+  /** 是否处于外部文件只读预览模式。 */
+  public get isExternalMode(): boolean {
+    return this.externalUri.length > 0 && this.selectedPath.length === 0;
+  }
   @Trace noteContent: string = '';
   @Trace document: MdDocument = new MdDocument();
   @Trace busy: boolean = false;
@@ -105,7 +114,7 @@ export class VaultViewModel {
   /** Dataview 查询结果缓存（key: 查询文本|当前笔记路径）。 */
   private dataViewCache: Map<string, DataViewResult> = new Map();
   /** 仓库内全部文件的相对路径（附件解析用）。 */
-  private vaultFiles: string[] = [];
+  @Trace vaultFiles: string[] = [];
 
   /** 锚点跳转回调：由页面注入（负责滚动到目标标题块）。 */
   public onScrollToHeading: (heading: string) => void = (heading: string): void => {};
@@ -848,6 +857,39 @@ export class VaultViewModel {
     }
   }
 
+  /** 移除被删除笔记或目录下的导航历史、书签与最近访问残留记录。 */
+  private async removePathRefs(paths: Set<string>, dirPrefix: string = ''): Promise<void> {
+    const matches = (target: string): boolean => {
+      return paths.has(target) || (dirPrefix.length > 0 && target.startsWith(dirPrefix));
+    };
+    const nextHistory: string[] = this.noteHistory.filter((item: string): boolean => !matches(item));
+    if (nextHistory.length !== this.noteHistory.length) {
+      this.noteHistory = nextHistory;
+      this.canGoBack = nextHistory.length > 0;
+    }
+    const nextBookmarks: string[] = this.bookmarks.filter((item: string): boolean => !matches(item));
+    if (nextBookmarks.length !== this.bookmarks.length) {
+      await this.saveBookmarks(nextBookmarks);
+    }
+    if (this.context === null) {
+      return;
+    }
+    const entries: RecentNoteEntry[] = await this.readRecentLog();
+    const kept: RecentNoteEntry[] = [];
+    let changed: boolean = false;
+    for (const entry of entries) {
+      if (entry.vaultId === this.currentVault.id && matches(entry.path)) {
+        changed = true;
+        continue;
+      }
+      kept.push(entry);
+    }
+    if (changed) {
+      await this.writePref(RECENT_LOG_KEY, JSON.stringify(kept));
+      await this.loadRecentNotes();
+    }
+  }
+
   /** 判断指定笔记是否已加入书签。 */
   public isBookmarked(path: string): boolean {
     return path.length > 0 && this.bookmarks.includes(path);
@@ -957,39 +999,32 @@ export class VaultViewModel {
     }
   }
 
-  /** 打开今天的日记（不存在则以日期为名新建，支持日记模板）。 */
+  /** 打开今天的日记（默认 `日记/YYYY-MM/YYYY-MM-DD.md`）；不存在时先用模板或默认标题创建。 */
   public async openDailyNote(): Promise<boolean> {
-    const manager: VaultManager | null = this.manager;
-    const context: common.Context | null = this.context;
-    if (manager === null || context === null) {
-      return false;
-    }
     const now: Date = new Date();
-    const pad = (value: number): string => value < 10 ? `0${value}` : `${value}`;
-    const name: string = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
-    const path: string = `${name}.md`;
-    const existing: NoteRow | null = await NoteDao.findByPath(context, this.currentVault.id, path);
-    let cursor: number = -1;
-    if (existing === null) {
-      // 存在日记模板时套用模板，否则写默认标题。
-      const template: string = await this.findTemplate(['日记', 'daily', 'Daily', 'Journal']);
-      let content: string = `# ${name}\n\n`;
-      if (template.length > 0) {
-        const raw: string = await manager.readTemplate(this.currentVault, template);
-        const rendered: TemplateRenderResult = TemplateEngine.render(raw, name, now);
-        content = rendered.content;
-        cursor = rendered.cursorOffset;
+    const todayKey: string = VaultViewModel.dateKey(now.getFullYear(), now.getMonth() + 1, now.getDate());
+    return this.openDailyNoteByDate(todayKey);
+  }
+
+  private findExistingDailyPathFromTree(dateKey: string): string {
+    const candidates: string[] = VaultPath.dailyNoteCandidates(dateKey);
+    for (const candidate of candidates) {
+      if (this.vaultFiles.includes(candidate)) {
+        return candidate;
       }
-      await manager.writeNote(this.currentVault, path, content);
-      await manager.refreshNote(this.currentVault, path);
-      await this.refreshTree();
     }
-    await this.openNote(path);
-    if (cursor >= 0) {
-      this.pendingCaret = cursor;
-      this.startEdit();
+    return '';
+  }
+
+  private async findExistingDailyPath(context: common.Context, dateKey: string): Promise<string> {
+    const candidates: string[] = VaultPath.dailyNoteCandidates(dateKey);
+    for (const candidate of candidates) {
+      const existing: NoteRow | null = await NoteDao.findByPath(context, this.currentVault.id, candidate);
+      if (existing !== null || this.vaultFiles.includes(candidate)) {
+        return candidate;
+      }
     }
-    return true;
+    return '';
   }
 
   /** 打开本周周报（不存在则以 YYYY-Www.md 新建，支持周报模板）。 */
@@ -1066,10 +1101,61 @@ export class VaultViewModel {
     await this.refreshNoteInfo();
   }
 
+  /**
+   * 从外部文件 URI（文件管理器或其他应用的打开方式）直接只读预览 Markdown，
+   * 不自动写入任何仓库，避免污染 WebDAV 远端库。
+   */
+  public openExternalUri(uri: string): boolean {
+    const trimmed: string = uri.trim();
+    if (trimmed.length === 0) {
+      return false;
+    }
+    this.openToken++;
+    const content: string | null = VaultManager.readUriText(trimmed);
+    if (content === null) {
+      return false;
+    }
+    const fileName: string = VaultManager.extractUriFileName(trimmed);
+    const baseName: string = fileName.replace(/\.(md|markdown)$/i, '').trim();
+    const document: MdDocument = MarkdownParser.parse(content);
+    const title: string = document.title.length > 0 ? document.title :
+      (baseName.length > 0 ? baseName : fileName);
+    this.applyExternalDocument(trimmed, fileName, content, document, title);
+    return true;
+  }
+
+  /** 将当前外部只读预览的 Markdown 导入当前仓库（同名时自动追加时间戳防覆盖），返回新笔记路径。 */
+  public async importExternalToVault(): Promise<string> {
+    const manager: VaultManager | null = this.manager;
+    if (!this.isExternalMode || manager === null || this.currentVault.rootPath.length === 0) {
+      return '';
+    }
+    const baseRaw: string = this.externalFileName.replace(/\.(md|markdown)$/i, '').trim();
+    let safeTitle: string = baseRaw.replace(/[\\/:*?"<>|#\[\]]/g, '').trim();
+    if (safeTitle.length === 0) {
+      safeTitle = '外部笔记';
+    }
+    let path: string = `${safeTitle}.md`;
+    if (this.vaultFiles.includes(path)) {
+      const now: Date = new Date();
+      const pad = (value: number): string => value < 10 ? `0${value}` : `${value}`;
+      const stamp: string = `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}` +
+        `${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
+      path = `${safeTitle}-${stamp}.md`;
+    }
+    await manager.writeNote(this.currentVault, path, this.noteContent);
+    await manager.refreshNote(this.currentVault, path);
+    await this.refreshTree();
+    await this.openNote(path);
+    return path;
+  }
+
   /** 以过渡动画应用新文档，避免正文生硬切换。 */
   private applyDocument(path: string, content: string, document: MdDocument, title: string): void {
     const ui: UIContext | null = this.uiContext;
     if (ui === null) {
+      this.externalUri = '';
+      this.externalFileName = '';
       this.selectedPath = path;
       this.noteTitle = title;
       this.noteContent = content;
@@ -1079,6 +1165,8 @@ export class VaultViewModel {
       return;
     }
     ui.animateTo({ duration: 240, curve: Curve.Friction }, (): void => {
+      this.externalUri = '';
+      this.externalFileName = '';
       this.selectedPath = path;
       this.noteTitle = title;
       this.noteContent = content;
@@ -1086,6 +1174,36 @@ export class VaultViewModel {
       this.editMode = false;
       this.draftBuffer = '';
     });
+  }
+
+  /** 应用外部文件只读预览文档（不入库、不记录最近访问，仅在内存提取大纲/标签/属性）。 */
+  private applyExternalDocument(uri: string, fileName: string, content: string,
+    document: MdDocument, title: string): void {
+    const outline: OutlineEntry[] = IndexPipeline.collectOutline(document);
+    const tags: string[] = IndexPipeline.collectTags(document);
+    const properties: MdProperty[] = document.frontmatter.properties;
+    const assignState = (): void => {
+      this.selectedPath = '';
+      this.externalUri = uri;
+      this.externalFileName = fileName;
+      this.noteTitle = title;
+      this.noteContent = content;
+      this.document = document;
+      this.editMode = false;
+      this.draftBuffer = '';
+      this.outline = outline;
+      this.backlinks = [];
+      this.unlinked = [];
+      this.graph = new GraphData();
+      this.noteTags = tags;
+      this.noteProperties = properties;
+    };
+    const ui: UIContext | null = this.uiContext;
+    if (ui === null) {
+      assignState();
+      return;
+    }
+    ui.animateTo({ duration: 240, curve: Curve.Friction }, assignState);
   }
 
   /** 仅为尚未建立索引的当前笔记补建索引，避免每次打开全量重建。 */
@@ -1132,6 +1250,10 @@ export class VaultViewModel {
       if (anchor.length > 0) {
         this.onScrollToHeading(anchor);
       }
+      return;
+    }
+    if (this.isExternalMode) {
+      // 外部只读预览模式下不跳转也不自动在仓库新建双链笔记。
       return;
     }
     const note = await NoteResolver.resolve(context, this.currentVault.id, noteTarget);
@@ -1212,7 +1334,7 @@ export class VaultViewModel {
     });
   }
 
-  /** 删除笔记：移入回收站（.trash）。 */
+  /** 删除笔记：移入回收站（.trash），并清理导航历史/书签/最近访问记录。 */
   public async trashNote(path: string): Promise<boolean> {
     const manager: VaultManager | null = this.manager;
     if (manager === null || path.length === 0) {
@@ -1225,9 +1347,36 @@ export class VaultViewModel {
     if (this.selectedPath === path) {
       this.closeNote();
     }
-    if (this.bookmarks.includes(path)) {
-      await this.saveBookmarks(this.bookmarks.filter((item: string): boolean => item !== path));
+    if (this.secondaryPath === path) {
+      this.closeSecondary();
     }
+    await this.removePathRefs(new Set<string>([path]));
+    await this.refreshTree();
+    return true;
+  }
+
+  /** 删除文件夹：目录内文件移入 .trash 回收站并移除文件夹。 */
+  public async trashFolder(dirPath: string): Promise<boolean> {
+    const manager: VaultManager | null = this.manager;
+    const normalized: string = VaultPath.normalize(dirPath).replace(/\/+$/, '');
+    if (manager === null || normalized.length === 0) {
+      return false;
+    }
+    const result: TrashFolderResult = await manager.trashFolder(this.currentVault, normalized);
+    if (!result.ok) {
+      return false;
+    }
+    const prefix: string = `${normalized}/`;
+    if (this.selectedPath === normalized || this.selectedPath.startsWith(prefix)) {
+      this.closeNote();
+    }
+    if (this.secondaryPath === normalized || this.secondaryPath.startsWith(prefix)) {
+      this.closeSecondary();
+    }
+    this.expandedPaths = this.expandedPaths.filter((p: string): boolean => {
+      return p !== normalized && !p.startsWith(prefix);
+    });
+    await this.removePathRefs(new Set<string>(result.files), prefix);
     await this.refreshTree();
     return true;
   }
@@ -1397,6 +1546,13 @@ export class VaultViewModel {
 
   /** 解析图片目标为可加载的 file URI；未命中返回空串。 */
   public resolveAsset(target: string): string {
+    if (this.selectedPath.length === 0) {
+      if (target.startsWith('http://') || target.startsWith('https://') ||
+        target.startsWith('file://')) {
+        return target;
+      }
+      return '';
+    }
     const relative: string = AttachmentResolver.resolve(target, this.selectedPath, this.vaultFiles);
     if (relative.length === 0) {
       return '';
@@ -1548,12 +1704,11 @@ export class VaultViewModel {
       return false;
     }
     const now: Date = new Date();
-    const pad = (value: number): string => value < 10 ? `0${value}` : `${value}`;
-    const name: string = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
-    const path: string = `${name}.md`;
-    const existing: NoteRow | null = await NoteDao.findByPath(context, this.currentVault.id, path);
+    const name: string = VaultViewModel.dateKey(now.getFullYear(), now.getMonth() + 1, now.getDate());
+    const existingPath: string = await this.findExistingDailyPath(context, name);
+    const path: string = existingPath.length > 0 ? existingPath : VaultPath.dailyNotePath(name);
     let content: string = '';
-    if (existing !== null) {
+    if (existingPath.length > 0) {
       content = await manager.readNote(this.currentVault, path);
     } else {
       content = `# ${name}\n\n`;
@@ -1570,23 +1725,25 @@ export class VaultViewModel {
     return true;
   }
 
-  /** 打开指定日期的日记（不存在则以该日期命名创建，支持日记模板）。 */
+  /** 打开指定日期的日记（默认 `日记/YYYY-MM/YYYY-MM-DD.md`，兼容历史根目录日记，不存在则创建）。 */
   public async openDailyNoteByDate(date: string): Promise<boolean> {
     const manager: VaultManager | null = this.manager;
     const context: common.Context | null = this.context;
     if (manager === null || context === null || date.length === 0) {
       return false;
     }
-    const path: string = `${date}.md`;
-    const existing: NoteRow | null = await NoteDao.findByPath(context, this.currentVault.id, path);
+    const existingPath: string = await this.findExistingDailyPath(context, date);
+    const path: string = existingPath.length > 0 ? existingPath : VaultPath.dailyNotePath(date);
     let cursor: number = -1;
-    if (existing === null) {
+    if (existingPath.length === 0) {
       const template: string = await this.findTemplate(['日记', 'daily', 'Daily', 'Journal']);
       let content: string = `# ${date}\n\n`;
       if (template.length > 0) {
         const raw: string = await manager.readTemplate(this.currentVault, template);
-        const parsed: Date = new Date(`${date}T00:00:00`);
-        const rendered: TemplateRenderResult = TemplateEngine.render(raw, date, parsed);
+        const now: Date = new Date();
+        const todayKey: string = VaultViewModel.dateKey(now.getFullYear(), now.getMonth() + 1, now.getDate());
+        const targetDate: Date = date === todayKey ? now : new Date(`${date}T00:00:00`);
+        const rendered: TemplateRenderResult = TemplateEngine.render(raw, date, targetDate);
         content = rendered.content;
         cursor = rendered.cursorOffset;
       }
@@ -1705,6 +1862,66 @@ export class VaultViewModel {
     await this.refreshAllTags();
   }
 
+  /** 列出指定目录（'' 表示根目录）的直接子目录摘要（含子目录递归笔记数）。 */
+  public listSubFolders(parentPath: string): RootFolderSummary[] {
+    if (parentPath.length === 0) {
+      return this.rootFolders;
+    }
+    const targetNode: FileNode | null = this.findDirNode(this.tree, parentPath);
+    if (targetNode === null) {
+      return [];
+    }
+    const folders: RootFolderSummary[] = [];
+    for (const child of targetNode.children) {
+      if (!child.isDir) {
+        continue;
+      }
+      const summary: RootFolderSummary = new RootFolderSummary();
+      summary.name = child.name;
+      summary.path = child.path;
+      summary.noteCount = this.countMarkdownFilesUnder(`${child.path}/`);
+      folders.push(summary);
+    }
+    return folders;
+  }
+
+  private findDirNode(nodes: FileNode[], targetPath: string): FileNode | null {
+    for (const node of nodes) {
+      if (!node.isDir) {
+        continue;
+      }
+      if (node.path === targetPath) {
+        return node;
+      }
+      if (targetPath.startsWith(`${node.path}/`)) {
+        const hit: FileNode | null = this.findDirNode(node.children, targetPath);
+        if (hit !== null) {
+          return hit;
+        }
+      }
+    }
+    return null;
+  }
+
+  /** 统计指定目录下的 Markdown 笔记总数（含子目录）。 */
+  public countNotesInFolder(dirPath: string): number {
+    const normalized: string = VaultPath.normalize(dirPath).replace(/\/+$/, '');
+    if (normalized.length === 0) {
+      return 0;
+    }
+    return this.countMarkdownFilesUnder(`${normalized}/`);
+  }
+
+  private countMarkdownFilesUnder(prefix: string): number {
+    let count: number = 0;
+    for (const file of this.vaultFiles) {
+      if (file.startsWith(prefix) && file.toLowerCase().endsWith('.md')) {
+        count++;
+      }
+    }
+    return count;
+  }
+
   /** 汇总根级目录及各目录笔记数（首页文件页展示）。 */
   private refreshRootFolders(): void {
     const folders: RootFolderSummary[] = [];
@@ -1717,14 +1934,7 @@ export class VaultViewModel {
       }
     }
     for (const folder of folders) {
-      const prefix: string = `${folder.path}/`;
-      let count: number = 0;
-      for (const file of this.vaultFiles) {
-        if (file.startsWith(prefix) && file.toLowerCase().endsWith('.md')) {
-          count++;
-        }
-      }
-      folder.noteCount = count;
+      folder.noteCount = this.countMarkdownFilesUnder(`${folder.path}/`);
     }
     this.rootFolders = folders;
   }
@@ -1770,6 +1980,8 @@ export class VaultViewModel {
   /** 关闭当前笔记。 */
   public closeNote(): void {
     this.selectedPath = '';
+    this.externalUri = '';
+    this.externalFileName = '';
     this.noteTitle = '';
     this.noteContent = '';
     this.document = new MdDocument();
@@ -1781,8 +1993,11 @@ export class VaultViewModel {
     this.noteProperties = [];
   }
 
-  /** 进入编辑模式。 */
+  /** 进入编辑模式（仅仓库内笔记可编辑；外部文件需先导入仓库）。 */
   public startEdit(): void {
+    if (this.selectedPath.length === 0) {
+      return;
+    }
     this.draftBuffer = this.noteContent;
     this.editMode = true;
   }
@@ -2142,12 +2357,14 @@ export class VaultViewModel {
     const todayKey: string = VaultViewModel.dateKey(now.getFullYear(), now.getMonth() + 1,
       now.getDate());
     const total: number = new Date(year, month, 0).getDate();
+    const pathByDay: Map<string, string> = new Map<string, string>();
     const existingPaths: string[] = [];
     for (let day = 1; day <= total; day++) {
       const dateStr: string = VaultViewModel.dateKey(year, month, day);
-      const path: string = `${dateStr}.md`;
-      if (this.vaultFiles.includes(path)) {
-        existingPaths.push(path);
+      const resolved: string = this.findExistingDailyPathFromTree(dateStr);
+      if (resolved.length > 0) {
+        pathByDay.set(dateStr, resolved);
+        existingPaths.push(resolved);
       }
     }
     const listTextByPath: Map<string, string> = context !== null && existingPaths.length > 0 ?
@@ -2158,8 +2375,8 @@ export class VaultViewModel {
       item.day = day;
       item.date = VaultViewModel.dateKey(year, month, day);
       item.today = item.date === todayKey;
-      const path: string = `${item.date}.md`;
-      if (this.vaultFiles.includes(path)) {
+      const path: string = pathByDay.get(item.date) ?? '';
+      if (path.length > 0) {
         item.hasNote = true;
         const indexedListText: string | undefined = listTextByPath.get(path);
         if (indexedListText !== undefined && indexedListText.length > 0) {
@@ -2263,15 +2480,15 @@ export class VaultViewModel {
     }
   }
 
-  /** 新建空仓库；首个仓库（引导页新建）预填示例笔记。 */
-  public async createVault(name: string): Promise<void> {
+  /** 新建仓库；仅在未直接配置 WebDAV 的首个仓库预填示例笔记，避免示例笔记污染已有远端库。 */
+  public async createVault(name: string, seedDemo: boolean = true): Promise<void> {
     const manager: VaultManager | null = this.manager;
     if (manager === null) {
       return;
     }
     this.busy = true;
     try {
-      const firstVault: boolean = this.vaults.length === 0;
+      const firstVault: boolean = this.vaults.length === 0 && seedDemo;
       const vault: VaultInfo = firstVault
         ? await manager.createDemoVault(name)
         : await manager.createVault(name);
@@ -2353,6 +2570,19 @@ export class VaultViewModel {
       await IndexPipeline.indexNote(context, note, document);
     }
     await this.refreshTree();
+    if (!this.editMode && this.selectedPath.length > 0) {
+      const stillExists: NoteRow | null = await NoteDao.findByPath(
+        context, this.currentVault.id, this.selectedPath);
+      if (stillExists !== null) {
+        const refreshed: string = await manager.readNote(this.currentVault, this.selectedPath);
+        if (refreshed !== this.noteContent) {
+          const parsed: MdDocument = MarkdownParser.parse(refreshed);
+          const title: string = parsed.title.length > 0 ?
+            parsed.title : VaultPath.basename(this.selectedPath);
+          this.applyDocument(this.selectedPath, refreshed, parsed, title);
+        }
+      }
+    }
     await this.refreshNoteInfo();
     // 索引重建后链接关系可能变化，同步刷新整库图谱。
     await this.loadVaultGraph();

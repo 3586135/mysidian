@@ -4,6 +4,7 @@ import { Tokenizer } from '../main/ets/indexer/Tokenizer';
 import { LinkRewriter } from '../main/ets/manager/LinkRewriter';
 import { AttachmentResolver } from '../main/ets/manager/AttachmentResolver';
 import { TemplateEngine, TemplateRenderResult } from '../main/ets/manager/TemplateEngine';
+import { VaultPath } from '../main/ets/manager/VaultPath';
 
 export default function vaultUtilTest() {
   describe('VaultUtilTest', () => {
@@ -126,6 +127,22 @@ export default function vaultUtilTest() {
     it('usesIsoWeekYearForCrossYearWeek', 0, () => {
       // 2024-12-30 属于 ISO 2025-W01。
       expect(TemplateEngine.weekKey(new Date(2024, 11, 30))).assertEqual('2025-W01');
+    });
+
+    it('buildsNestedMonthlyDailyNotePath', 0, () => {
+      expect(VaultPath.dailyNotePath('2026-11-15')).assertEqual('日记/2026-11/2026-11-15.md');
+      expect(VaultPath.dailyNotePath('2016-12-03.md')).assertEqual('日记/2016-12/2016-12-03.md');
+      const candidates: string[] = VaultPath.dailyNoteCandidates('2026-11-15');
+      expect(candidates.length).assertEqual(2);
+      expect(candidates[0]).assertEqual('日记/2026-11/2026-11-15.md');
+      expect(candidates[1]).assertEqual('2026-11-15.md');
+    });
+
+    it('preservesLeadingSlashForAbsoluteDirname', 0, () => {
+      expect(VaultPath.dirname('/data/storage/el2/vault/日记/2026-11/2026-11-15.md'))
+        .assertEqual('/data/storage/el2/vault/日记/2026-11');
+      expect(VaultPath.dirname('日记/2026-11/2026-11-15.md')).assertEqual('日记/2026-11');
+      expect(VaultPath.dirname('top.md')).assertEqual('');
     });
   });
 }

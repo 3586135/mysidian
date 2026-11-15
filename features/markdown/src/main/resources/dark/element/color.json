@@ -31,6 +31,30 @@
     {
       "name": "md_code_type",
       "value": "#38BDF8"
+    },
+    {
+      "name": "md_text_primary",
+      "value": "#F5EFEA"
+    },
+    {
+      "name": "md_text_secondary",
+      "value": "#9E9590"
+    },
+    {
+      "name": "md_accent",
+      "value": "#9D8DF1"
+    },
+    {
+      "name": "md_accent_weak",
+      "value": "#269D8DF1"
+    },
+    {
+      "name": "md_card_bg",
+      "value": "#2B2624"
+    },
+    {
+      "name": "md_divider",
+      "value": "#26F5EFEA"
     }
   ]
 }

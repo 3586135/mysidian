@@ -1,5 +1,6 @@
 import { describe, it, expect } from '@ohos/hypium';
 import { CompletionCandidate, EditorTextUtils, ListContinuation } from '../main/ets/viewmodel/EditorTextUtils';
+import { noteTitleFromPath } from '../main/ets/view/design/NoteActionHelper';
 
 export default function editorTextUtilsTest() {
   describe('EditorTextUtilsTest', () => {
@@ -69,7 +70,7 @@ export default function editorTextUtilsTest() {
       expect(candidates[0].title).assertEqual('笔记甲');
       // 候选项整体替换已输入的查询串，因此插入文本是完整标题 + 右括号。
       expect(candidates[0].insertText).assertEqual('笔记甲]]');
-      expect(candidates[0].replaceFrom).assertEqual(3);
+      expect(candidates[0].replaceFrom).assertEqual(4);
     });
 
     it('returnsNoCandidatesOutsideWikiLink', 0, () => {
@@ -114,7 +115,7 @@ export default function editorTextUtilsTest() {
       expect(candidates.length).assertEqual(1);
       expect(candidates[0].title).assertEqual('语法');
       expect(candidates[0].insertText).assertEqual('语法');
-      expect(candidates[0].replaceFrom).assertEqual(3);
+      expect(candidates[0].replaceFrom).assertEqual(4);
     });
 
     it('returnsNoTagCandidatesWithoutHash', 0, () => {
@@ -122,6 +123,13 @@ export default function editorTextUtilsTest() {
       const candidates: CompletionCandidate[] =
         EditorTextUtils.getTagCompletionCandidates('普通文本', 4, tags);
       expect(candidates.length).assertEqual(0);
+    });
+
+    it('extractsDisplayTitleFromRelativePath', 0, () => {
+      expect(noteTitleFromPath('日记/2026-11/2026-11-15.md')).assertEqual('2026-11-15');
+      expect(noteTitleFromPath('Note.MD')).assertEqual('Note');
+      expect(noteTitleFromPath('日记/2026-11')).assertEqual('2026-11');
+      expect(noteTitleFromPath('')).assertEqual('');
     });
   });
 }

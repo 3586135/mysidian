@@ -131,17 +131,17 @@ export class MathRenderer {
       return escapedSymbol === undefined ? name : escapedSymbol;
     }
     if (name === 'frac' || name === 'dfrac' || name === 'tfrac') {
-      const numerator: ScriptChunk = MathRenderer.readGroup(text, command.next);
-      const denominator: ScriptChunk = MathRenderer.readGroup(text, numerator.next);
+      const numerator: ScriptChunk = MathRenderer.readCommandGroup(command, text);
+      const denominator: ScriptChunk = MathRenderer.readCommandGroup(command, text);
       return `(${MathRenderer.plain(numerator.body, depth + 1)})` +
         `/(${MathRenderer.plain(denominator.body, depth + 1)})`;
     }
     if (name === 'sqrt') {
-      const radicand: ScriptChunk = MathRenderer.readGroup(text, command.next);
+      const radicand: ScriptChunk = MathRenderer.readCommandGroup(command, text);
       return `√(${MathRenderer.plain(radicand.body, depth + 1)})`;
     }
     if (name === 'text' || name === 'mathrm' || name === 'operatorname') {
-      const group: ScriptChunk = MathRenderer.readGroup(text, command.next);
+      const group: ScriptChunk = MathRenderer.readCommandGroup(command, text);
       return group.body;
     }
     if (name === 'left' || name === 'right') {
@@ -270,17 +270,17 @@ export class MathRenderer {
     }
     const name: string = command.name;
     if (name === 'frac' || name === 'dfrac' || name === 'tfrac') {
-      const numerator: ScriptChunk = MathRenderer.readGroup(text, command.next);
-      const denominator: ScriptChunk = MathRenderer.readGroup(text, numerator.next);
+      const numerator: ScriptChunk = MathRenderer.readCommandGroup(command, text);
+      const denominator: ScriptChunk = MathRenderer.readCommandGroup(command, text);
       return `<span class="frac"><span class="num">${MathRenderer.render(numerator.body, depth + 1)}` +
         `</span><span class="den">${MathRenderer.render(denominator.body, depth + 1)}</span></span>`;
     }
     if (name === 'sqrt') {
-      const radicand: ScriptChunk = MathRenderer.readGroup(text, command.next);
+      const radicand: ScriptChunk = MathRenderer.readCommandGroup(command, text);
       return `<span class="sqrt">√<span class="radic">${MathRenderer.render(radicand.body, depth + 1)}</span></span>`;
     }
     if (name === 'text' || name === 'mathrm' || name === 'operatorname') {
-      const group: ScriptChunk = MathRenderer.readGroup(text, command.next);
+      const group: ScriptChunk = MathRenderer.readCommandGroup(command, text);
       return `<span class="mtext">${group.body}</span>`;
     }
     if (name === 'left' || name === 'right') {
@@ -315,6 +315,13 @@ export class MathRenderer {
   }
 
   /** 读取 {...} 分组内容。 */
+  /** 读取命令参数 {...} 分组并同步推进 command.next，避免外层循环重复输出参数。 */
+  private static readCommandGroup(command: CommandChunk, text: string): ScriptChunk {
+    const group: ScriptChunk = MathRenderer.readGroup(text, command.next);
+    command.next = group.next;
+    return group;
+  }
+
   private static readGroup(text: string, start: number): ScriptChunk {
     const chunk: ScriptChunk = new ScriptChunk();
     let index: number = start;

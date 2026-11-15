@@ -1,17 +1,24 @@
+import { noteTitleFromPath } from './NoteActionHelper';
+
 /**
  * 文件树条目操作菜单浮层（目录与笔记分流）。
  *
- * 目录：在此新建笔记 / 新建子文件夹；
- * 笔记：打开 / 分屏打开 / 重命名 / 移动到… / 移入回收站。
+ * 目录：打开文件夹 / 在此新建笔记 / 新建子文件夹 / 删除文件夹；
+ * 笔记：打开 / 收藏 / 分屏双开 / 重命名 / 移动到… / 移入回收站。
  */
 @ComponentV2
 export struct TreeItemMenuSheet {
   @Param targetPath: string = '';
   @Param isDir: boolean = false;
   @Param bookmarked: boolean = false;
+  @Param showSplit: boolean = true;
+  @Param showOpenFolder: boolean = false;
+  @Param allowTrashFolder: boolean = true;
   @Event onClose: () => void = (): void => {};
+  @Event onOpenFolder: (folder: string) => void = (_folder: string): void => {};
   @Event onNewNoteInFolder: (folder: string) => void = (_folder: string): void => {};
   @Event onNewSubfolder: (folder: string) => void = (_folder: string): void => {};
+  @Event onTrashFolder: (folder: string) => void = (_folder: string): void => {};
   @Event onOpenNote: (path: string) => void = (_path: string): void => {};
   @Event onSplitOpen: (path: string) => void = (_path: string): void => {};
   @Event onToggleBookmark: (path: string) => void = (_path: string): void => {};
@@ -20,12 +27,9 @@ export struct TreeItemMenuSheet {
   @Event onTrashNote: (path: string) => void = (_path: string): void => {};
 
   private titleText(): string {
-    const slash: number = this.targetPath.lastIndexOf('/');
-    const base: string = slash >= 0 ? this.targetPath.substring(slash + 1) : this.targetPath;
-    if (!this.isDir && base.endsWith('.md')) {
-      return base.substring(0, base.length - 3);
-    }
-    return base;
+    return this.isDir ? (this.targetPath.lastIndexOf('/') >= 0
+      ? this.targetPath.substring(this.targetPath.lastIndexOf('/') + 1) : this.targetPath)
+      : noteTitleFromPath(this.targetPath);
   }
 
   @Builder
@@ -77,22 +81,30 @@ export struct TreeItemMenuSheet {
             .maxLines(1)
             .textOverflow({ overflow: TextOverflow.Ellipsis })
             .layoutWeight(1)
-          SymbolGlyph($r('sys.symbol.xmark'))
-            .fontSize(16)
-            .fontColor([$r('app.color.design_text_secondary')])
-            .width(32)
-            .height(32)
-            .borderRadius(16)
-            .backgroundColor($r('app.color.design_elevated'))
-            .onClick(() => {
-              this.onClose();
-            })
+          Stack() {
+            SymbolGlyph($r('sys.symbol.xmark'))
+              .fontSize(15)
+              .fontColor([$r('app.color.design_text_secondary')])
+          }
+          .width(32)
+          .height(32)
+          .borderRadius(16)
+          .backgroundColor($r('app.color.design_elevated'))
+          .onClick(() => {
+            this.onClose();
+          })
         }
         .width('100%')
         .alignItems(VerticalAlign.Center)
         .margin({ bottom: 10 })
 
         if (this.isDir) {
+          if (this.showOpenFolder) {
+            this.menuRow($r('sys.symbol.folder'), $r('app.string.tree_open_folder'),
+              false, (): void => {
+                this.onOpenFolder(this.targetPath);
+              })
+          }
           this.menuRow($r('sys.symbol.square_and_pencil'), $r('app.string.tree_new_note_here'),
             false, (): void => {
               this.onNewNoteInFolder(this.targetPath);
@@ -101,6 +113,12 @@ export struct TreeItemMenuSheet {
             false, (): void => {
               this.onNewSubfolder(this.targetPath);
             })
+          if (this.allowTrashFolder) {
+            this.menuRow($r('sys.symbol.trash'), $r('app.string.action_delete_folder'),
+              true, (): void => {
+                this.onTrashFolder(this.targetPath);
+              })
+          }
         } else {
           this.menuRow($r('sys.symbol.doc_plaintext'), $r('app.string.vault_card_open'),
             false, (): void => {
@@ -111,10 +129,12 @@ export struct TreeItemMenuSheet {
             false, (): void => {
               this.onToggleBookmark(this.targetPath);
             })
-          this.menuRow($r('sys.symbol.rectangle_grid_1x2'), $r('app.string.action_split'),
-            false, (): void => {
-              this.onSplitOpen(this.targetPath);
-            })
+          if (this.showSplit) {
+            this.menuRow($r('sys.symbol.rectangle_grid_1x2'), $r('app.string.action_split'),
+              false, (): void => {
+                this.onSplitOpen(this.targetPath);
+              })
+          }
           this.menuRow($r('sys.symbol.doc_plaintext_and_pencil'), $r('app.string.action_rename'),
             false, (): void => {
               this.onRenameNote(this.targetPath);

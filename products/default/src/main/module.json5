@@ -41,6 +41,64 @@
             "actions": [
               "ohos.want.action.home"
             ]
+          },
+          {
+            "entities": [
+              "entity.system.default"
+            ],
+            "actions": [
+              "ohos.want.action.viewData",
+              "ohos.want.action.editData"
+            ],
+            "uris": [
+              {
+                "scheme": "file",
+                "utd": "general.markdown",
+                "linkFeature": "FileOpen"
+              },
+              {
+                "scheme": "file",
+                "type": "general.markdown",
+                "linkFeature": "FileOpen"
+              },
+              {
+                "scheme": "file",
+                "type": "text/markdown",
+                "linkFeature": "FileOpen"
+              },
+              {
+                "scheme": "file",
+                "type": "text/x-markdown",
+                "linkFeature": "FileOpen"
+              },
+              {
+                "scheme": "file",
+                "pathRegex": ".*\\.(md|markdown|MD|MARKDOWN)$",
+                "linkFeature": "FileOpen"
+              },
+              {
+                "scheme": "file",
+                "type": "text/plain",
+                "pathRegex": ".*\\.(md|markdown|MD|MARKDOWN)$",
+                "linkFeature": "FileOpen"
+              },
+              {
+                "scheme": "file",
+                "type": "application/octet-stream",
+                "pathRegex": ".*\\.(md|markdown|MD|MARKDOWN)$",
+                "linkFeature": "FileOpen"
+              },
+              {
+                "scheme": "datashare",
+                "type": "text/markdown",
+                "linkFeature": "FileOpen"
+              },
+              {
+                "scheme": "datashare",
+                "pathRegex": ".*\\.(md|markdown|MD|MARKDOWN)$",
+                "linkFeature": "FileOpen"
+              }
+            ]
           }
         ]
       }
@@ -91,6 +149,18 @@
             ],
             "actions": [
               "ohos.want.action.sendData"
+            ],
+            "uris": [
+              {
+                "scheme": "file",
+                "utd": "general.markdown",
+                "maxFileSupported": 1
+              },
+              {
+                "scheme": "file",
+                "utd": "general.plain-text",
+                "maxFileSupported": 1
+              }
             ]
           }
         ]

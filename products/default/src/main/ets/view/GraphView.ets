@@ -1,5 +1,6 @@
 import { GraphData, GraphNode } from '@ohos/domain';
 import { GraphLayout } from '../viewmodel/GraphLayout';
+import { DesignPalette } from '../viewmodel/DesignPalette';
 
 /**
  * 局部关系图谱：ArkUI Canvas 绘制节点与连线，力导向布局。
@@ -41,7 +42,7 @@ export struct GraphView {
         Text(node.title)
           .fontSize(10)
           .fontWeight(node.root ? FontWeight.Bold : FontWeight.Normal)
-          .fontColor(node.root ? $r('app.color.hm_accent') : $r('app.color.hm_text_secondary'))
+          .fontColor(node.root ? $r('app.color.design_accent') : $r('app.color.design_text_secondary'))
           .maxLines(1)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
           .width(72)
@@ -66,9 +67,14 @@ export struct GraphView {
   /** 绘制连线与节点。 */
   private draw(): void {
     const ctx: CanvasRenderingContext2D = this.context;
+    const hostCtx = this.getUIContext().getHostContext();
+    const accentHex: string = hostCtx !== undefined
+      ? DesignPalette.color(hostCtx.resourceManager, 'design_accent') : '#6F5BD6';
+    const secondaryHex: string = hostCtx !== undefined
+      ? DesignPalette.color(hostCtx.resourceManager, 'design_text_secondary') : '#6E6660';
     ctx.clearRect(0, 0, this.canvasWidth, this.canvasHeight);
     ctx.lineWidth = 1.2;
-    ctx.strokeStyle = 'rgba(128,128,128,0.45)';
+    ctx.strokeStyle = DesignPalette.rgba(secondaryHex, 0.35);
     for (const edge of this.graph.edges) {
       const from: GraphNode | undefined = this.findNode(edge.from);
       const to: GraphNode | undefined = this.findNode(edge.to);
@@ -84,12 +90,13 @@ export struct GraphView {
       ctx.beginPath();
       ctx.arc(node.x, node.y, node.radius, 0, Math.PI * 2);
       if (node.root) {
-        ctx.fillStyle = 'rgba(0,150,255,0.85)';
+        ctx.fillStyle = DesignPalette.rgba(accentHex, 0.85);
+        ctx.strokeStyle = DesignPalette.rgba(accentHex, 1.0);
       } else {
-        ctx.fillStyle = 'rgba(128,128,128,0.45)';
+        ctx.fillStyle = DesignPalette.rgba(secondaryHex, 0.35);
+        ctx.strokeStyle = DesignPalette.rgba(secondaryHex, 0.65);
       }
       ctx.fill();
-      ctx.strokeStyle = 'rgba(128,128,128,0.7)';
       ctx.stroke();
     }
   }

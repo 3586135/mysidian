@@ -26,14 +26,16 @@ export class CodeToken {
  */
 export class CodeHighlighter {
   private static readonly KEYWORDS: Set<string> = new Set<string>([
-    'abstract', 'as', 'async', 'await', 'break', 'case', 'catch', 'class', 'const', 'continue',
-    'default', 'delete', 'do', 'else', 'elif', 'enum', 'export', 'extends', 'false', 'finally',
-    'fn', 'for', 'from', 'fun', 'func', 'function', 'if', 'impl', 'implements', 'import', 'in',
-    'interface', 'is', 'lambda', 'let', 'loop', 'match', 'module', 'mut', 'namespace', 'new',
-    'nil', 'none', 'None', 'null', 'of', 'override', 'package', 'pass', 'private', 'protected',
-    'pub', 'public', 'raise', 'readonly', 'return', 'self', 'static', 'struct', 'super', 'switch',
-    'then', 'this', 'throw', ' Throws', 'trait', 'true', 'True', 'False', 'try', 'type', 'typeof',
-    'undefined', 'use', 'val', 'var', 'void', 'where', 'while', 'with', 'yield',
+    'abstract', 'and', 'as', 'assert', 'async', 'await', 'break', 'case', 'catch', 'class',
+    'const', 'continue', 'def', 'default', 'del', 'delete', 'do', 'else', 'elif', 'enum',
+    'except', 'export', 'extends', 'false', 'finally', 'fn', 'for', 'from', 'fun', 'func',
+    'function', 'global', 'if', 'impl', 'implements', 'import', 'in', 'interface', 'is',
+    'lambda', 'let', 'loop', 'match', 'module', 'mut', 'namespace', 'new', 'nil', 'none',
+    'None', 'nonlocal', 'not', 'null', 'of', 'or', 'override', 'package', 'pass', 'private',
+    'protected', 'pub', 'public', 'raise', 'readonly', 'return', 'self', 'static', 'struct',
+    'super', 'switch', 'then', 'this', 'throw', 'throws', 'trait', 'true', 'True', 'False',
+    'try', 'type', 'typeof', 'undefined', 'use', 'val', 'var', 'void', 'where', 'while',
+    'with', 'yield',
     'SELECT', 'FROM', 'WHERE', 'JOIN', 'LEFT', 'RIGHT', 'INNER', 'ON', 'GROUP', 'BY', 'ORDER',
     'ASC', 'DESC', 'LIMIT', 'INSERT', 'INTO', 'VALUES', 'UPDATE', 'SET', 'DELETE', 'CREATE',
     'TABLE', 'ALTER', 'DROP', 'AND', 'OR', 'NOT', 'IN', 'IS', 'NULL', 'AS', 'DISTINCT', 'COUNT'

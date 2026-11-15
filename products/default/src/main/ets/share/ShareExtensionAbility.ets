@@ -22,8 +22,18 @@ export default class ShareExtensionAbility extends BaseShareExtensionAbility {
       for (const record of records) {
         const recordContent: string = record.content ?? '';
         const recordTitle: string = record.title ?? '';
+        const recordUri: string = record.uri ?? '';
         if (text.length === 0 && recordContent.length > 0) {
           text = recordContent;
+        }
+        if (text.length === 0 && recordUri.length > 0) {
+          const uriText: string | null = VaultManager.readUriText(recordUri);
+          if (uriText !== null && uriText.length > 0) {
+            text = uriText;
+          }
+          if (title.length === 0) {
+            title = VaultManager.extractUriFileName(recordUri);
+          }
         }
         if (title.length === 0 && recordTitle.length > 0) {
           title = recordTitle;
@@ -115,9 +125,12 @@ export default class ShareExtensionAbility extends BaseShareExtensionAbility {
       const pad = (value: number): string => value < 10 ? `0${value}` : `${value}`;
       const stamp: string = `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}` +
         `${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
-      const name: string = title.length > 0 ? title.replace(/[\\/:*?"<>|]/g, '_') : '分享内容';
+      const baseTitle: string = title.replace(/\.(md|markdown)$/i, '').trim();
+      const name: string = baseTitle.length > 0 ? baseTitle.replace(/[\\/:*?"<>|]/g, '_') : '分享内容';
       const path: string = `${name}-${stamp}.md`;
-      const content: string = `# ${name}\n\n${text}\n`;
+      const trimmedText: string = text.trimStart();
+      const hasDocHeader: boolean = trimmedText.startsWith('---') || trimmedText.startsWith('# ');
+      const content: string = hasDocHeader ? text : `# ${name}\n\n${text}\n`;
       await manager.writeNote(vault, path, content);
       await manager.refreshNote(vault, path);
       LOG.info(`shared content saved: ${path}`);

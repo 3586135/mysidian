@@ -12,4 +12,10 @@ export class AbilityContextHolder {
   public static pendingShortcutAction: string = '';
   /** 热启动快捷方式动作回调（由 DesignIndex 注册）。 */
   public static onShortcutAction: (() => void) | null = null;
+  /** 外部文件管理器或其他应用传入的待打开文件 URI。 */
+  public static pendingOpenUri: string = '';
+  /** 热启动打开外部文件回调（由 DesignIndex 注册）。 */
+  public static onOpenUri: (() => void) | null = null;
+  /** 应用回到前台回调（由 DesignIndex 注册，用于触发无感静默同步）。 */
+  public static onForeground: (() => void) | null = null;
 }

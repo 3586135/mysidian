@@ -16,6 +16,31 @@
 | v0.4.0 | **单页架构全量重构（7 阶段）**：DesignIndex 唯一 @Entry，旧 4160 行工作台 Index.ets 全部功能迁移为页内全屏子视图 + `view/design/` 组件群（21 文件），深浅双模式 design_ 色板 |
 | v0.5.0 | **安全、性能与生产力增强**：Asset Store 密码硬件级加密、DB v4 同步哈希缓存、冲突处理中心、FTS5 自愈 + BM25 排序、未链接提及 RDB 化、页内查找替换、文件树节点操作菜单、图片全屏缩放预览、应用内主题切换 |
 | v0.6.0 | **查询引擎 RDB 化、代码高亮、书签、本地快照备份与多端生态**：Dataview/日历 RDB 批量加速、列表项文本与标签入库、原生代码块语法着色、置顶书签、本地定时/一键快照备份恢复、2in1 键盘快捷键与桌面长按快捷方式 |
+| v1.0.0 | **全端质感打磨、同步安全无感化、系统打开方式与 1.0 正式发布**：首页默认素雅 5 色莫兰迪纸感列表与原地目录穿透面包屑、透明毛玻璃三页签底栏、按年月分卷日记（`日记/YYYY-MM/YYYY-MM-DD.md`）、自适应大纲浮层与多行编辑工具栏、WebDAV 干跑安全闸门/断点落盘/`.trash/` 软删与新建仓库自签名开关、系统 `.md`「打开方式」只读预览与一键导入、Ceramic Washi 分层应用图标、`md_*` 资源解耦与全模块单测通过 |
+
+## 近期变更（v1.0.0，2026-11-15）
+
+### 1. 首页质感重构、透明毛玻璃与原地目录穿透
+- 首页「笔记」默认采用列表视图，引入 5 组低饱和莫兰迪纸色令牌（浅/深双主题 `design_tint_*`），移除单行横向溢出（搜索标签与编辑器 17 项工具栏统一 `FlexWrap.Wrap` 自动换行，解决浅色模式下编辑工具栏按钮文字对比问题）。
+- 顶栏、分段胶囊、搜索框与悬浮分离式底栏统一采用半透明毛玻璃（`BlurStyle.Thin` + `design_glass_*`），内容滚动经过控件下方实时变色。
+- 「更多」与设置中心按单一职责去重（移除鸡肋「工作台」与重复快捷按钮，设置分为「外观与阅读」/「备份与维护」两张紧凑卡片）；隐藏 `NoteInfoPanel` 默认知识图谱入口（代码完整保留）。
+- 首页「笔记 / 文件夹」列表改为原地逐级穿透浏览，顶部展示可点击面包屑（`全部目录 › 父目录 › 当前目录`），列表/宫格双视图切换且不误开正文文档，系统返回键逐级向上退出。
+
+### 2. 日记年月分卷与全场景形态自适应
+- 将每日日记、闪念追加、日历跳转与桌面服务卡片统一收口至 `VaultPath.dailyNotePath`（`日记/YYYY-MM/YYYY-MM-DD.md`），兼容历史根目录日记，并修复 `VaultPath.dirname` 对多层目录创建的前导斜杠 bug。
+- 解耦窄屏/折叠屏（`< 900vp`）浮动信息抽屉与宽屏平板固定三栏，避免打开笔记时误弹右侧大纲遮挡正文。
+
+### 3. WebDAV 无感安全同步与自签名开关
+- `SyncEngine` 升级为干跑规划 + `evaluateSafetyGate` 安全闸门 + `persistPartialCheckpoint` 逐文件断点落盘：零差异或纯拉取静默通过，本地删除改为 `WebDAV MOVE` 至 `.trash/` 软删除（服务端不支持 MOVE 时写墓碑保留远端），并绑定 `targetKey` 防止换库/换目录误删。
+- 新建仓库配置（`DialogHost`）与同步设置（`SyncSettingsSheet`）提供独立的「跳过证书校验」开关（默认关闭），适配自签名内网 WebDAV。
+
+### 4. 系统 `.md`「打开方式」与 Share URI 支持
+- `module.json5` 新增 `FileOpen` skill（`entity.system.default` + `viewData`/`editData`，匹配 `general.markdown`、`text/markdown` 及 `.md`/`.markdown`），支持文件管理器及其他应用冷/热启动打开外部 Markdown（`DefaultAbility` + `AbilityContextHolder`）。
+- 外部文件以只读原生预览呈现（顶部提示条 + 内存提取大纲/标签 + 编辑防误改引导弹窗），支持一键导入当前仓库（含无库时建库导入），并补齐 `ShareExtensionAbility` 对文件 URI 的文本读取。
+
+### 5. 全新分层应用图标、测试与代码规范收尾
+- 重绘 `Ceramic Washi & Obsidian Prism Fold` 鸿蒙分层应用图标（`$media:layered_image` `1024×1024`）及浅/深双主题 `256×256` 冷启动图标（`startIcon.png`），同步统一桌面与应用内显示名称为 `MySidian` 及关于页 `v1.0.0` 版本信息。
+- 将 `features/markdown` 内 `MdBlockView` / `MdMermaidView` 的 `app.color.design_*` 跨模块引用迁移为模块自有 `app.color.md_*`，消除 `md_dataview_empty` 重复声明告警，修复 `CodeHighlighter` 缺少 Python `'def'` 关键字及补全单测索引断言、`HighFrequencyLog` 等 CodeLinter 问题。
 
 ## 近期变更（v0.6.0，2026-11-15）
 
@@ -314,7 +339,7 @@ raw → FrontmatterParser → BlockParser（块级：标题/列表/任务/代码
 
 ## 已知问题与 TODO
 
-1. **单测无法 CLI 运行**：hypium 测试只在 DevEco Studio 内可跑；`features/markdown/src/test/LocalUnit.test.ets` 现含 32 测（Markdown 引擎 + DataViewQuery）。
+1. **CLI 单元测试命令**：`common`、`markdown`、`vault`、`default` 四模块均可通过 DevEco Studio 安装目录 `hvigorw.js test --mode module -p "module=common@default,markdown@default,vault@default,default@default"` 在本地命令行直接执行。
 2. `devecocli check arkts` 资源引用误报（见 AGENTS.md）。
 3. `C:\Users\song\.local\bin\deveco.exe` 可能被 WDAC 拦截，用 Temp 副本 workaround（见 AGENTS.md）。
 4. ~~Dataview TABLE/LIST 为静态解析渲染~~ → 已完成 live 化（见"近期变更"）。

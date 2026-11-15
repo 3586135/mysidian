@@ -1,4 +1,4 @@
-import { RemoteEntry, SyncConfig } from '../model/SyncModel';
+import { RemoteEntry, RemoteTrashStatus, SyncConfig } from '../model/SyncModel';
 
 /**
  * 同步供应方抽象。不同后端（WebDAV / S3 / 华为云空间）实现同一接口，
@@ -26,7 +26,11 @@ export interface SyncProvider {
   /** 在远端创建目录（幂等：目录已存在时视为成功） */
   mkdirRemote(remoteDir: string): Promise<void>;
 
-  /** 删除远端文件（本地删除传播；远端已不存在视为成功） */
+  /** 已废弃：保留接口占位，生产路径统一走 trashRemote 软删除。 */
+  /** 软删除远端文件（优先移入远端 .trash/；服务端不支持 MOVE 时返回 UNSUPPORTED 保持远端不动）。 */
+  trashRemote(path: string, trashPath: string): Promise<RemoteTrashStatus>;
+
+  /** 兼容保留接口：生产同步路径已禁用硬删除。 */
   deleteRemote(path: string): Promise<void>;
 
   /** 查询远端单个文件元信息，不存在时返回 null */
@@ -36,7 +40,11 @@ export interface SyncProvider {
   readRemote(path: string): Promise<string>;
 
   /** 写回远端清单（用于记录已同步的文件与哈希） */
+  /** 写回远端清单（用于记录已同步的文件与哈希） */
   putManifest(entries: RemoteEntry[]): Promise<void>;
+
+  /** 增量更新远端清单中的单个条目（用于冲突手动确认覆盖远端后同步清单）。 */
+  patchManifestEntry(entry: RemoteEntry): Promise<void>;
 
   /** 断开连接并释放资源 */
   disconnect(): Promise<void>;

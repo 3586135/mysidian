@@ -39,17 +39,46 @@ export struct TemplateSheet {
       })
 
       Column() {
-        Text($r('app.string.template_title'))
-          .fontSize(18)
-          .fontWeight(FontWeight.Medium)
-          .fontColor($r('app.color.design_text_primary'))
-          .width('100%')
-          .margin({ bottom: 10 })
+        Row() {
+          Text($r('app.string.template_title'))
+            .fontSize(18)
+            .fontWeight(FontWeight.Medium)
+            .fontColor($r('app.color.design_text_primary'))
+            .layoutWeight(1)
+          Stack() {
+            SymbolGlyph($r('sys.symbol.xmark'))
+              .fontSize(16)
+              .fontColor([$r('app.color.design_text_secondary')])
+          }
+          .width(32)
+          .height(32)
+          .borderRadius(16)
+          .backgroundColor($r('app.color.design_elevated'))
+          .alignContent(Alignment.Center)
+          .onClick(() => {
+            this.onClose();
+          })
+        }
+        .width('100%')
+        .alignItems(VerticalAlign.Center)
+        .margin({ bottom: 12 })
 
         if (this.templateList.length === 0) {
-          Text($r('app.string.template_empty'))
-            .fontSize(13)
-            .fontColor($r('app.color.design_text_secondary'))
+          Column({ space: 10 }) {
+            SymbolGlyph($r('sys.symbol.doc_plaintext'))
+              .fontSize(30)
+              .fontColor([$r('app.color.design_text_secondary')])
+              .opacity(0.65)
+            Text($r('app.string.template_empty'))
+              .fontSize(13)
+              .fontColor($r('app.color.design_text_secondary'))
+              .textAlign(TextAlign.Center)
+          }
+          .width('100%')
+          .padding({ top: 28, bottom: 28, left: 16, right: 16 })
+          .borderRadius(16)
+          .backgroundColor($r('app.color.design_elevated'))
+          .alignItems(HorizontalAlign.Center)
         } else {
           Scroll() {
             Column() {
@@ -60,26 +89,10 @@ export struct TemplateSheet {
             .width('100%')
           }
           .width('100%')
-          .layoutWeight(1)
           .align(Alignment.Top)
           .scrollBar(BarState.Off)
-          .constraintSize({ maxHeight: 320 })
+          .constraintSize({ maxHeight: 340 })
         }
-
-        Row() {
-          Button($r('app.string.dialog_cancel'))
-            .type(ButtonType.Capsule)
-            .height(40)
-            .fontSize(16)
-            .backgroundColor($r('app.color.design_elevated'))
-            .fontColor($r('app.color.design_text_primary'))
-            .layoutWeight(1)
-            .onClick(() => {
-              this.onClose();
-            })
-        }
-        .width('100%')
-        .margin({ top: 12 })
       }
       .width('88%')
       .constraintSize({ maxWidth: 460 })

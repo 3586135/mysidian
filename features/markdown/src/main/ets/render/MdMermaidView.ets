@@ -41,7 +41,7 @@ export struct MdMermaidView {
             Text(node.label)
               .fontSize(12)
               .fontWeight(node.root ? FontWeight.Bold : FontWeight.Normal)
-              .fontColor(node.root ? $r('app.color.design_accent') : $r('app.color.design_text_primary'))
+              .fontColor(node.root ? $r('app.color.md_accent') : $r('app.color.md_text_primary'))
               .textAlign(TextAlign.Center)
               .width(node.nodeWidth - 14)
               .maxLines(2)
@@ -55,11 +55,11 @@ export struct MdMermaidView {
         Text(this.source)
           .fontSize(11)
           .fontFamily('monospace')
-          .fontColor($r('app.color.design_text_secondary'))
+          .fontColor($r('app.color.md_text_secondary'))
           .width('100%')
           .padding(10)
           .borderRadius(8)
-          .backgroundColor($r('sys.color.ohos_id_color_card_bg'))
+          .backgroundColor($r('app.color.md_card_bg'))
       }
     }
     .width('100%')

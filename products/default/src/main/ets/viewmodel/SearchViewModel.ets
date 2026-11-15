@@ -101,9 +101,9 @@ export class SearchViewModel {
     this.hits = await SearchDao.search(context, vaultId, query);
   }
 
-  /** 选中一个标签，展示使用该标签的笔记。 */
+  /** 选中或取消选中一个标签，展示使用该标签的笔记。 */
   public async selectTag(vaultId: number, tag: string): Promise<void> {
-    this.activeTag = tag;
+    this.activeTag = this.activeTag === tag ? '' : tag;
     await this.search(vaultId, this.keyword);
   }
 

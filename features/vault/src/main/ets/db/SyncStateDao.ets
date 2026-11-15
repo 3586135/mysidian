@@ -15,6 +15,10 @@ export class SyncBaseline {
   size: number = 0;
   /** 记录该基线的同步完成时间（毫秒） */
   lastSyncAt: number = 0;
+  /** 基线状态：'synced' | 'local_deleted' | 'conflict' */
+  state: string = 'synced';
+  /** 绑定的远端目标标识（serverUrl|remoteRoot） */
+  targetKey: string = '';
 }
 
 /** 待回写的单条基线数据。 */
@@ -25,10 +29,12 @@ export class SyncBaselineRow {
   size: number = 0;
   etag: string = '';
   serverTag: string = '';
+  state: string = 'synced';
+  targetKey: string = '';
 }
 
 /**
- * 同步基线数据访问：记录上次同步后每个文件的哈希，用于识别冲突。
+ * 同步基线数据访问：记录上次同步后每个文件的哈希与远端绑定目标，用于识别冲突及防止切换目录误删。
  * 基线按 (vault_id, path) 隔离——不同仓库常有相同相对路径，
  * 缺少仓库维度会导致基线互相污染、产生虚假冲突。
  */
@@ -39,7 +45,7 @@ export class SyncStateDao {
     const store = await DbHelper.getStore();
     const args: Array<relationalStore.ValueType> = [vaultId];
     const result = await store.querySql(
-      'SELECT path, file_hash, server_tag, mtime, size, last_sync_at FROM sync_state ' +
+      'SELECT path, file_hash, server_tag, mtime, size, last_sync_at, state, target_key FROM sync_state ' +
         'WHERE vault_id = ?', args);
     const map: Map<string, SyncBaseline> = new Map<string, SyncBaseline>();
     if (result.goToFirstRow()) {
@@ -51,11 +57,37 @@ export class SyncStateDao {
         baseline.mtime = result.getLong(3);
         baseline.size = result.getLong(4);
         baseline.lastSyncAt = result.getLong(5);
+        const stateText: string = result.getString(6);
+        baseline.state = stateText.length > 0 ? stateText : 'synced';
+        const targetText: string = result.getString(7);
+        baseline.targetKey = targetText !== null && targetText !== undefined ? targetText : '';
         map.set(baseline.path, baseline);
       } while (result.goToNextRow());
     }
     result.close();
     return map;
+  }
+
+  /** 清除某仓库的全部同步基线（仓库删除或切换远端目标时调用）。 */
+  public static async clear(context: common.Context, vaultId: number): Promise<void> {
+    const store = await DbHelper.getStore();
+    const args: Array<relationalStore.ValueType> = [vaultId];
+    await store.executeSql('DELETE FROM sync_state WHERE vault_id = ?', args);
+  }
+
+  /** 单条写入或更新某个路径的同步基线（用于冲突手动解决后立即收敛基线）。 */
+  public static async upsertRow(context: common.Context, vaultId: number,
+    row: SyncBaselineRow): Promise<void> {
+    const store = await DbHelper.getStore();
+    const now: number = Date.now();
+    const stateVal: string = row.state.length > 0 ? row.state : 'synced';
+    const args: Array<relationalStore.ValueType> =
+      [vaultId, row.path, row.fileHash, row.mtime, row.etag, row.serverTag, now, stateVal,
+        row.size, row.targetKey];
+    await store.executeSql(
+      'INSERT OR REPLACE INTO sync_state (vault_id, path, file_hash, mtime, remote_etag, ' +
+        'server_tag, last_sync_at, state, size, target_key) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      args);
   }
 
   /**
@@ -73,12 +105,14 @@ export class SyncStateDao {
       await store.executeSql('DELETE FROM sync_state WHERE vault_id = ?', clearArgs);
       const now: number = Date.now();
       for (const row of rows) {
+        const stateVal: string = row.state.length > 0 ? row.state : 'synced';
         const args: Array<relationalStore.ValueType> =
-          [vaultId, row.path, row.fileHash, row.mtime, row.etag, row.serverTag, now, 'synced',
-            row.size];
+          [vaultId, row.path, row.fileHash, row.mtime, row.etag, row.serverTag, now, stateVal,
+            row.size, row.targetKey];
         await store.executeSql(
           'INSERT OR REPLACE INTO sync_state (vault_id, path, file_hash, mtime, remote_etag, ' +
-          'server_tag, last_sync_at, state, size) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)', args);
+          'server_tag, last_sync_at, state, size, target_key) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+          args);
       }
       store.commit();
     } catch (error) {

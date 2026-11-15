@@ -27,7 +27,7 @@ export struct MdInlineText {
             : { color: Color.Transparent, radius: 0 })
           .decoration({
             type: segment.strike ? TextDecorationType.LineThrough : TextDecorationType.None,
-            color: $r('sys.color.ohos_id_color_text_primary')
+            color: $r('app.color.md_text_primary')
           })
           .onClick(() => {
             this.handleClick(segment);
@@ -37,20 +37,20 @@ export struct MdInlineText {
     .width('100%')
     .fontSize(this.fontSize)
     .textAlign(this.textAlignment)
-    .fontColor($r('sys.color.ohos_id_color_text_primary'))
+    .fontColor($r('app.color.md_text_primary'))
   }
 
   private segmentColor(segment: MdInlineSegment): ResourceColor {
     if (segment.linkKind.length > 0) {
-      return $r('sys.color.ohos_id_color_emphasize');
+      return $r('app.color.md_accent');
     }
     if (segment.tag.length > 0) {
-      return $r('sys.color.ohos_id_color_emphasize');
+      return $r('app.color.md_accent');
     }
     if (segment.code) {
-      return $r('sys.color.ohos_id_color_text_secondary');
+      return $r('app.color.md_text_secondary');
     }
-    return $r('sys.color.ohos_id_color_text_primary');
+    return $r('app.color.md_text_primary');
   }
 
   private handleClick(segment: MdInlineSegment): void {

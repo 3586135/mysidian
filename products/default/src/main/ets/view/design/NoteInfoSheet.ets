@@ -70,7 +70,7 @@ export struct NoteInfoSheet {
       },
       secondaryButton: {
         value: $r('app.string.dialog_confirm'),
-        fontColor: $r('app.color.hm_danger'),
+        fontColor: $r('app.color.design_danger'),
         action: (): void => {
           this.vm.removeProperty(key);
         }

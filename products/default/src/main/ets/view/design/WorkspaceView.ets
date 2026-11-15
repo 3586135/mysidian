@@ -22,6 +22,7 @@ import { TemplateSheet } from './TemplateSheet';
 import { TrashSheet } from './TrashSheet';
 import { ImagePreviewOverlay } from './ImagePreviewOverlay';
 import { TreeItemMenuSheet } from './TreeItemMenuSheet';
+import { confirmTrashFolderAction, confirmTrashNoteAction, ThreeDotsIcon } from './NoteActionHelper';
 
 const LOG: Logger = new Logger('WorkspaceView');
 
@@ -63,8 +64,6 @@ export struct WorkspaceView {
   @Param backSignal: WorkspaceBackSignal = new WorkspaceBackSignal();
   /** 启动动作（外部进入时携带，如 templates）。 */
   @Param launchAction: string = '';
-  /** 进入时展开了目录（首页文件夹卡片）：窄屏自动展开文件侧栏，避免只见空态。 */
-  @Param launchExpandFolder: boolean = false;
   /** 无仓库引导：WebDAV 是否已配置（同步入口描述文案）。 */
   @Param syncConfigured: boolean = false;
   @Event onRequestExit: () => void = (): void => {};
@@ -76,19 +75,26 @@ export struct WorkspaceView {
     (_request: CreateVaultRequest): void => {};
   /** 无仓库引导：打开 WebDAV 同步设置。 */
   @Event onRequestSync: () => void = (): void => {};
+  /** 外部 Markdown 只读预览：导入当前仓库（editAfter 表示导入后进入编辑态）。 */
+  @Event onRequestImportExternal: (editAfter: boolean) => void = (_editAfter: boolean): void => {};
+  /** 外部 Markdown 只读预览：关闭预览并恢复会话。 */
+  @Event onRequestCloseExternal: () => void = (): void => {};
 
   /** 窄屏文件侧栏（抽屉）。 */
   @Local showSideBar: boolean = false;
-  /** 窄屏信息面板覆盖层。 */
+  /** 窄屏与非三栏设备浮动信息面板（默认收起，仅手动开启）。 */
   @Local showInfo: boolean = false;
-  /** 宽屏右侧信息面板开关。 */
-  @Local showRightPanel: boolean = true;
+  /** 宽屏三栏固定信息面板开关（仅平板/桌面 >= 900vp 时生效）。 */
+  @Local showFixedPanel: boolean = true;
   /** 编辑区键盘交互态镜像（EditorPane 上抛）。 */
   @Local editorKeyboardMode: boolean = false;
-  /** 内容区实际宽度（边缘手势保留区 / 信息面板并排阈值判定）。 */
+  /** 内容区实际宽高（边缘手势保留区 / 三栏并排阈值判定）。 */
   @Local contentWidth: number = 0;
+  @Local contentHeight: number = 0;
   /** 当前对话框场景（DesignDialogKind.NONE 表示无）。 */
   @Local dialogKind: string = DesignDialogKind.NONE;
+  /** 对话框显式目标路径（为空时沿用当前已选笔记）。 */
+  @Local dialogTargetPath: string = '';
   /** 回收站浮层。 */
   @Local showTrashSheet: boolean = false;
   /** 历史版本浮层。 */
@@ -134,10 +140,6 @@ export struct WorkspaceView {
     if (this.launchAction === 'templates') {
       this.showTemplateSheet = true;
     }
-    // 从首页文件夹卡片进入：窄屏下文件树在抽屉里，自动展开让用户看到目录内容。
-    if (this.launchExpandFolder && !this.isWide) {
-      this.showSideBar = true;
-    }
   }
 
   aboutToDisappear(): void {
@@ -154,8 +156,10 @@ export struct WorkspaceView {
   build() {
     Stack() {
       Column() {
-        if (this.vm.vaults.length === 0) {
+        if (this.vm.vaults.length === 0 && !this.vm.isExternalMode) {
           this.emptyVaultView()
+        } else if (this.vm.vaults.length === 0 && this.vm.isExternalMode) {
+          this.externalOnlyLayout()
         } else if (this.isWide) {
           this.wideLayout()
         } else {
@@ -168,6 +172,7 @@ export struct WorkspaceView {
       .padding({ top: this.topInset, bottom: this.bottomInset })
       .onAreaChange((_oldArea: Area, newArea: Area) => {
         this.contentWidth = Number(newArea.width);
+        this.contentHeight = Number(newArea.height);
       })
       .hitTestBehavior(HitTestMode.Default)
 
@@ -176,10 +181,12 @@ export struct WorkspaceView {
       if (this.dialogKind !== DesignDialogKind.NONE) {
         DialogHost({
           kind: this.dialogKind,
+          targetPath: this.dialogTargetPath,
           vm: this.vm,
           onClose: (): void => {
             this.animAssign((): void => {
               this.dialogKind = DesignDialogKind.NONE;
+              this.dialogTargetPath = '';
             });
           },
           onNoteMutated: (): void => {
@@ -360,13 +367,17 @@ export struct WorkspaceView {
             this.vm.pendingFolderPrefix = `${folder}/`;
             this.openDialog(DesignDialogKind.NEW_FOLDER);
           },
+          onTrashFolder: (folder: string): void => {
+            this.confirmTrashFolder(folder);
+          },
           onOpenNote: (path: string): void => {
             this.openNoteFrom(path);
           },
           onSplitOpen: (path: string): void => {
-            if (this.isWide) {
-              this.showRightPanel = false;
+            if (this.fixedPanelEnabled()) {
+              this.showFixedPanel = false;
             }
+            this.showInfo = false;
             this.vm.openSecondary(path);
           },
           onToggleBookmark: (path: string): void => {
@@ -375,19 +386,13 @@ export struct WorkspaceView {
             });
           },
           onRenameNote: (path: string): void => {
-            this.vm.openNote(path).then((): void => {
-              this.openRenameDialog();
-            });
+            this.openRenameDialog(path);
           },
           onMoveNote: (path: string): void => {
-            this.vm.openNote(path).then((): void => {
-              this.openMoveDialog();
-            });
+            this.openMoveDialog(path);
           },
           onTrashNote: (path: string): void => {
-            this.vm.openNote(path).then((): void => {
-              this.confirmTrashNote();
-            });
+            this.confirmTrashNote(path);
           }
         })
       }
@@ -423,6 +428,8 @@ export struct WorkspaceView {
             selectedPath: this.vm.selectedPath,
             selectedBgColor: $r('app.color.design_accent_weak'),
             selectedTextColor: $r('app.color.design_text_primary'),
+            textColor: $r('app.color.design_text_primary'),
+            secondaryTextColor: $r('app.color.design_text_secondary'),
             onSelect: (path: string, isDir: boolean): void => {
               this.openNoteFrom(path);
             },
@@ -440,50 +447,13 @@ export struct WorkspaceView {
             }
           })
         }
-        .width(this.fixedPanelEnabled() ? 280 : 250)
+        .width(this.fixedPanelEnabled() ? 280 : (this.contentWidth < 760 ? 220 : 240))
         .height('100%')
         .backgroundColor($r('app.color.design_bg'))
         .border({ width: { right: 1 }, color: $r('app.color.design_divider') })
 
         Column() {
-          EditorPane({
-            vm: this.vm,
-            isWide: true,
-            keyboardHeight: this.keyboardHeight,
-            contentWidth: this.contentWidth,
-            docController: this.docController,
-            onEditorKeyboardMode: (active: boolean): void => {
-              this.editorKeyboardMode = active;
-              this.onEditorKeyboardMode(active);
-            },
-            onRequestExit: (): void => {
-              this.onRequestExit();
-            },
-            onToggleInfoPanel: (): void => {
-              this.animAssign((): void => {
-                this.showRightPanel = !this.showRightPanel;
-              });
-            },
-            onRequestRename: (): void => {
-              this.openRenameDialog();
-            },
-            onDismissOverlays: (): void => {
-            },
-            onContentSwipe: (offsetX: number): void => {
-              this.handleContentSwipe(offsetX);
-            },
-            onOpenTag: (tag: string): void => {
-              this.onOpenTag(tag);
-            },
-            onNoteMutated: (): void => {
-              this.onNoteMutated();
-            },
-            onPreviewImage: (uri: string): void => {
-              this.animAssign((): void => {
-                this.previewImageUri = uri;
-              });
-            }
-          })
+          this.workspaceEditorPane(true)
         }
         .layoutWeight(1)
         .height('100%')
@@ -522,45 +492,13 @@ export struct WorkspaceView {
       .width('100%')
       .height('100%')
 
-      // 宽屏浮动信息面板（内容区 < 900vp 时的右缘滑入形态）
-      if (this.showRightPanel && !this.fixedPanelEnabled()) {
-        Column() {
-          Row() {
-            Blank()
-            SymbolGlyph($r('sys.symbol.xmark'))
-              .fontSize(18)
-              .fontColor([$r('app.color.design_text_secondary')])
-              .width(36)
-              .height(36)
-              .onClick(() => {
-                this.animAssign((): void => {
-                  this.showRightPanel = false;
-                });
-              })
-          }
-          .width('100%')
-          .height(44)
-          .padding({ left: 12, right: 4 })
-          .alignItems(VerticalAlign.Center)
-
-          Column() {
-            this.infoPanelContent()
-          }
-          .layoutWeight(1)
-        }
-        .width(360)
-        .height('100%')
-        .backgroundColor($r('app.color.design_surface_solid'))
-        .border({ width: { left: 1 }, color: $r('app.color.design_stroke') })
-        .shadow({ radius: 20, color: $r('app.color.design_shadow'), offsetX: -4 })
-        .position({ x: '100%' })
-        .markAnchor({ x: '100%' })
-        .transition(TransitionEffect.translate({ x: '100%' })
-          .animation({ duration: 260, curve: Curve.Friction }))
-      }
-
       if (!this.vm.editMode) {
         this.newNoteFab(20)
+      }
+
+      // 非三栏设备浮动信息面板（内容区 < 900vp 或高度不足时右缘滑入覆盖层，默认收起）
+      if (this.showInfo && !this.fixedPanelEnabled()) {
+        this.floatingInfoOverlay()
       }
     }
     .width('100%')
@@ -583,6 +521,8 @@ export struct WorkspaceView {
             selectedPath: this.vm.selectedPath,
             selectedBgColor: $r('app.color.design_accent_weak'),
             selectedTextColor: $r('app.color.design_text_primary'),
+            textColor: $r('app.color.design_text_primary'),
+            secondaryTextColor: $r('app.color.design_text_secondary'),
             onSelect: (path: string, isDir: boolean): void => {
               this.openNoteFrom(path);
             },
@@ -605,50 +545,7 @@ export struct WorkspaceView {
         .backgroundColor($r('app.color.design_bg'))
 
         Column() {
-          EditorPane({
-            vm: this.vm,
-            isWide: false,
-            keyboardHeight: this.keyboardHeight,
-            contentWidth: this.contentWidth,
-            docController: this.docController,
-            onEditorKeyboardMode: (active: boolean): void => {
-              this.editorKeyboardMode = active;
-              this.onEditorKeyboardMode(active);
-            },
-            onRequestExit: (): void => {
-              this.onRequestExit();
-            },
-            onToggleSidebar: (): void => {
-              this.animAssign((): void => {
-                this.showSideBar = !this.showSideBar;
-              });
-            },
-            onToggleInfoPanel: (): void => {
-              this.animAssign((): void => {
-                this.showInfo = !this.showInfo;
-              });
-            },
-            onRequestRename: (): void => {
-              this.openRenameDialog();
-            },
-            onDismissOverlays: (): void => {
-              this.dismissOverlays();
-            },
-            onContentSwipe: (offsetX: number): void => {
-              this.handleContentSwipe(offsetX);
-            },
-            onOpenTag: (tag: string): void => {
-              this.onOpenTag(tag);
-            },
-            onNoteMutated: (): void => {
-              this.onNoteMutated();
-            },
-            onPreviewImage: (uri: string): void => {
-              this.animAssign((): void => {
-                this.previewImageUri = uri;
-              });
-            }
-          })
+          this.workspaceEditorPane(false)
         }
         .width('100%')
         .height('100%')
@@ -669,59 +566,184 @@ export struct WorkspaceView {
       .width('100%')
       .height('100%')
 
-      // 窄屏信息面板：右缘滑入覆盖层
-      if (this.showInfo) {
-        Column() {
-          Row() {
-            Text(this.vm.noteTitle)
-              .fontSize(16)
-              .fontWeight(FontWeight.Medium)
-              .fontColor($r('app.color.design_text_primary'))
-              .maxLines(1)
-              .textOverflow({ overflow: TextOverflow.Ellipsis })
-              .layoutWeight(1)
-            SymbolGlyph($r('sys.symbol.xmark'))
-              .fontSize(18)
-              .fontColor([$r('app.color.design_text_secondary')])
-              .width(36)
-              .height(36)
-              .onClick(() => {
-                this.animAssign((): void => {
-                  this.showInfo = false;
-                });
-              })
-          }
-          .width('100%')
-          .height(44)
-          .padding({ left: 16, right: 4 })
-          .alignItems(VerticalAlign.Center)
-
-          Column() {
-            this.infoPanelContent()
-          }
-          .layoutWeight(1)
-        }
-        .width('88%')
-        .height('100%')
-        .backgroundColor($r('app.color.design_surface_solid'))
-        .border({ width: { left: 1 }, color: $r('app.color.design_stroke') })
-        .shadow({ radius: 20, color: $r('app.color.design_shadow'), offsetX: -4 })
-        .position({ x: '100%' })
-        .markAnchor({ x: '100%' })
-        .transition(TransitionEffect.translate({ x: '100%' })
-          .animation({ duration: 260, curve: Curve.Friction }))
-      }
-
-      if (!this.vm.editMode) {
+      if (!this.vm.editMode && !this.vm.isExternalMode) {
         this.newNoteFab(this.editorKeyboardMode && this.keyboardHeight > 0 ?
           this.keyboardHeight + 20 : 20)
+      }
+
+      // 窄屏信息面板：右缘滑入覆盖层（与非三栏宽屏共享同一浮层部件）
+      if (this.showInfo) {
+        this.floatingInfoOverlay()
       }
     }
     .width('100%')
     .height('100%')
   }
 
+  /** 无任何仓库时打开外部 Markdown 的全屏只读预览布局（支持右侧信息面板）。 */
+  @Builder
+  externalOnlyLayout() {
+    Stack({ alignContent: Alignment.BottomEnd }) {
+      Column() {
+        this.workspaceEditorPane(false)
+      }
+      .width('100%')
+      .height('100%')
+      .backgroundColor($r('app.color.design_surface_solid'))
+
+      if (this.showInfo) {
+        this.floatingInfoOverlay()
+      }
+    }
+    .width('100%')
+    .height('100%')
+  }
+
+  /** 共享编辑器面板实例（宽屏三栏 / 窄屏抽屉 / 无仓库外部预览统一复用）。 */
+  @Builder
+  workspaceEditorPane(wideMode: boolean) {
+    EditorPane({
+      vm: this.vm,
+      isWide: wideMode,
+      keyboardHeight: this.keyboardHeight,
+      contentWidth: this.contentWidth,
+      docController: this.docController,
+      onEditorKeyboardMode: (active: boolean): void => {
+        this.editorKeyboardMode = active;
+        this.onEditorKeyboardMode(active);
+      },
+      onRequestExit: (): void => {
+        if (this.vm.isExternalMode) {
+          this.onRequestCloseExternal();
+        } else {
+          this.onRequestExit();
+        }
+      },
+      onToggleSidebar: (): void => {
+        if (!wideMode && this.vm.vaults.length > 0) {
+          this.animAssign((): void => {
+            this.showSideBar = !this.showSideBar;
+          });
+        }
+      },
+      onToggleInfoPanel: (): void => {
+        this.animAssign((): void => {
+          if (wideMode && this.fixedPanelEnabled()) {
+            this.showFixedPanel = !this.showFixedPanel;
+          } else {
+            this.showInfo = !this.showInfo;
+          }
+        });
+      },
+      onRequestRename: (): void => {
+        this.openRenameDialog();
+      },
+      onRequestMove: (): void => {
+        this.openMoveDialog();
+      },
+      onRequestTrash: (): void => {
+        this.confirmTrashNote();
+      },
+      onRequestHistory: (): void => {
+        this.animAssign((): void => {
+          this.showHistorySheet = true;
+        });
+      },
+      onRequestSplit: (): void => {
+        this.openSplitPicker();
+      },
+      onDismissOverlays: (): void => {
+        this.dismissOverlays();
+      },
+      onContentSwipe: (offsetX: number): void => {
+        this.handleContentSwipe(offsetX);
+      },
+      onOpenTag: (tag: string): void => {
+        this.onOpenTag(tag);
+      },
+      onNoteMutated: (): void => {
+        this.onNoteMutated();
+      },
+      onPreviewImage: (uri: string): void => {
+        this.animAssign((): void => {
+          this.previewImageUri = uri;
+        });
+      },
+      onRequestImportExternal: (editAfter: boolean): void => {
+        this.onRequestImportExternal(editAfter);
+      },
+      onRequestCloseExternal: (): void => {
+        this.onRequestCloseExternal();
+      }
+    })
+  }
+
   // ==================== 公共部件 ====================
+
+  /** 手机与非三栏设备的右缘浮动信息抽屉（点击遮罩或右上角关闭按钮收起）。 */
+  @Builder
+  floatingInfoOverlay() {
+    Stack({ alignContent: Alignment.End }) {
+      Column()
+        .width('100%')
+        .height('100%')
+        .backgroundColor($r('app.color.design_dim'))
+        .onClick(() => {
+          this.animAssign((): void => {
+            this.showInfo = false;
+          });
+        })
+
+      Column() {
+        Row() {
+          Text(this.vm.noteTitle)
+            .fontSize(16)
+            .fontWeight(FontWeight.Medium)
+            .fontColor($r('app.color.design_text_primary'))
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+            .layoutWeight(1)
+          Stack() {
+            SymbolGlyph($r('sys.symbol.xmark'))
+              .fontSize(16)
+              .fontColor([$r('app.color.design_text_secondary')])
+          }
+          .width(32)
+          .height(32)
+          .borderRadius(16)
+          .backgroundColor($r('app.color.design_elevated'))
+          .alignContent(Alignment.Center)
+          .onClick(() => {
+            this.animAssign((): void => {
+              this.showInfo = false;
+            });
+          })
+        }
+        .width('100%')
+        .height(52)
+        .padding({ left: 16, right: 12 })
+        .alignItems(VerticalAlign.Center)
+        .border({ width: { bottom: 1 }, color: $r('app.color.design_divider') })
+
+        Column() {
+          this.infoPanelContent()
+        }
+        .layoutWeight(1)
+      }
+      .width(this.isWide ? 360 : '88%')
+      .height('100%')
+      .backgroundColor($r('app.color.design_surface_solid'))
+      .border({ width: { left: 1 }, color: $r('app.color.design_stroke') })
+      .shadow({ radius: 20, color: $r('app.color.design_shadow'), offsetX: -4 })
+      .onClick(() => {
+      })
+      .transition(TransitionEffect.translate({ x: '100%' })
+        .animation({ duration: 260, curve: Curve.Friction }))
+    }
+    .width('100%')
+    .height('100%')
+    .transition(TransitionEffect.OPACITY.animation({ duration: 260, curve: Curve.Friction }))
+  }
 
   /** 文件树头部：返回首页 + 仓库名 + 更多菜单。 */
   @Builder
@@ -756,13 +778,15 @@ export struct WorkspaceView {
         .maxLines(1)
         .textOverflow({ overflow: TextOverflow.Ellipsis })
         .layoutWeight(1)
-      SymbolGlyph($r('sys.symbol.more'))
-        .fontSize(22)
-        .fontColor([$r('app.color.design_text_primary')])
-        .width(40)
-        .height(40)
-        .accessibilityText($r('app.string.design_tab_more'))
-        .bindMenu(this.moreMenuBuilder)
+      Stack() {
+        ThreeDotsIcon(3.5, 3, $r('app.color.design_text_primary'), 0.85)
+      }
+      .width(40)
+      .height(40)
+      .borderRadius(20)
+      .alignContent(Alignment.Center)
+      .accessibilityText($r('app.string.design_tab_more'))
+      .bindMenu(this.moreMenuBuilder)
     }
     .width('100%')
     .height(56)
@@ -951,14 +975,19 @@ export struct WorkspaceView {
           .maxLines(1)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
           .layoutWeight(1)
-        SymbolGlyph($r('sys.symbol.xmark'))
-          .fontSize(16)
-          .fontColor([$r('app.color.design_text_secondary')])
-          .width(32)
-          .height(32)
-          .onClick(() => {
-            this.vm.closeSecondary();
-          })
+        Stack() {
+          SymbolGlyph($r('sys.symbol.xmark'))
+            .fontSize(15)
+            .fontColor([$r('app.color.design_text_secondary')])
+        }
+        .width(30)
+        .height(30)
+        .borderRadius(15)
+        .backgroundColor($r('app.color.design_elevated'))
+        .alignContent(Alignment.Center)
+        .onClick(() => {
+          this.vm.closeSecondary();
+        })
       }
       .width('100%')
       .height(44)
@@ -1043,14 +1072,14 @@ export struct WorkspaceView {
 
   // ==================== 布局判定与交互 ====================
 
-  /** 宽度是否足以让信息面板与编辑器并排显示。 */
+  /** 宽高是否足以让信息面板与文件树、编辑器三栏并排显示（平板横屏 / 桌面 >= 900x500vp）。 */
   private fixedPanelEnabled(): boolean {
-    return this.contentWidth >= 900;
+    return this.contentWidth >= 900 && this.contentHeight >= 500;
   }
 
-  /** 是否以固定侧栏形式显示信息面板。 */
+  /** 是否以固定三栏侧栏形式显示信息面板。 */
   private showFixedInfoPanel(): boolean {
-    return this.showRightPanel && this.fixedPanelEnabled();
+    return this.showFixedPanel && this.fixedPanelEnabled();
   }
 
   /** 在过渡动画中修改状态。 */
@@ -1075,6 +1104,7 @@ export struct WorkspaceView {
     if (this.dialogKind !== DesignDialogKind.NONE) {
       this.animAssign((): void => {
         this.dialogKind = DesignDialogKind.NONE;
+        this.dialogTargetPath = '';
       });
       return;
     }
@@ -1143,19 +1173,21 @@ export struct WorkspaceView {
       this.exitEditWithSave();
       return;
     }
-    if (!this.isWide) {
-      if (this.showInfo) {
-        this.animAssign((): void => {
-          this.showInfo = false;
-        });
-        return;
-      }
-      if (this.showSideBar) {
-        this.animAssign((): void => {
-          this.showSideBar = false;
-        });
-        return;
-      }
+    if (!this.fixedPanelEnabled() && this.showInfo) {
+      this.animAssign((): void => {
+        this.showInfo = false;
+      });
+      return;
+    }
+    if (!this.isWide && this.showSideBar) {
+      this.animAssign((): void => {
+        this.showSideBar = false;
+      });
+      return;
+    }
+    if (this.vm.isExternalMode) {
+      this.onRequestCloseExternal();
+      return;
     }
     this.onRequestExit();
   }
@@ -1176,7 +1208,7 @@ export struct WorkspaceView {
     });
   }
 
-  /** 打开笔记并收起窄屏浮层（信息面板 / 文件侧栏）。 */
+  /** 打开笔记并收起非三栏设备的浮动层（信息抽屉 / 窄屏文件侧栏）。 */
   private openNoteFrom(path: string): void {
     this.vm.openNote(path);
     this.animAssign((): void => {
@@ -1187,10 +1219,10 @@ export struct WorkspaceView {
     });
   }
 
-  /** 正文区横向滑动：向右滑呼出文件侧栏，向左滑查看双链。 */
+  /** 正文区横向滑动：收起浮层或呼出文件侧栏 / 双链信息。 */
   private handleContentSwipe(offsetX: number): void {
     if (offsetX > 60) {
-      if (!this.isWide && this.showInfo) {
+      if (!this.fixedPanelEnabled() && this.showInfo) {
         this.animAssign((): void => {
           this.showInfo = false;
         });
@@ -1213,34 +1245,29 @@ export struct WorkspaceView {
     }
   }
 
-  /** 收起窄屏浮层：信息面板与文件侧栏。 */
+  /** 收起非固定三栏模式下的浮层：信息抽屉与窄屏文件侧栏。 */
   private dismissOverlays(): void {
-    if (this.isWide) {
-      return;
-    }
-    if (this.showInfo) {
+    if (!this.fixedPanelEnabled() && this.showInfo) {
       this.animAssign((): void => {
         this.showInfo = false;
       });
     }
-    if (this.showSideBar) {
+    if (!this.isWide && this.showSideBar) {
       this.animAssign((): void => {
         this.showSideBar = false;
       });
     }
   }
 
-  /** 打开双链信息（窄屏覆盖层 / 宽屏右侧面板）。 */
+  /** 打开双链信息（平板三栏固定面板 / 手机与折叠屏浮动抽屉）。 */
   private openBacklinks(): void {
-    if (this.isWide) {
-      this.animAssign((): void => {
-        this.showRightPanel = true;
-      });
-      return;
-    }
     this.vm.setInfoTab(1);
     this.animAssign((): void => {
-      this.showInfo = true;
+      if (this.fixedPanelEnabled()) {
+        this.showFixedPanel = true;
+      } else {
+        this.showInfo = true;
+      }
     });
   }
 
@@ -1248,6 +1275,7 @@ export struct WorkspaceView {
   private async scrollToOutlineEntry(entry: OutlineEntry): Promise<void> {
     if (this.vm.editMode) {
       await this.vm.saveDraft();
+      this.onNoteMutated();
       setTimeout((): void => {
         this.docController.scrollToBlock(entry.ordinal);
       }, 360);
@@ -1289,28 +1317,31 @@ export struct WorkspaceView {
   }
 
   /** 打开指定场景对话框。 */
-  private openDialog(kind: string): void {
+  private openDialog(kind: string, targetPath: string = ''): void {
     this.animAssign((): void => {
+      this.dialogTargetPath = targetPath;
       this.dialogKind = kind;
     });
   }
 
   /** 打开重命名对话框（无选中笔记时提示）。 */
-  private openRenameDialog(): void {
-    if (this.vm.selectedPath.length === 0) {
+  private openRenameDialog(targetPath: string = ''): void {
+    const resolved: string = targetPath.length > 0 ? targetPath : this.vm.selectedPath;
+    if (resolved.length === 0) {
       this.toast($r('app.string.msg_no_note_selected'));
       return;
     }
-    this.openDialog(DesignDialogKind.RENAME);
+    this.openDialog(DesignDialogKind.RENAME, resolved);
   }
 
   /** 打开移动目标目录选择对话框（无选中笔记时提示）。 */
-  private openMoveDialog(): void {
-    if (this.vm.selectedPath.length === 0) {
+  private openMoveDialog(targetPath: string = ''): void {
+    const resolved: string = targetPath.length > 0 ? targetPath : this.vm.selectedPath;
+    if (resolved.length === 0) {
       this.toast($r('app.string.msg_no_note_selected'));
       return;
     }
-    this.openDialog(DesignDialogKind.MOVE);
+    this.openDialog(DesignDialogKind.MOVE, resolved);
   }
 
   /** 文件树拖拽：把笔记移动到目标目录。 */
@@ -1467,36 +1498,30 @@ export struct WorkspaceView {
     });
   }
 
-  /** 确认把当前笔记移入回收站。 */
-  private confirmTrashNote(): void {
-    if (this.vm.selectedPath.length === 0) {
-      this.toast($r('app.string.msg_no_note_selected'));
-      return;
-    }
-    const path: string = this.vm.selectedPath;
-    AlertDialog.show({
-      title: $r('app.string.dialog_trash_title'),
-      message: $r('app.string.dialog_trash_msg'),
-      primaryButton: {
-        value: $r('app.string.dialog_cancel'),
-        action: (): void => {
-        }
-      },
-      secondaryButton: {
-        value: $r('app.string.action_trash'),
-        fontColor: $r('app.color.design_danger'),
-        action: (): void => {
-          this.vm.trashNote(path).then((ok: boolean): void => {
-            if (!ok) {
-              this.toast($r('app.string.msg_trash_failed'));
-              return;
-            }
-            this.toast($r('app.string.msg_trash_done'));
-            this.onNoteMutated();
-          });
-        }
-      },
-      alignment: DialogAlignment.Bottom
+  /** 确认把指定（或当前）笔记移入回收站。 */
+  private confirmTrashNote(targetPath: string = ''): void {
+    const path: string = targetPath.length > 0 ? targetPath : this.vm.selectedPath;
+    confirmTrashNoteAction(this.vm, path, (): void => {
+      this.toast($r('app.string.msg_trash_done'));
+      this.onNoteMutated();
+      if (!this.isWide && this.vm.selectedPath.length === 0) {
+        this.onRequestExit();
+      }
+    }, (msg: ResourceStr): void => {
+      this.toast(msg);
+    });
+  }
+
+  /** 确认删除文件夹并把其内容移入回收站。 */
+  private confirmTrashFolder(dirPath: string): void {
+    confirmTrashFolderAction(this.vm, dirPath, (): void => {
+      this.toast($r('app.string.msg_trash_folder_done'));
+      this.onNoteMutated();
+      if (!this.isWide && this.vm.selectedPath.length === 0) {
+        this.onRequestExit();
+      }
+    }, (msg: ResourceStr): void => {
+      this.toast(msg);
     });
   }
 

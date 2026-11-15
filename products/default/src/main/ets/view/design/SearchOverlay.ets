@@ -127,11 +127,41 @@ export struct SearchOverlay {
       })
   }
 
-  /** 标签模式主体：标签候选 chips + 选中标签后的笔记列表。 */
+  /** 标签模式主体：多行平铺标签面板 + 选中标签后的笔记列表，整体上下滑动。 */
   @Builder
   tagModeBody() {
-    Column() {
-      Scroll() {
+    Scroll() {
+      Column({ space: 10 }) {
+        Row({ space: 6 }) {
+          SymbolGlyph($r('sys.symbol.hash'))
+            .fontSize(14)
+            .fontColor([$r('app.color.design_accent')])
+          Text($r('app.string.search_tags_all_header', this.searchVm.tagChips.length))
+            .fontSize(13)
+            .fontWeight(FontWeight.Bold)
+            .fontColor($r('app.color.design_text_primary'))
+            .layoutWeight(1)
+          if (this.searchVm.activeTag.length > 0) {
+            Row({ space: 4 }) {
+              Text($r('app.string.search_tags_clear_filter', this.searchVm.activeTag))
+                .fontSize(11)
+                .fontWeight(FontWeight.Medium)
+                .fontColor($r('app.color.design_accent'))
+              SymbolGlyph($r('sys.symbol.xmark'))
+                .fontSize(10)
+                .fontColor([$r('app.color.design_accent')])
+            }
+            .padding({ left: 8, right: 8, top: 3, bottom: 3 })
+            .borderRadius(10)
+            .backgroundColor($r('app.color.design_accent_weak'))
+            .onClick(() => {
+              this.selectTag(this.searchVm.activeTag);
+            })
+          }
+        }
+        .width('100%')
+        .padding({ left: 16, right: 16, top: 10 })
+
         Flex({ wrap: FlexWrap.Wrap }) {
           ForEach(this.searchVm.tagChips, (ref: TagRef) => {
             Text(`#${ref.tag} (${ref.count})`)
@@ -139,44 +169,71 @@ export struct SearchOverlay {
               .fontWeight(this.searchVm.activeTag === ref.tag ? FontWeight.Medium : FontWeight.Normal)
               .fontColor(this.searchVm.activeTag === ref.tag ? $r('app.color.design_on_accent')
                 : $r('app.color.design_accent'))
-              .padding({ left: 12, right: 12, top: 5, bottom: 5 })
+              .padding({ left: 12, right: 12, top: 6, bottom: 6 })
               .borderRadius(14)
               .backgroundColor(this.searchVm.activeTag === ref.tag ?
                 $r('app.color.design_accent') : $r('app.color.design_accent_weak'))
-              .margin({ right: 6, top: 6 })
+              .margin({ right: 8, bottom: 8 })
               .onClick(() => {
                 this.selectTag(ref.tag);
               })
-          }, (ref: TagRef): string => `tag_${ref.tag}`)
+          }, (ref: TagRef): string => `tag_${ref.tag}_${ref.count}_${this.searchVm.activeTag === ref.tag}`)
         }
         .width('100%')
-        .padding({ left: 16, right: 16, top: 6 })
-      }
-      .width('100%')
-      .height(this.searchVm.activeTag.length > 0 ? '30%' : '100%')
-      .align(Alignment.Top)
-      .scrollBar(BarState.Off)
+        .padding({ left: 16, right: 16 })
 
-      if (this.searchVm.activeTag.length > 0) {
-        Divider()
-          .color($r('app.color.design_divider'))
+        if (this.searchVm.activeTag.length > 0) {
+          Divider()
+            .color($r('app.color.design_divider'))
+            .margin({ left: 16, right: 16 })
 
-        if (this.searchVm.hits.length === 0) {
-          Column() {
+          if (this.searchVm.hits.length === 0) {
             Text(this.searchVm.busy ? $r('app.string.search_loading') : $r('app.string.search_empty'))
               .fontSize(14)
               .fontColor($r('app.color.design_text_secondary'))
+              .width('100%')
+              .textAlign(TextAlign.Center)
+              .padding({ top: 16, bottom: 16 })
+          } else {
+            Column({ space: 4 }) {
+              ForEach(this.searchVm.hits, (hit: SearchHit) => {
+                Column() {
+                  Text(hit.title)
+                    .fontSize(15)
+                    .fontWeight(FontWeight.Medium)
+                    .fontColor($r('app.color.design_text_primary'))
+                    .width('100%')
+                    .maxLines(1)
+                    .textOverflow({ overflow: TextOverflow.Ellipsis })
+                  Text(hit.snippet.length > 0 ? hit.snippet : hit.path)
+                    .fontSize(12)
+                    .fontColor($r('app.color.design_text_secondary'))
+                    .width('100%')
+                    .maxLines(2)
+                    .textOverflow({ overflow: TextOverflow.Ellipsis })
+                    .margin({ top: 2 })
+                }
+                .width('100%')
+                .alignItems(HorizontalAlign.Start)
+                .padding({ left: 14, right: 14, top: 10, bottom: 10 })
+                .borderRadius(14)
+                .onClick(() => {
+                  this.onOpenNote(hit.path);
+                })
+              }, (hit: SearchHit): string => `tag_hit_${hit.path}`)
+            }
+            .width('100%')
+            .padding({ left: 6, right: 6, bottom: 10 })
           }
-          .width('100%')
-          .layoutWeight(1)
-          .justifyContent(FlexAlign.Center)
-        } else {
-          this.hitList()
         }
       }
+      .width('100%')
     }
     .width('100%')
     .layoutWeight(1)
+    .align(Alignment.Top)
+    .scrollBar(BarState.Off)
+    .edgeEffect(EdgeEffect.Spring)
   }
 
   /** 命中列表。 */

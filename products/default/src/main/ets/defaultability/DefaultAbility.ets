@@ -10,12 +10,17 @@ export default class DefaultAbility extends UIAbility {
     hilog.info(DOMAIN, 'testTag', '%{public}s', 'Ability onCreate');
     // 注册 Ability 上下文，供视图模型启动外部链接（系统浏览器）。
     AbilityContextHolder.context = this.context;
-    this.extractShortcutWant(want);
+    this.extractLaunchWant(want);
   }
 
   onNewWant(want: Want, _launchParam: AbilityConstant.LaunchParam): void {
     hilog.info(DOMAIN, 'testTag', '%{public}s', 'Ability onNewWant');
+    this.extractLaunchWant(want);
+  }
+
+  private extractLaunchWant(want: Want): void {
     this.extractShortcutWant(want);
+    this.extractOpenUriWant(want);
   }
 
   private extractShortcutWant(want: Want): void {
@@ -28,6 +33,30 @@ export default class DefaultAbility extends UIAbility {
       AbilityContextHolder.pendingShortcutAction = actionRaw;
       if (AbilityContextHolder.onShortcutAction !== null) {
         AbilityContextHolder.onShortcutAction();
+      }
+    }
+  }
+
+  private extractOpenUriWant(want: Want): void {
+    let candidate: string = typeof want.uri === 'string' ? want.uri.trim() : '';
+    if (candidate.length === 0 && want.parameters !== undefined) {
+      const uriKeys: string[] = ['uri', 'ohos.ability.params.uri'];
+      for (const key of uriKeys) {
+        const value: Object | undefined = want.parameters[key];
+        if (typeof value === 'string' && value.trim().length > 0) {
+          candidate = value.trim();
+          break;
+        }
+      }
+    }
+    if (candidate.length === 0) {
+      return;
+    }
+    if (candidate.startsWith('file://') || candidate.startsWith('content://') ||
+      candidate.startsWith('datashare://') || candidate.startsWith('/')) {
+      AbilityContextHolder.pendingOpenUri = candidate;
+      if (AbilityContextHolder.onOpenUri !== null) {
+        AbilityContextHolder.onOpenUri();
       }
     }
   }
@@ -75,6 +104,9 @@ export default class DefaultAbility extends UIAbility {
   onForeground(): void {
     // Ability has brought to foreground
     hilog.info(DOMAIN, 'testTag', '%{public}s', 'Ability onForeground');
+    if (AbilityContextHolder.onForeground !== null) {
+      AbilityContextHolder.onForeground();
+    }
   }
 
   onBackground(): void {

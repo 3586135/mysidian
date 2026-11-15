@@ -38,19 +38,23 @@ export struct SyncSettingsSheet {
             .fontWeight(FontWeight.Medium)
             .fontColor($r('app.color.design_text_primary'))
             .layoutWeight(1)
-          SymbolGlyph($r('sys.symbol.xmark'))
-            .fontSize(16)
-            .fontColor([$r('app.color.design_text_secondary')])
-            .width(32)
-            .height(32)
-            .borderRadius(16)
-            .backgroundColor($r('app.color.design_elevated'))
-            .onClick(() => {
-              this.onClose();
-            })
+          Stack() {
+            SymbolGlyph($r('sys.symbol.xmark'))
+              .fontSize(16)
+              .fontColor([$r('app.color.design_text_secondary')])
+          }
+          .width(32)
+          .height(32)
+          .borderRadius(16)
+          .backgroundColor($r('app.color.design_elevated'))
+          .alignContent(Alignment.Center)
+          .onClick(() => {
+            this.onClose();
+          })
         }
         .width('100%')
-        .margin({ bottom: 6 })
+        .alignItems(VerticalAlign.Center)
+        .margin({ bottom: 4 })
 
         Scroll() {
           Column() {
@@ -132,39 +136,110 @@ export struct SyncSettingsSheet {
             .margin({ top: 8, bottom: 4 })
 
             Row() {
-              Toggle({ type: ToggleType.Switch, isOn: this.syncVm.autoSync })
-                .selectedColor($r('app.color.design_accent'))
-                .onChange((isOn: boolean) => {
-                  this.syncVm.autoSync = isOn;
-                  this.onAutoSyncChange(isOn);
-                })
               Column() {
                 Text($r('app.string.sync_auto'))
-                  .fontSize(15)
+                  .fontSize(14)
                   .fontColor($r('app.color.design_text_primary'))
                 Text($r('app.string.sync_auto_desc'))
                   .fontSize(12)
                   .fontColor($r('app.color.design_text_secondary'))
                   .margin({ top: 2 })
               }
+              .layoutWeight(1)
               .alignItems(HorizontalAlign.Start)
-              .margin({ left: 12 })
+
+              Toggle({ type: ToggleType.Switch, isOn: this.syncVm.autoSync })
+                .selectedColor($r('app.color.design_accent'))
+                .onChange((isOn: boolean) => {
+                  this.syncVm.autoSync = isOn;
+                  this.onAutoSyncChange(isOn);
+                })
             }
             .width('100%')
             .alignItems(VerticalAlign.Center)
-            .margin({ top: 12, bottom: 4 })
+            .margin({ top: 10, bottom: 4 })
 
-            Button($r('app.string.sync_now'))
+            Button(this.syncVm.syncing ? $r('app.string.sync_status_syncing')
+              : $r('app.string.sync_now'))
               .type(ButtonType.Capsule)
               .width('100%')
               .height(42)
               .fontSize(15)
+              .enabled(!this.syncVm.syncing)
+              .opacity(this.syncVm.syncing ? 0.65 : 1)
               .backgroundColor($r('app.color.design_accent'))
               .fontColor($r('app.color.design_on_accent'))
-              .margin({ top: 12, bottom: 8 })
+              .margin({ top: 10, bottom: 8 })
               .onClick(() => {
                 this.onSyncNow();
               })
+
+            Column() {
+              Text($r('app.string.sync_obsidian_guard_title'))
+                .fontSize(12)
+                .fontWeight(FontWeight.Medium)
+                .fontColor($r('app.color.design_accent'))
+                .width('100%')
+              Text($r('app.string.sync_obsidian_guard_desc'))
+                .fontSize(11)
+                .fontColor($r('app.color.design_text_secondary'))
+                .lineHeight(16)
+                .width('100%')
+                .margin({ top: 3 })
+            }
+            .width('100%')
+            .alignItems(HorizontalAlign.Start)
+            .padding({ left: 10, right: 10, top: 8, bottom: 8 })
+            .borderRadius(10)
+            .backgroundColor($r('app.color.design_elevated'))
+            .margin({ top: 4, bottom: 6 })
+
+            if (this.syncVm.awaitingConfirmation) {
+              Column() {
+                Text($r('app.string.sync_confirm_title'))
+                  .fontSize(13)
+                  .fontWeight(FontWeight.Bold)
+                  .fontColor($r('app.color.design_danger'))
+                  .width('100%')
+                Text(this.syncVm.safetyAlertMessage())
+                  .fontSize(12)
+                  .fontColor($r('app.color.design_text_primary'))
+                  .lineHeight(17)
+                  .width('100%')
+                  .margin({ top: 4 })
+                Row() {
+                  Text($r('app.string.dialog_cancel'))
+                    .fontSize(12)
+                    .fontColor($r('app.color.design_text_secondary'))
+                    .padding({ left: 12, right: 12, top: 6, bottom: 6 })
+                    .borderRadius(14)
+                    .backgroundColor($r('app.color.design_surface_solid'))
+                    .onClick(() => {
+                      this.syncVm.cancelPendingSync();
+                    })
+                  Text($r('app.string.sync_confirm_proceed'))
+                    .fontSize(12)
+                    .fontWeight(FontWeight.Medium)
+                    .fontColor($r('app.color.design_on_accent'))
+                    .padding({ left: 14, right: 14, top: 6, bottom: 6 })
+                    .borderRadius(14)
+                    .backgroundColor($r('app.color.design_accent'))
+                    .margin({ left: 8 })
+                    .onClick(() => {
+                      this.syncVm.confirmPendingSync(this.vault);
+                    })
+                }
+                .width('100%')
+                .margin({ top: 8 })
+              }
+              .width('100%')
+              .alignItems(HorizontalAlign.Start)
+              .padding({ left: 10, right: 10, top: 8, bottom: 8 })
+              .borderRadius(10)
+              .border({ width: 1, color: $r('app.color.design_danger') })
+              .backgroundColor($r('app.color.design_elevated'))
+              .margin({ top: 4, bottom: 6 })
+            }
 
             Text(this.syncVm.statusText())
               .fontSize(13)
@@ -192,15 +267,28 @@ export struct SyncSettingsSheet {
                       .fontColor($r('app.color.design_text_secondary'))
                       .width('100%')
                       .margin({ top: 2 })
-                    Row({ space: 8 }) {
-                      this.conflictActionChip($r('app.string.sync_conflict_diff'), false, (): void => {
-                        this.toggleConflictDiff(conflict);
-                      })
+                    if (conflict.isBinary) {
+                      Text($r('app.string.sync_conflict_binary_hint'))
+                        .fontSize(11)
+                        .fontColor($r('app.color.design_text_secondary'))
+                        .width('100%')
+                        .margin({ top: 4 })
+                    }
+                    Flex({ wrap: FlexWrap.Wrap }) {
+                      if (!conflict.isBinary) {
+                        this.conflictActionChip($r('app.string.sync_conflict_diff'), false, (): void => {
+                          this.toggleConflictDiff(conflict);
+                        })
+                      }
                       this.conflictActionChip($r('app.string.sync_conflict_keep_local'), false, (): void => {
-                        if (this.syncVm.resolveConflictKeepLocal(this.vault, conflict)) {
-                          this.activeConflictPath = '';
-                          this.toast($r('app.string.msg_conflict_resolved'));
-                        }
+                        this.syncVm.resolveConflictKeepLocal(this.vault, conflict).then((ok: boolean): void => {
+                          if (ok) {
+                            this.activeConflictPath = '';
+                            this.toast($r('app.string.msg_conflict_resolved'));
+                          } else {
+                            this.toast($r('app.string.msg_conflict_push_failed'));
+                          }
+                        });
                       })
                       this.conflictActionChip($r('app.string.sync_conflict_use_remote'), true, (): void => {
                         this.syncVm.resolveConflictUseRemote(this.vault, conflict).then((ok: boolean): void => {
@@ -253,8 +341,7 @@ export struct SyncSettingsSheet {
         .edgeEffect(EdgeEffect.Spring)
       }
       .width('90%')
-      .height('78%')
-      .constraintSize({ maxWidth: 520 })
+      .constraintSize({ maxWidth: 520, maxHeight: '84%' })
       .padding(20)
       .borderRadius(28)
       .backgroundColor($r('app.color.design_surface_solid'))
@@ -280,6 +367,7 @@ export struct SyncSettingsSheet {
       .borderRadius(12)
       .backgroundColor(primary ? $r('app.color.design_accent_weak') :
         $r('app.color.design_surface_solid'))
+      .margin({ right: 8, bottom: 6 })
       .onClick(() => {
         action();
       })
@@ -316,7 +404,7 @@ export struct SyncSettingsSheet {
       .fontSize(12)
       .fontColor($r('app.color.design_text_secondary'))
       .width('100%')
-      .margin({ top: 10, bottom: 6 })
+      .margin({ top: 8, bottom: 4 })
   }
 
   /** 字段输入框。 */
@@ -329,7 +417,7 @@ export struct SyncSettingsSheet {
     })
       .type(inputType)
       .width('100%')
-      .height(42)
+      .height(40)
       .fontSize(15)
       .padding({ left: 14, right: 14 })
       .borderRadius(12)

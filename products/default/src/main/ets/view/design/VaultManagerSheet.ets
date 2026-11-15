@@ -36,18 +36,22 @@ export struct VaultManagerSheet {
             .fontWeight(FontWeight.Medium)
             .fontColor($r('app.color.design_text_primary'))
             .layoutWeight(1)
-          SymbolGlyph($r('sys.symbol.xmark'))
-            .fontSize(16)
-            .fontColor([$r('app.color.design_text_secondary')])
-            .width(32)
-            .height(32)
-            .borderRadius(16)
-            .backgroundColor($r('app.color.design_elevated'))
-            .onClick(() => {
-              this.onClose();
-            })
+          Stack() {
+            SymbolGlyph($r('sys.symbol.xmark'))
+              .fontSize(16)
+              .fontColor([$r('app.color.design_text_secondary')])
+          }
+          .width(32)
+          .height(32)
+          .borderRadius(16)
+          .backgroundColor($r('app.color.design_elevated'))
+          .alignContent(Alignment.Center)
+          .onClick(() => {
+            this.onClose();
+          })
         }
         .width('100%')
+        .alignItems(VerticalAlign.Center)
         .margin({ bottom: 10 })
 
         Scroll() {
@@ -59,8 +63,9 @@ export struct VaultManagerSheet {
           .width('100%')
           .alignItems(HorizontalAlign.Start)
         }
-        .layoutWeight(1)
         .width('100%')
+        .align(Alignment.Top)
+        .constraintSize({ maxHeight: 380 })
         .scrollBar(BarState.Off)
         .edgeEffect(EdgeEffect.Spring)
 
@@ -90,8 +95,7 @@ export struct VaultManagerSheet {
         .margin({ top: 12 })
       }
       .width('90%')
-      .height('72%')
-      .constraintSize({ maxWidth: 520 })
+      .constraintSize({ maxWidth: 520, maxHeight: '78%' })
       .padding(18)
       .borderRadius(28)
       .backgroundColor($r('app.color.design_surface_solid'))

@@ -1,7 +1,8 @@
 import { common } from '@kit.AbilityKit';
 import { fileIo } from '@kit.CoreFileKit';
 import { preferences } from '@kit.ArkData';
-import { SyncConflict, SyncConfig, SyncState, SyncStatus, VaultInfo } from '@ohos/domain';
+import { SyncConflict, SyncConfig, SyncPlanSummary, SyncSafetyReason, SyncState, SyncStatus,
+  VaultInfo } from '@ohos/domain';
 import { Logger, SecretStore } from '@ohos/common';
 import { DiffLine, FileHistory } from '@ohos/vault';
 import { SyncEngine } from '@ohos/sync';
@@ -26,14 +27,26 @@ export class SyncViewModel {
   @Trace configured: boolean = false;
   @Trace status: SyncStatus = new SyncStatus();
   @Trace conflicts: SyncConflict[] = [];
+  @Trace syncing: boolean = false;
+  @Trace pendingPlan: SyncPlanSummary = new SyncPlanSummary();
+  @Trace awaitingConfirmation: boolean = false;
 
   private context: common.Context | null = null;
   private readonly engine: SyncEngine = new SyncEngine();
-  private syncing: boolean = false;
+  private debounceTimer: number = -1;
+  private retryTimer: number = -1;
+  private queuedVault: VaultInfo | null = null;
+  private autoRetryCount: number = 0;
+  private lastPassiveTriggerAt: number = 0;
   private static readonly STORE: string = 'mysidian_sync';
+  private static readonly EDIT_DEBOUNCE_MS: number = 1500;
+  private static readonly PASSIVE_COOLDOWN_MS: number = 20000;
+  private static readonly SILENT_RETRY_MS: number = 8000;
 
   /** 同步完成后回调（由界面层设置，用于重建索引与刷新文件树）。 */
   public onSyncComplete: (() => void) | null = null;
+  /** 同步触发安全闸门暂停时回调（由界面层弹窗提示用户核对后决定是否继续）。 */
+  public onNeedsConfirm: ((plan: SyncPlanSummary) => void) | null = null;
 
   /** 初始化并读取已保存的配置。 */
   public async init(context: common.Context): Promise<void> {
@@ -143,30 +156,156 @@ export class SyncViewModel {
     return this.password;
   }
 
-  /** 执行一次同步（并发保护：上一次未完成时忽略本次请求）。 */
-  public async runSync(vault: VaultInfo): Promise<void> {
-    const context: common.Context | null = this.context;
-    if (context === null || this.syncing || vault.rootPath.length === 0) {
+  private buildConfig(): SyncConfig {
+    const config: SyncConfig = new SyncConfig();
+    config.serverUrl = this.serverUrl;
+    config.username = this.username;
+    config.password = this.password;
+    config.remoteRoot = this.remoteRoot;
+    config.caCertPath = this.caCertPath;
+    config.skipCertVerify = this.skipCertVerify;
+    config.autoSync = this.autoSync;
+    return config;
+  }
+
+  /**
+   * 计划自动同步（防抖合并：连续保存/编辑仅同步一次；若正在同步则排入队列结束后自动补跑）。
+   */
+  public scheduleAutoSync(vault: VaultInfo, delayMs: number = SyncViewModel.EDIT_DEBOUNCE_MS): void {
+    if (!this.autoSync || this.serverUrl.trim().length === 0 ||
+      vault.rootPath.length === 0 || this.awaitingConfirmation) {
       return;
+    }
+    if (this.syncing) {
+      this.queuedVault = vault;
+      return;
+    }
+    this.clearDebounceTimer();
+    this.debounceTimer = setTimeout((): void => {
+      this.debounceTimer = -1;
+      this.runSync(vault, false, false);
+    }, delayMs);
+  }
+
+  /**
+   * 启动或切回前台时触发轻量无感同步（带冷却节流，避免频繁切屏反复请求服务端）。
+   */
+  public requestPassiveSync(vault: VaultInfo): void {
+    if (!this.autoSync || this.serverUrl.trim().length === 0 ||
+      vault.rootPath.length === 0 || this.awaitingConfirmation || this.syncing) {
+      return;
+    }
+    const now: number = Date.now();
+    if (now - this.lastPassiveTriggerAt < SyncViewModel.PASSIVE_COOLDOWN_MS) {
+      return;
+    }
+    if (this.status.lastSyncAt > 0 && now - this.status.lastSyncAt < SyncViewModel.PASSIVE_COOLDOWN_MS) {
+      return;
+    }
+    this.lastPassiveTriggerAt = now;
+    this.scheduleAutoSync(vault, 600);
+  }
+
+  /** 释放同步防抖与重试定时器。 */
+  public disposeTimers(): void {
+    this.clearDebounceTimer();
+    this.clearRetryTimer();
+    this.queuedVault = null;
+  }
+
+  private clearDebounceTimer(): void {
+    if (this.debounceTimer >= 0) {
+      clearTimeout(this.debounceTimer);
+      this.debounceTimer = -1;
+    }
+  }
+
+  private clearRetryTimer(): void {
+    if (this.retryTimer >= 0) {
+      clearTimeout(this.retryTimer);
+      this.retryTimer = -1;
+    }
+  }
+
+  private static isAuthOrConfigError(message: string): boolean {
+    return message.includes('(401)') || message.includes('(403)') ||
+      message.includes('(400)') || message.includes('服务器地址') ||
+      message.includes('认证失败') || message.includes('无权限');
+  }
+
+  /** 执行一次同步（并发时自动合并补跑请求，绝不漏掉同步期间的新改动）。 */
+  public async runSync(vault: VaultInfo, confirmed: boolean = false,
+    userInitiated: boolean = false): Promise<void> {
+    const context: common.Context | null = this.context;
+    if (context === null || vault.rootPath.length === 0) {
+      return;
+    }
+    if (this.syncing) {
+      if (!userInitiated && !this.awaitingConfirmation) {
+        this.queuedVault = vault;
+      }
+      return;
+    }
+    this.clearDebounceTimer();
+    this.clearRetryTimer();
+    this.queuedVault = null;
+    if (userInitiated) {
+      this.autoRetryCount = 0;
     }
     this.syncing = true;
     try {
       await this.save();
-      const config: SyncConfig = new SyncConfig();
-      config.serverUrl = this.serverUrl;
-      config.username = this.username;
-      config.password = this.password;
-      config.remoteRoot = this.remoteRoot;
-      config.caCertPath = this.caCertPath;
-      config.skipCertVerify = this.skipCertVerify;
-      config.autoSync = this.autoSync;
-      this.status = await this.engine.sync(vault, config, context);
+      const config: SyncConfig = this.buildConfig();
+      this.status = await this.engine.sync(vault, config, context, confirmed);
       this.conflicts = this.engine.getConflicts();
-      if (this.onSyncComplete !== null && this.status.pendingDownloads > 0) {
+      if (this.status.state === SyncState.PAUSED) {
+        this.pendingPlan = this.engine.getPendingPlan();
+        this.awaitingConfirmation = true;
+        if (userInitiated && this.onNeedsConfirm !== null) {
+          this.onNeedsConfirm(this.pendingPlan);
+        }
+        return;
+      }
+      this.awaitingConfirmation = false;
+      this.pendingPlan = new SyncPlanSummary();
+      if (this.status.state === SyncState.SUCCESS || this.status.state === SyncState.CONFLICT) {
+        this.autoRetryCount = 0;
+      }
+      if (this.onSyncComplete !== null && (this.status.pendingDownloads > 0 ||
+        this.status.pendingTrashed > 0 || this.conflicts.length > 0)) {
         this.onSyncComplete();
+      }
+      if (!userInitiated && this.status.state === SyncState.FAILED &&
+        this.autoSync && !SyncViewModel.isAuthOrConfigError(this.status.message) &&
+        this.autoRetryCount < 1) {
+        this.autoRetryCount++;
+        const retryVault: VaultInfo = vault;
+        this.retryTimer = setTimeout((): void => {
+          this.retryTimer = -1;
+          this.runSync(retryVault, false, false);
+        }, SyncViewModel.SILENT_RETRY_MS);
       }
     } finally {
       this.syncing = false;
+      const pending: VaultInfo | null = this.queuedVault;
+      this.queuedVault = null;
+      if (pending !== null && this.autoSync && !this.awaitingConfirmation) {
+        this.scheduleAutoSync(pending, 600);
+      }
+    }
+  }
+
+  /** 用户确认安全提示后继续执行同步。 */
+  public async confirmPendingSync(vault: VaultInfo): Promise<void> {
+    await this.runSync(vault, true, true);
+  }
+
+  /** 取消本次等待确认的同步，复位为安全空闲状态。 */
+  public cancelPendingSync(): void {
+    this.awaitingConfirmation = false;
+    this.pendingPlan = new SyncPlanSummary();
+    if (this.status.state === SyncState.PAUSED) {
+      this.status = new SyncStatus();
     }
   }
 
@@ -216,9 +355,9 @@ export class SyncViewModel {
     await this.save();
   }
 
-  /** 计算冲突文件与本地版本的行级差异（本地 → 远端冲突副本）。 */
+  /** 计算冲突文件与本地版本的行级差异（本地 → 远端冲突副本；二进制图片返回空）。 */
   public diffConflict(vault: VaultInfo, conflict: SyncConflict): DiffLine[] {
-    if (vault.rootPath.length === 0) {
+    if (vault.rootPath.length === 0 || conflict.isBinary) {
       return [];
     }
     try {
@@ -233,12 +372,15 @@ export class SyncViewModel {
     }
   }
 
-  /** 冲突处理：保留本地版本，移除冲突副本。 */
-  public resolveConflictKeepLocal(vault: VaultInfo, conflict: SyncConflict): boolean {
-    if (vault.rootPath.length === 0) {
+  /** 冲突处理：明确将本地版本推送覆盖远端并移除冲突副本。 */
+  public async resolveConflictKeepLocal(vault: VaultInfo,
+    conflict: SyncConflict): Promise<boolean> {
+    const context: common.Context | null = this.context;
+    if (context === null || vault.rootPath.length === 0) {
       return false;
     }
     try {
+      await this.engine.pushConflictKeepLocal(vault, this.buildConfig(), conflict, context);
       const remoteAbs: string = `${vault.rootPath}/${conflict.conflictPath}`;
       if (fileIo.accessSync(remoteAbs)) {
         fileIo.unlinkSync(remoteAbs);
@@ -246,12 +388,12 @@ export class SyncViewModel {
       this.removeConflictItem(conflict);
       return true;
     } catch (error) {
-      LOG.warn('resolve keep local failed');
+      LOG.warn('resolve keep local push failed');
       return false;
     }
   }
 
-  /** 冲突处理：采用远端冲突副本覆盖本地（覆盖前先存历史快照），并刷新索引。 */
+  /** 冲突处理：采用远端冲突副本覆盖本地（文本先存历史快照，支持图片附件），并刷新索引与基线。 */
   public async resolveConflictUseRemote(vault: VaultInfo,
     conflict: SyncConflict): Promise<boolean> {
     const context: common.Context | null = this.context;
@@ -264,19 +406,25 @@ export class SyncViewModel {
       if (!fileIo.accessSync(remoteAbs)) {
         return false;
       }
-      const remoteText: string = fileIo.readTextSync(remoteAbs);
-      if (fileIo.accessSync(localAbs)) {
-        await FileHistory.snapshot(context, vault, conflict.path);
-      }
-      const file = fileIo.openSync(localAbs,
-        fileIo.OpenMode.READ_WRITE | fileIo.OpenMode.CREATE | fileIo.OpenMode.TRUNC);
-      try {
-        fileIo.writeSync(file.fd, remoteText);
-        fileIo.fsyncSync(file.fd);
-      } finally {
-        fileIo.closeSync(file);
+      if (conflict.isBinary) {
+        SyncViewModel.copyBinaryFile(remoteAbs, localAbs);
+      } else {
+        const remoteText: string = fileIo.readTextSync(remoteAbs);
+        if (fileIo.accessSync(localAbs)) {
+          await FileHistory.snapshot(context, vault, conflict.path);
+        }
+        const file = fileIo.openSync(localAbs,
+          fileIo.OpenMode.READ_WRITE | fileIo.OpenMode.CREATE | fileIo.OpenMode.TRUNC);
+        try {
+          fileIo.writeSync(file.fd, remoteText);
+          fileIo.fsyncSync(file.fd);
+        } finally {
+          fileIo.closeSync(file);
+        }
       }
       fileIo.unlinkSync(remoteAbs);
+      await SyncEngine.markConflictUseRemoteResolved(
+        vault, this.buildConfig(), conflict, context);
       this.removeConflictItem(conflict);
       if (this.onSyncComplete !== null) {
         this.onSyncComplete();
@@ -285,6 +433,25 @@ export class SyncViewModel {
     } catch (error) {
       LOG.warn('resolve use remote failed');
       return false;
+    }
+  }
+
+  private static copyBinaryFile(srcAbs: string, destAbs: string): void {
+    const stat = fileIo.statSync(srcAbs);
+    const buffer: ArrayBuffer = new ArrayBuffer(stat.size);
+    const src = fileIo.openSync(srcAbs, fileIo.OpenMode.READ_ONLY);
+    try {
+      fileIo.readSync(src.fd, buffer);
+    } finally {
+      fileIo.closeSync(src);
+    }
+    const dest = fileIo.openSync(destAbs,
+      fileIo.OpenMode.READ_WRITE | fileIo.OpenMode.CREATE | fileIo.OpenMode.TRUNC);
+    try {
+      fileIo.writeSync(dest.fd, buffer);
+      fileIo.fsyncSync(dest.fd);
+    } finally {
+      fileIo.closeSync(dest);
     }
   }
 
@@ -302,12 +469,51 @@ export class SyncViewModel {
     }
   }
 
+  /** 返回触发安全暂停原因的本地化文案。 */
+  public safetyReasonText(reason: string): string {
+    if (reason === SyncSafetyReason.TARGET_CHANGED) {
+      return this.resText($r('app.string.sync_confirm_reason_target'));
+    }
+    if (reason === SyncSafetyReason.BULK_TRASH) {
+      return this.resText($r('app.string.sync_confirm_reason_bulk'));
+    }
+    return this.resText($r('app.string.sync_confirm_reason_initial'));
+  }
+
+  /** 返回待确认计划的汇总说明文本。 */
+  public safetySummaryText(): string {
+    const p: SyncPlanSummary = this.pendingPlan;
+    return this.resText($r('app.string.sync_confirm_summary'), p.uploads, p.downloads,
+      p.trashes, p.conflicts);
+  }
+
+  /** 拼接弹窗确认正文（原因 + 数量统计 + 示例文件路径）。 */
+  public safetyAlertMessage(): string {
+    const parts: string[] = [
+      this.safetyReasonText(this.pendingPlan.reason),
+      this.safetySummaryText()
+    ];
+    if (this.pendingPlan.samplePaths.length > 0) {
+      parts.push(this.resText($r('app.string.sync_confirm_samples'),
+        this.pendingPlan.samplePaths.join('、')));
+    }
+    return parts.join('\n');
+  }
+
   /** 状态展示文案（走资源，随系统语言）。 */
   public statusText(): string {
     if (this.status.state === SyncState.SYNCING) {
       return this.resText($r('app.string.sync_status_syncing'));
     }
+    if (this.status.state === SyncState.PAUSED) {
+      return this.resText($r('app.string.sync_status_paused'));
+    }
     if (this.status.state === SyncState.SUCCESS) {
+      if (this.status.pendingTrashed > 0 || this.status.skippedRemoteDeletes > 0) {
+        return this.resText($r('app.string.sync_status_success_detail'),
+          this.status.pendingUploads, this.status.pendingDownloads,
+          this.status.pendingTrashed, this.status.skippedRemoteDeletes);
+      }
       return this.resText($r('app.string.sync_status_success'), this.status.pendingUploads,
         this.status.pendingDownloads);
     }

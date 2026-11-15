@@ -1,4 +1,5 @@
 import { VaultViewModel } from '../../viewmodel/VaultViewModel';
+import { noteTitleFromPath } from './NoteActionHelper';
 
 /** 对话框场景类型。 */
 export class DesignDialogKind {
@@ -17,15 +18,17 @@ export class CreateVaultRequest {
   username: string;
   password: string;
   remoteRoot: string;
+  skipCertVerify: boolean;
 
   constructor(name: string, withSync: boolean, serverUrl: string, username: string,
-    password: string, remoteRoot: string) {
+    password: string, remoteRoot: string, skipCertVerify: boolean = false) {
     this.name = name;
     this.withSync = withSync;
     this.serverUrl = serverUrl;
     this.username = username;
     this.password = password;
     this.remoteRoot = remoteRoot;
+    this.skipCertVerify = skipCertVerify;
   }
 }
 
@@ -40,6 +43,8 @@ export class CreateVaultRequest {
 @ComponentV2
 export struct DialogHost {
   @Param kind: string = DesignDialogKind.RENAME;
+  /** 指定要重命名/移动的笔记路径；为空时回退到当前已选笔记 vm.selectedPath。 */
+  @Param targetPath: string = '';
   @Param vm: VaultViewModel = new VaultViewModel();
   @Event onClose: () => void = (): void => {};
   @Event onNoteMutated: () => void = (): void => {};
@@ -55,12 +60,15 @@ export struct DialogHost {
   @Local syncUser: string = '';
   @Local syncPass: string = '';
   @Local syncRoot: string = '';
+  /** 新建仓库：是否跳过 WebDAV HTTPS 证书校验。 */
+  @Local skipCertVerify: boolean = false;
   /** 移动场景：目标目录列表。 */
   @Local moveDirs: string[] = [];
 
   aboutToAppear(): void {
     if (this.kind === DesignDialogKind.RENAME) {
-      this.inputText = this.vm.selectedNoteName();
+      const target: string = this.effectiveTargetPath();
+      this.inputText = target.length > 0 ? noteTitleFromPath(target) : '';
       return;
     }
     if (this.kind === DesignDialogKind.NEW_FOLDER) {
@@ -71,6 +79,7 @@ export struct DialogHost {
     if (this.kind === DesignDialogKind.CREATE_VAULT) {
       this.inputText = this.vm.vaults.length === 0 ? '示例仓库' : '';
       this.createWithSync = true;
+      this.skipCertVerify = false;
       return;
     }
     if (this.kind === DesignDialogKind.MOVE) {
@@ -120,7 +129,8 @@ export struct DialogHost {
               this.onClose();
             })
           if (this.kind !== DesignDialogKind.MOVE) {
-            Button($r('app.string.dialog_create'))
+            Button(this.kind === DesignDialogKind.RENAME ?
+              $r('app.string.dialog_confirm') : $r('app.string.dialog_create'))
               .type(ButtonType.Capsule)
               .height(40)
               .fontSize(16)
@@ -136,7 +146,7 @@ export struct DialogHost {
         .margin({ top: 16 })
       }
       .width('84%')
-      .constraintSize({ maxWidth: 460 })
+      .constraintSize({ maxWidth: 460, maxHeight: '84%' })
       .padding(24)
       .borderRadius(28)
       .backgroundColor($r('app.color.design_surface_solid'))
@@ -243,6 +253,36 @@ export struct DialogHost {
             (value: string): void => {
               this.syncRoot = value;
             })
+          Row() {
+            Column() {
+              Text($r('app.string.sync_skip_cert'))
+                .fontSize(14)
+                .fontColor($r('app.color.design_text_primary'))
+              Text(this.skipCertVerify ? $r('app.string.sync_skip_cert_warning') :
+                $r('app.string.sync_skip_cert_desc'))
+                .fontSize(12)
+                .fontColor(this.skipCertVerify ? $r('app.color.design_danger') :
+                  $r('app.color.design_text_secondary'))
+                .margin({ top: 2 })
+            }
+            .layoutWeight(1)
+            .alignItems(HorizontalAlign.Start)
+
+            Toggle({ type: ToggleType.Switch, isOn: this.skipCertVerify })
+              .selectedColor($r('app.color.design_danger'))
+              .onChange((isOn: boolean) => {
+                this.skipCertVerify = isOn;
+              })
+          }
+          .width('100%')
+          .alignItems(VerticalAlign.Center)
+          .margin({ top: 10, bottom: 2 })
+          Text($r('app.string.dialog_create_with_sync_safe_hint'))
+            .fontSize(11)
+            .fontColor($r('app.color.design_text_secondary'))
+            .lineHeight(16)
+            .width('100%')
+            .margin({ top: 8 })
         }
       }
       .width('100%')
@@ -330,7 +370,7 @@ export struct DialogHost {
   /** 对话框标题。 */
   private dialogTitle(): ResourceStr {
     if (this.kind === DesignDialogKind.CREATE_VAULT) {
-      return $r('app.string.dialog_vault_name');
+      return $r('app.string.action_create_vault');
     }
     if (this.kind === DesignDialogKind.RENAME) {
       return $r('app.string.dialog_rename_title');
@@ -364,17 +404,22 @@ export struct DialogHost {
       return;
     }
     this.onCreateVault(new CreateVaultRequest(name, this.createWithSync,
-      this.syncUrl.trim(), this.syncUser.trim(), this.syncPass, this.syncRoot.trim()));
+      this.syncUrl.trim(), this.syncUser.trim(), this.syncPass, this.syncRoot.trim(),
+      this.skipCertVerify));
+  }
+
+  private effectiveTargetPath(): string {
+    return this.targetPath.length > 0 ? this.targetPath : this.vm.selectedPath;
   }
 
   /** 确认重命名：重命名会同步重写指向旧名的双链。 */
   private confirmRename(): void {
     const target: string = this.inputText.trim();
+    const path: string = this.effectiveTargetPath();
     this.onClose();
-    if (target.length === 0) {
+    if (target.length === 0 || path.length === 0) {
       return;
     }
-    const path: string = this.vm.selectedPath;
     this.vm.renameNote(path, target).then((ok: boolean): void => {
       if (!ok) {
         this.toast($r('app.string.msg_rename_failed'));
@@ -403,7 +448,7 @@ export struct DialogHost {
 
   /** 确认移动到目标目录。 */
   private confirmMoveTo(dir: string): void {
-    const path: string = this.vm.selectedPath;
+    const path: string = this.effectiveTargetPath();
     this.onClose();
     if (path.length === 0) {
       return;

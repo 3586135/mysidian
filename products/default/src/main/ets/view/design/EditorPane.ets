@@ -1,3 +1,4 @@
+import { SymbolGlyphModifier } from '@kit.ArkUI';
 import { photoAccessHelper } from '@kit.MediaLibraryKit';
 import { BusinessError } from '@kit.BasicServicesKit';
 import { DataViewResult, DataViewTask } from '@ohos/domain';
@@ -8,6 +9,7 @@ import { VaultViewModel } from '../../viewmodel/VaultViewModel';
 import { CompletionPopup } from './CompletionPopup';
 import { EditorToolbar } from './EditorToolbar';
 import { FindReplaceBar } from './FindReplaceBar';
+import { ThreeDotsIcon } from './NoteActionHelper';
 import { FindReplaceUtils } from '../../viewmodel/FindReplaceUtils';
 
 const LOG: Logger = new Logger('EditorPane');
@@ -35,8 +37,16 @@ export struct EditorPane {
   @Event onContentSwipe: (offsetX: number) => void = (offsetX: number): void => {};
   @Event onOpenTag: (tag: string) => void = (tag: string): void => {};
   @Event onRequestRename: () => void = (): void => {};
+  @Event onRequestMove: () => void = (): void => {};
+  @Event onRequestTrash: () => void = (): void => {};
+  @Event onRequestHistory: () => void = (): void => {};
+  @Event onRequestSplit: () => void = (): void => {};
   @Event onNoteMutated: () => void = (): void => {};
   @Event onPreviewImage: (uri: string) => void = (_uri: string): void => {};
+  /** 外部只读预览时请求导入当前仓库（editAfter 表示导入成功后立即进入编辑态）。 */
+  @Event onRequestImportExternal: (editAfter: boolean) => void = (_editAfter: boolean): void => {};
+  /** 外部只读预览时请求关闭预览。 */
+  @Event onRequestCloseExternal: () => void = (): void => {};
 
   /** 编辑工具栏显示状态。 */
   @Local showToolbar: boolean = false;
@@ -89,8 +99,8 @@ export struct EditorPane {
     this.vm.onInsertTextAtCaret = (text: string, atEnd: boolean): void => {};
   }
 
-  /** 切换笔记 / 进出编辑时清空与旧会话绑定的撤销栈与补全浮层。 */
-  @Monitor('vm.selectedPath', 'vm.editMode')
+  /** 切换笔记 / 外部文档 / 进出编辑时清空与旧会话绑定的撤销栈与补全浮层。 */
+  @Monitor('vm.selectedPath', 'vm.externalUri', 'vm.editMode')
   onNoteOrEditModeChanged(): void {
     this.undoStack = [];
     this.redoStack = [];
@@ -104,12 +114,14 @@ export struct EditorPane {
 
   build() {
     Column() {
-      if (this.vm.selectedPath.length === 0) {
+      if (this.vm.selectedPath.length === 0 && !this.vm.isExternalMode) {
         EmptyState({
           title: $r('app.string.note_empty_title'),
           description: $r('app.string.note_empty_desc'),
           icon: $r('sys.symbol.doc_plaintext'),
-          iconColor: $r('app.color.design_text_secondary')
+          iconColor: $r('app.color.design_text_secondary'),
+          titleColor: $r('app.color.design_text_primary'),
+          descColor: $r('app.color.design_text_secondary')
         })
         .onTouch((event: TouchEvent) => {
           this.onContentTouch(event);
@@ -119,6 +131,9 @@ export struct EditorPane {
           .animation({ duration: 240, curve: Curve.Friction }))
       } else {
         this.editorHeader()
+        if (this.vm.isExternalMode) {
+          this.externalPreviewBanner()
+        }
         if (this.vm.editMode && this.showFind) {
           FindReplaceBar({
             matchCount: this.findMatches.length,
@@ -220,7 +235,7 @@ export struct EditorPane {
         } else {
           MdDocumentView({
             document: this.vm.document,
-            docKey: this.vm.selectedPath,
+            docKey: this.vm.selectedPath.length > 0 ? this.vm.selectedPath : this.vm.externalUri,
             fontSize: this.vm.fontSize,
             controller: this.docController,
             onOpenLink: (target: string, kind: string): void => {
@@ -289,15 +304,17 @@ export struct EditorPane {
           .onClick(() => {
             this.onRequestExit();
           })
-        SymbolGlyph($r('sys.symbol.rectangle_lefthalf_inset_filled'))
-          .fontSize(20)
-          .fontColor([$r('app.color.design_text_secondary')])
-          .width(36)
-          .height(36)
-          .accessibilityText($r('app.string.design_tab_files'))
-          .onClick(() => {
-            this.onToggleSidebar();
-          })
+        if (this.vm.vaults.length > 0) {
+          SymbolGlyph($r('sys.symbol.rectangle_lefthalf_inset_filled'))
+            .fontSize(20)
+            .fontColor([$r('app.color.design_text_secondary')])
+            .width(36)
+            .height(36)
+            .accessibilityText($r('app.string.design_tab_files'))
+            .onClick(() => {
+              this.onToggleSidebar();
+            })
+        }
       }
       Text(this.vm.noteTitle)
         .fontSize(16)
@@ -380,7 +397,11 @@ export struct EditorPane {
           .accessibilityText($r('app.string.action_edit'))
           .keyboardShortcut('e', [ModifierKey.CTRL])
           .onClick(() => {
-            this.vm.startEdit();
+            if (this.vm.isExternalMode) {
+              this.promptImportBeforeEdit();
+            } else {
+              this.vm.startEdit();
+            }
           })
         if (this.isWide) {
           SymbolGlyph($r('sys.symbol.rectangle_grid_1x2'))
@@ -405,12 +426,151 @@ export struct EditorPane {
               this.onToggleInfoPanel();
             })
         }
+        if (this.vm.selectedPath.length > 0) {
+          Stack() {
+            ThreeDotsIcon(3.5, 3, $r('app.color.design_text_primary'), 0.9)
+          }
+          .width(36)
+          .height(36)
+          .margin({ left: 2 })
+          .accessibilityText($r('app.string.note_more_actions'))
+          .bindMenu(this.noteActionsMenuBuilder)
+        }
       }
     }
     .width('100%')
     .height(48)
     .padding({ left: 16, right: 8 })
     .alignItems(VerticalAlign.Center)
+  }
+
+  /** 外部 Markdown 只读预览提示条：明确提示未写入同步仓库，支持一键导入或关闭。 */
+  @Builder
+  externalPreviewBanner() {
+    Column() {
+      Row({ space: 8 }) {
+        SymbolGlyph($r('sys.symbol.doc_text'))
+          .fontSize(16)
+          .fontColor([$r('app.color.design_accent')])
+        Column({ space: 2 }) {
+          Text(this.vm.externalFileName)
+            .fontSize(13)
+            .fontWeight(FontWeight.Medium)
+            .fontColor($r('app.color.design_text_primary'))
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+          Text($r('app.string.external_preview_badge'))
+            .fontSize(11)
+            .fontColor($r('app.color.design_accent'))
+        }
+        .layoutWeight(1)
+        .alignItems(HorizontalAlign.Start)
+
+        Button(this.vm.vaults.length > 0 ?
+          $r('app.string.external_import_to_vault') :
+          $r('app.string.external_import_create_vault'))
+          .fontSize(12)
+          .fontWeight(FontWeight.Medium)
+          .height(30)
+          .padding({ left: 12, right: 12 })
+          .backgroundColor($r('app.color.design_accent'))
+          .fontColor($r('app.color.design_on_accent'))
+          .borderRadius(15)
+          .onClick(() => {
+            this.onRequestImportExternal(false);
+          })
+
+        Button($r('app.string.external_close_preview'))
+          .fontSize(12)
+          .height(30)
+          .padding({ left: 10, right: 10 })
+          .backgroundColor(Color.Transparent)
+          .fontColor($r('app.color.design_text_secondary'))
+          .borderRadius(15)
+          .border({ width: 1, color: $r('app.color.design_stroke') })
+          .onClick(() => {
+            this.onRequestCloseExternal();
+          })
+      }
+      .width('100%')
+      .padding({ left: 12, right: 10, top: 8, bottom: 8 })
+      .backgroundColor($r('app.color.design_accent_weak'))
+      .borderRadius(14)
+      .border({ width: 1, color: $r('app.color.design_stroke') })
+      .alignItems(VerticalAlign.Center)
+    }
+    .width('100%')
+    .padding({ left: 16, right: 16, bottom: 6 })
+  }
+
+  /** 外部预览态点击编辑时弹窗提示：先导入仓库再编辑，避免静默改动外部文件。 */
+  private promptImportBeforeEdit(): void {
+    const hasVault: boolean = this.vm.vaults.length > 0;
+    AlertDialog.show({
+      title: $r('app.string.msg_external_readonly_edit_title'),
+      message: hasVault ?
+        $r('app.string.msg_external_readonly_edit_desc') :
+        $r('app.string.msg_external_readonly_create_desc'),
+      primaryButton: {
+        value: $r('app.string.dialog_cancel'),
+        action: (): void => {}
+      },
+      secondaryButton: {
+        value: hasVault ?
+          $r('app.string.external_import_to_vault') :
+          $r('app.string.external_import_create_vault'),
+        fontColor: $r('app.color.design_accent'),
+        action: (): void => {
+          this.onRequestImportExternal(true);
+        }
+      },
+      alignment: DialogAlignment.Bottom
+    });
+  }
+
+  /** 当前打开笔记的右上角操作菜单（重命名 / 移动 / 历史 / 分屏 / 移入回收站）。 */
+  @Builder
+  noteActionsMenuBuilder() {
+    Menu() {
+      MenuItem({
+        symbolStartIcon: new SymbolGlyphModifier($r('sys.symbol.doc_plaintext_and_pencil')),
+        content: $r('app.string.action_rename')
+      })
+        .onClick(() => {
+          this.onRequestRename();
+        })
+      MenuItem({
+        symbolStartIcon: new SymbolGlyphModifier($r('sys.symbol.folder')),
+        content: $r('app.string.action_move')
+      })
+        .onClick(() => {
+          this.onRequestMove();
+        })
+      MenuItem({
+        symbolStartIcon: new SymbolGlyphModifier($r('sys.symbol.clock')),
+        content: $r('app.string.action_history')
+      })
+        .onClick(() => {
+          this.onRequestHistory();
+        })
+      if (this.isWide) {
+        MenuItem({
+          symbolStartIcon: new SymbolGlyphModifier($r('sys.symbol.rectangle_grid_1x2')),
+          content: $r('app.string.action_split')
+        })
+          .onClick(() => {
+            this.onRequestSplit();
+          })
+      }
+      MenuItem({
+        symbolStartIcon: new SymbolGlyphModifier($r('sys.symbol.trash')).fontColor([$r('app.color.design_danger')]),
+        content: $r('app.string.action_trash')
+      })
+        .contentFontColor($r('app.color.design_danger'))
+        .onClick(() => {
+          this.onRequestTrash();
+        })
+    }
   }
 
   // ==================== 手势与浮层收起 ====================

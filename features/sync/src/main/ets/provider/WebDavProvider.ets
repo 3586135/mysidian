@@ -2,7 +2,7 @@ import { http } from '@kit.NetworkKit';
 import { fileIo } from '@kit.CoreFileKit';
 import { util } from '@kit.ArkTS';
 import { BusinessError } from '@kit.BasicServicesKit';
-import { RemoteEntry, SyncConfig, SyncFileFilter, SyncProvider } from '@ohos/domain';
+import { RemoteEntry, RemoteTrashStatus, SyncConfig, SyncPathGuard, SyncProvider } from '@ohos/domain';
 import { Logger } from '@ohos/common';
 
 const LOG: Logger = new Logger('MySidianWebDav');
@@ -42,50 +42,73 @@ class PropfindDirResult {
   files: RemoteEntry[] = [];
 }
 
+/** 全库 PROPFIND 枚举结果（区分服务端明确不支持 405/501 与真实异常）。 */
+class PropfindResult {
+  supported: boolean = true;
+  entries: RemoteEntry[] = [];
+}
+
+/** 标记服务端明确不支持 PROPFIND（405 / 501）。 */
+class PropfindUnsupportedError extends Error {
+  constructor(code: number) {
+    super(`propfind unsupported (${code})`);
+  }
+}
+
 /**
  * WebDAV 同步供应方。
  *
- * 清单的读写走 @ohos.http；目录真实枚举（用于发现清单之外的新文件与外部修改）
- * 通过 PROPFIND 实现：http.RequestMethod 枚举运行时即字符串，此处单点受控扩展
- * PROPFIND 方法（模拟器上 rcp 手动 Authorization 头会被丢弃导致 401，故弃用 rcp）。
- * 远端目录保存 mysidian-manifest.json 记录文件清单与哈希，
- * 笔记文件按相对路径直接存放。绝大多数 WebDAV 服务端可直接工作。
+ * 清单的读写走 @ohos.http，优先存放在隐藏目录 `.mysidian/manifest.json`
+ * （兼容只读旧版根目录 `mysidian-manifest.json`），避免污染 Obsidian 文件树；
+ * 目录真实枚举通过 PROPFIND 实现，严格屏蔽 `.obsidian`、`.trash`、`conflicts`
+ * 及非同步扩展名；远端删除优先通过 WebDAV `MOVE` 移入 `.trash/`，绝不发出裸 HTTP `DELETE`。
  */
 export class WebDavProvider implements SyncProvider {
-  private static readonly MANIFEST: string = 'mysidian-manifest.json';
+  private static readonly MANIFEST: string = '.mysidian/manifest.json';
+  private static readonly MANIFEST_DIR: string = '.mysidian';
+  private static readonly LEGACY_MANIFEST: string = 'mysidian-manifest.json';
   private static readonly MAX_PROPFIND_DEPTH: number = 8;
   private static readonly PROPFIND_CONCURRENCY: number = 1;
   /** 受控单点扩展：http.RequestMethod 枚举运行时即字符串，WebDAV 标准 PROPFIND 方法。 */
   private static readonly PROPFIND_METHOD: http.RequestMethod = 'PROPFIND' as http.RequestMethod;
   /** 受控单点扩展：http.RequestMethod 枚举运行时即字符串，WebDAV 标准 MKCOL 方法。 */
   private static readonly MKCOL_METHOD: http.RequestMethod = 'MKCOL' as http.RequestMethod;
+  /** 受控单点扩展：http.RequestMethod 枚举运行时即字符串，WebDAV 标准 MOVE 方法（用于软删除）。 */
+  private static readonly MOVE_METHOD: http.RequestMethod = 'MOVE' as http.RequestMethod;
   private static readonly PROPFIND_BODY: string =
     '<?xml version="1.0" encoding="utf-8"?>' +
     '<d:propfind xmlns:d="DAV:">' +
     '<d:prop><d:resourcetype/><d:getcontentlength/><d:getlastmodified/><d:getetag/></d:prop>' +
     '</d:propfind>';
+  private static readonly MAX_RETRY_ATTEMPTS: number = 3;
   private config: SyncConfig = new SyncConfig();
   private baseUrl: string = '';
+  private createdDirs: Set<string> = new Set<string>();
+  private primaryManifestFound: boolean = false;
+  private manifestSnapshotKey: string = '';
 
   public async connect(config: SyncConfig): Promise<void> {
     this.config = config;
     this.baseUrl = WebDavProvider.buildBaseUrl(config.serverUrl, config.remoteRoot);
+    this.createdDirs.clear();
+    this.primaryManifestFound = false;
+    this.manifestSnapshotKey = '';
     LOG.info(`webdav connected: ${this.baseUrl}`);
   }
 
   public async list(remoteDir: string): Promise<RemoteEntry[]> {
     const manifestEntries: RemoteEntry[] = await this.listManifest();
-    const realEntries: RemoteEntry[] | null = await this.propfindEntries();
-    if (realEntries === null) {
+    const propResult: PropfindResult = await this.propfindEntries();
+    if (!propResult.supported) {
       return manifestEntries;
     }
-    // 以 PROPFIND 的真实文件为准；清单提供已知哈希，用于三方比较。
+    const realEntries: RemoteEntry[] = propResult.entries;
+    // 以 PROPFIND 的真实文件为准；清单提供已知内容哈希，用于三方比较。
     const hashByPath: Map<string, string> = new Map<string, string>();
     for (const entry of manifestEntries) {
       hashByPath.set(entry.path, entry.etag);
     }
     const result: RemoteEntry[] = [];
-    const seen: Set<string> = new Set<string>();
     for (const real of realEntries) {
       const entry: RemoteEntry = new RemoteEntry();
       entry.path = real.path;
@@ -93,56 +116,46 @@ export class WebDavProvider implements SyncProvider {
       entry.etag = known === undefined ? '' : known;
       entry.size = real.size;
       entry.mtime = real.mtime;
+      entry.serverTag = real.serverTag;
       entry.isDir = false;
       result.push(entry);
-      seen.add(real.path);
-    }
-    // 清单中记录但服务端已不存在的文件：保留原有行为（本地存在则重新上传）。
-    for (const manifest of manifestEntries) {
-      if (!seen.has(manifest.path)) {
-        result.push(manifest);
-      }
     }
     LOG.info(`webdav list: manifest=${manifestEntries.length}, real=${realEntries.length}`);
     return result;
   }
 
   public async readRemote(path: string): Promise<string> {
+    WebDavProvider.assertSafeSyncPath(path);
     const url: string = `${this.baseUrl}/${WebDavProvider.encodePath(path)}`;
     const response: http.HttpResponse = await this.request(url, http.RequestMethod.GET,
       http.HttpDataType.STRING);
     if (response.responseCode !== 200) {
       throw new Error(WebDavProvider.describeCode(response.responseCode, 'webdav readRemote'));
     }
-    const payload: string | Object | ArrayBuffer = response.result;
-    if (typeof payload !== 'string') {
-      throw new Error('webdav file response is not text');
-    }
-    return payload;
+    return WebDavProvider.extractTextPayload(response.result, 'webdav file response is not text');
   }
 
   public async pull(entry: RemoteEntry, destPath: string): Promise<void> {
+    WebDavProvider.assertSafeSyncPath(entry.path);
     const url: string = `${this.baseUrl}/${WebDavProvider.encodePath(entry.path)}`;
     const response: http.HttpResponse = await this.request(url, http.RequestMethod.GET,
       http.HttpDataType.STRING);
     if (response.responseCode !== 200) {
       throw new Error(WebDavProvider.describeCode(response.responseCode, 'webdav pull'));
     }
-    const payload: string | Object | ArrayBuffer = response.result;
-    if (typeof payload !== 'string') {
-      throw new Error('webdav file response is not text');
-    }
+    const payload: string = WebDavProvider.extractTextPayload(
+      response.result, 'webdav file response is not text');
     WebDavProvider.writeText(destPath, payload);
   }
 
   public async push(localPath: string, entry: RemoteEntry): Promise<string> {
+    WebDavProvider.assertSafeSyncPath(entry.path);
     const url: string = `${this.baseUrl}/${WebDavProvider.encodePath(entry.path)}`;
     const content: string = WebDavProvider.readText(localPath);
     const response: http.HttpResponse = await this.request(url, http.RequestMethod.PUT,
       http.HttpDataType.STRING, content);
     if (response.responseCode === 404 || response.responseCode === 409) {
-      // 父目录不存在：先建目录再重试一次（与 pushBinary 一致，
-      // 否则含子目录的仓库首次同步必然 409 失败）。
+      // 父目录不存在：先建目录再重试一次（与 pushBinary 一致）。
       const dir: string = WebDavProvider.dirnameOf(entry.path);
       if (dir.length > 0) {
         await this.mkdirRemote(dir);
@@ -163,6 +176,7 @@ export class WebDavProvider implements SyncProvider {
 
   /** 拉取远端二进制文件（图片等附件）到本地沙箱路径。 */
   public async pullBinary(entry: RemoteEntry, destPath: string): Promise<void> {
+    WebDavProvider.assertSafeSyncPath(entry.path);
     const url: string = `${this.baseUrl}/${WebDavProvider.encodePath(entry.path)}`;
     const response: http.HttpResponse = await this.request(url, http.RequestMethod.GET,
       http.HttpDataType.ARRAY_BUFFER);
@@ -178,6 +192,7 @@ export class WebDavProvider implements SyncProvider {
 
   /** 推送本地二进制文件（图片等附件），返回上传后的服务器版本标识。 */
   public async pushBinary(localPath: string, entry: RemoteEntry): Promise<string> {
+    WebDavProvider.assertSafeSyncPath(entry.path);
     const url: string = `${this.baseUrl}/${WebDavProvider.encodePath(entry.path)}`;
     const data: ArrayBuffer = WebDavProvider.readBytes(localPath);
     const response: http.HttpResponse = await this.requestBinary(url, http.RequestMethod.PUT, data);
@@ -203,46 +218,121 @@ export class WebDavProvider implements SyncProvider {
     return WebDavProvider.etagOf(response);
   }
 
-  /** 在远端创建目录（幂等：已存在视为成功；深路径逐级创建）。 */
+  /** 在远端创建目录（幂等：已存在视为成功；缓存本次连接已验证目录并兼容尾部斜杠差异）。 */
   public async mkdirRemote(remoteDir: string): Promise<void> {
     const trimmed: string = remoteDir.replace(/^\/+/, '').replace(/\/+$/, '');
     if (trimmed.length === 0) {
       return;
     }
-    // 逐级 MKCOL：一次性对深路径 MKCOL 会因父目录不存在而 409
-    // （如 attachments/a/b.png 只建一层时 a/b 仍缺失）。
-    const segments: string[] = trimmed.split('/');
+    await this.mkdirSequential(this.baseUrl, trimmed, this.createdDirs);
+  }
+
+  /** 若用户配置了尚未建好的远端根目录，在服务端根下逐级尝试创建。 */
+  private async ensureRemoteRoot(): Promise<boolean> {
+    const rootTrimmed: string = this.config.remoteRoot.trim().replace(/^\/+/, '').replace(/\/+$/, '');
+    if (rootTrimmed.length === 0) {
+      return false;
+    }
+    const serverBase: string = WebDavProvider.trimTrailingSlashes(this.config.serverUrl.replace(/\s+/g, ''));
+    const dummyCache: Set<string> = new Set<string>();
+    try {
+      await this.mkdirSequential(serverBase, rootTrimmed, dummyCache);
+      return true;
+    } catch (error) {
+      LOG.warn(`auto create remoteRoot failed: ${rootTrimmed}`);
+      return false;
+    }
+  }
+
+  private async mkdirSequential(basePrefix: string, relativeDir: string,
+    cache: Set<string>): Promise<void> {
+    const segments: string[] = relativeDir.split('/');
     let current: string = '';
     for (const segment of segments) {
       if (segment.length === 0) {
         continue;
       }
       current = current.length === 0 ? segment : `${current}/${segment}`;
-      const url: string = `${this.baseUrl}/${WebDavProvider.encodePath(current)}`;
-      const response: http.HttpResponse = await this.request(url, WebDavProvider.MKCOL_METHOD,
-        http.HttpDataType.STRING);
-      // 405（已存在）与 301（已存在）视为幂等成功。
-      if (response.responseCode === 405 || response.responseCode === 301) {
+      if (cache.has(current)) {
         continue;
       }
-      if (response.responseCode < 200 || response.responseCode >= 300) {
-        throw new Error(WebDavProvider.describeCode(response.responseCode, 'webdav mkdir'));
+      const baseSegmentUrl: string = `${basePrefix}/${WebDavProvider.encodePath(current)}`;
+      // RFC 4918 集合资源推荐带尾斜杠；若遇不识别尾斜杠或重定向的服务端，回退无尾斜杠重试一次。
+      const response: http.HttpResponse = await this.request(`${baseSegmentUrl}/`,
+        WebDavProvider.MKCOL_METHOD, http.HttpDataType.STRING);
+      if ((response.responseCode >= 200 && response.responseCode < 300) ||
+        response.responseCode === 405) {
+        cache.add(current);
+        continue;
       }
+      const code: number = response.responseCode;
+      if (code === 301 || code === 302 || code === 307 || code === 308 ||
+        code === 400 || code === 403 || code === 404 || code === 409) {
+        const fallback: http.HttpResponse = await this.request(baseSegmentUrl,
+          WebDavProvider.MKCOL_METHOD, http.HttpDataType.STRING);
+        if ((fallback.responseCode >= 200 && fallback.responseCode < 300) ||
+          fallback.responseCode === 405 || fallback.responseCode === 301) {
+          cache.add(current);
+          continue;
+        }
+        throw new Error(WebDavProvider.describeCode(fallback.responseCode, 'webdav mkdir'));
+      }
+      throw new Error(WebDavProvider.describeCode(code, 'webdav mkdir'));
     }
   }
 
-  /** 删除远端文件（本地删除传播；远端已不存在视为成功）。 */
+  /**
+   * 软删除远端文件：通过 WebDAV MOVE 移入 `.trash/`，绝不发出 HTTP DELETE。
+   * 服务端不支持 MOVE 或目标/反向代理拒绝时返回 UNSUPPORTED，保留远端文件不动。
+   */
+  public async trashRemote(path: string, trashPath: string): Promise<RemoteTrashStatus> {
+    WebDavProvider.assertSafeSyncPath(path);
+    if (!SyncPathGuard.isValidTrashPath(trashPath)) {
+      throw new Error(`非法远端回收站路径已拦截: ${trashPath}`);
+    }
+    try {
+      const dir: string = WebDavProvider.dirnameOf(trashPath);
+      if (dir.length > 0) {
+        await this.mkdirRemote(dir);
+      }
+      const sourceUrl: string = `${this.baseUrl}/${WebDavProvider.encodePath(path)}`;
+      const destUrl: string = `${this.baseUrl}/${WebDavProvider.encodePath(trashPath)}`;
+      const response: http.HttpResponse = await this.request(sourceUrl,
+        WebDavProvider.MOVE_METHOD, http.HttpDataType.STRING, undefined, {
+          'Destination': destUrl,
+          'Overwrite': 'F'
+        });
+      if (response.responseCode >= 200 && response.responseCode < 300) {
+        return RemoteTrashStatus.MOVED;
+      }
+      if (response.responseCode === 404) {
+        return RemoteTrashStatus.NOT_FOUND;
+      }
+      if (response.responseCode === 412) {
+        const retryTrashPath: string = WebDavProvider.withCollisionSuffix(trashPath);
+        const retryDestUrl: string = `${this.baseUrl}/${WebDavProvider.encodePath(retryTrashPath)}`;
+        const retry: http.HttpResponse = await this.request(sourceUrl,
+          WebDavProvider.MOVE_METHOD, http.HttpDataType.STRING, undefined, {
+            'Destination': retryDestUrl,
+            'Overwrite': 'F'
+          });
+        if (retry.responseCode >= 200 && retry.responseCode < 300) {
+          return RemoteTrashStatus.MOVED;
+        }
+      }
+      LOG.warn(`webdav MOVE to .trash skipped (code=${response.responseCode}): ${path}`);
+      return RemoteTrashStatus.UNSUPPORTED;
+    } catch (error) {
+      const err = error as BusinessError;
+      LOG.warn(`webdav MOVE unavailable, keeping remote file (${path}): ${err.message}`);
+      return RemoteTrashStatus.UNSUPPORTED;
+    }
+  }
+
+  /** 兼容保留接口：生产同步路径禁用直接 HTTP DELETE，防止误删 Obsidian 远端文件。 */
   public async deleteRemote(path: string): Promise<void> {
-    const url: string = `${this.baseUrl}/${WebDavProvider.encodePath(path)}`;
-    const response: http.HttpResponse = await this.request(url, http.RequestMethod.DELETE,
-      http.HttpDataType.STRING);
-    // 404：远端已不存在（清单幽灵条目 / 双端同时删除），幂等成功。
-    if (response.responseCode === 404) {
-      return;
-    }
-    if (response.responseCode < 200 || response.responseCode >= 300) {
-      throw new Error(WebDavProvider.describeCode(response.responseCode, 'webdav delete'));
-    }
+    WebDavProvider.assertSafeSyncPath(path);
+    throw new Error('直接 HTTP DELETE 已被禁用，请使用移入 .trash/ 软删除或手动保留远端');
   }
 
   public async stat(path: string): Promise<RemoteEntry | null> {
@@ -258,6 +348,9 @@ export class WebDavProvider implements SyncProvider {
   public async putManifest(entries: RemoteEntry[]): Promise<void> {
     const files: WebDavFileRaw[] = [];
     for (const entry of entries) {
+      if (!SyncPathGuard.isSafeSyncPath(entry.path)) {
+        continue;
+      }
       const item: WebDavFileRaw = new WebDavFileRaw();
       item.path = entry.path;
       item.hash = entry.etag;
@@ -265,46 +358,112 @@ export class WebDavProvider implements SyncProvider {
       item.size = entry.size;
       files.push(item);
     }
+    const nextKey: string = WebDavProvider.manifestKeyOfRaw(files);
+    if (this.primaryManifestFound && nextKey === this.manifestSnapshotKey) {
+      LOG.info('manifest unchanged, skip PUT');
+      return;
+    }
     const manifest: WebDavManifestRaw = new WebDavManifestRaw();
     manifest.version = '1';
     manifest.files = files;
     const body: string = JSON.stringify(manifest);
-    const url: string = `${this.baseUrl}/${WebDavProvider.MANIFEST}`;
+    const url: string = `${this.baseUrl}/${WebDavProvider.encodePath(WebDavProvider.MANIFEST)}`;
     const response: http.HttpResponse = await this.request(url, http.RequestMethod.PUT,
       http.HttpDataType.STRING, body);
-    if (response.responseCode === 409) {
-      throw new Error(`远端目录不存在(409)，请先在 WebDAV 服务端创建目录: ${this.baseUrl}`);
+    if (response.responseCode === 404 || response.responseCode === 409) {
+      await this.mkdirRemote(WebDavProvider.MANIFEST_DIR);
+      const retry: http.HttpResponse = await this.request(url, http.RequestMethod.PUT,
+        http.HttpDataType.STRING, body);
+      if (retry.responseCode >= 200 && retry.responseCode < 300) {
+        this.primaryManifestFound = true;
+        this.manifestSnapshotKey = nextKey;
+        return;
+      }
+      if (retry.responseCode === 409) {
+        throw new Error(`远端目录不存在(409)，请先在 WebDAV 服务端创建目录: ${this.baseUrl}`);
+      }
+      throw new Error(WebDavProvider.describeCode(retry.responseCode, 'webdav manifest write'));
     }
     if (response.responseCode < 200 || response.responseCode >= 300) {
       throw new Error(WebDavProvider.describeCode(response.responseCode, 'webdav manifest write'));
     }
+    this.primaryManifestFound = true;
+    this.manifestSnapshotKey = nextKey;
   }
 
-  /** 读取远端清单条目；清单不存在视为空。 */
+  /** 增量更新 `.mysidian/manifest.json` 中的单个条目（冲突确认覆盖远端后调用）。 */
+  public async patchManifestEntry(entry: RemoteEntry): Promise<void> {
+    WebDavProvider.assertSafeSyncPath(entry.path);
+    const current: RemoteEntry[] = await this.listManifest();
+    const updated: RemoteEntry[] = [];
+    let replaced: boolean = false;
+    for (const item of current) {
+      if (item.path === entry.path) {
+        updated.push(entry);
+        replaced = true;
+      } else {
+        updated.push(item);
+      }
+    }
+    if (!replaced) {
+      updated.push(entry);
+    }
+    this.manifestSnapshotKey = '';
+    await this.putManifest(updated);
+  }
+
+  /** 读取远端清单条目；优先 `.mysidian/manifest.json`，不存在时只读兼容旧版根目录清单。 */
   private async listManifest(): Promise<RemoteEntry[]> {
-    const url: string = `${this.baseUrl}/${WebDavProvider.MANIFEST}`;
-    const response: http.HttpResponse = await this.request(url, http.RequestMethod.GET,
+    const primaryUrl: string = `${this.baseUrl}/${WebDavProvider.encodePath(WebDavProvider.MANIFEST)}`;
+    let response: http.HttpResponse = await this.request(primaryUrl, http.RequestMethod.GET,
       http.HttpDataType.STRING);
+    let fromPrimary: boolean = response.responseCode === 200;
     if (response.responseCode === 404) {
+      const legacyUrl: string = `${this.baseUrl}/${WebDavProvider.LEGACY_MANIFEST}`;
+      response = await this.request(legacyUrl, http.RequestMethod.GET, http.HttpDataType.STRING);
+    }
+    if (response.responseCode === 404) {
+      this.primaryManifestFound = false;
+      this.manifestSnapshotKey = '';
       return [];
     }
     if (response.responseCode !== 200) {
       throw new Error(WebDavProvider.describeCode(response.responseCode, 'webdav list'));
     }
-    const payload: string | Object | ArrayBuffer = response.result;
-    if (typeof payload !== 'string') {
-      throw new Error('webdav manifest response is not text');
+    const payload: string = WebDavProvider.extractTextPayload(
+      response.result, 'webdav manifest response is not text');
+    const parsed: RemoteEntry[] = WebDavProvider.parseManifest(payload);
+    this.primaryManifestFound = fromPrimary;
+    this.manifestSnapshotKey = fromPrimary ? WebDavProvider.manifestKeyOfEntries(parsed) : '';
+    return parsed;
+  }
+
+  private static manifestKeyOfRaw(files: WebDavFileRaw[]): string {
+    const pairs: string[] = [];
+    for (const item of files) {
+      pairs.push(`${item.path ?? ''}\t${item.hash ?? ''}`);
     }
-    return WebDavProvider.parseManifest(payload);
+    pairs.sort();
+    return pairs.join('\n');
+  }
+
+  private static manifestKeyOfEntries(entries: RemoteEntry[]): string {
+    const pairs: string[] = [];
+    for (const item of entries) {
+      pairs.push(`${item.path}\t${item.etag}`);
+    }
+    pairs.sort();
+    return pairs.join('\n');
   }
 
   /**
-   * 通过 PROPFIND 枚举远端真实 .md 文件（可发现清单之外的新文件与外部修改）。
-   * BFS 逐目录枚举（Depth:1）并并发请求（每批 8 个），visited 集合保证
-   * 每个目录只枚举一次、每个文件只收录一次（尾斜杠差异不会造成重复）。
-   * 服务端不支持或网络异常时返回 null，调用方回退清单协议。
+   * 通过 PROPFIND 枚举远端真实同步条目。
+   * 仅当服务端明确返回 405/501 不支持 PROPFIND 时才回退清单模式；
+   * 任何鉴权、网络或子目录枚举失败都必须向上抛出中止本轮同步，
+   * 防止用残缺清单误判远端或本地删除。
    */
-  private async propfindEntries(): Promise<RemoteEntry[] | null> {
+  private async propfindEntries(): Promise<PropfindResult> {
+    const out: PropfindResult = new PropfindResult();
     try {
       const queue: PropfindQueueDir[] = [];
       const rootItem: PropfindQueueDir = new PropfindQueueDir();
@@ -339,15 +498,20 @@ export class WebDavProvider implements SyncProvider {
           }
         }
       }
-      return files;
+      out.supported = true;
+      out.entries = files;
+      return out;
     } catch (error) {
-      const err = error as BusinessError;
-      LOG.info(`propfind unavailable, fallback to manifest: ${err.message}`);
-      return null;
+      if (error instanceof PropfindUnsupportedError) {
+        LOG.info(`propfind unsupported by server, fallback to manifest: ${error.message}`);
+        out.supported = false;
+        return out;
+      }
+      throw error as Error;
     }
   }
 
-  /** PROPFIND 单个远端目录（Depth:1），返回其子目录与 .md 文件。 */
+  /** PROPFIND 单个远端目录（Depth:1），返回受信任的子目录与同步文件。 */
   private async propfindOneDir(item: PropfindQueueDir): Promise<PropfindDirResult> {
     const result: PropfindDirResult = new PropfindDirResult();
     if (item.depth > WebDavProvider.MAX_PROPFIND_DEPTH) {
@@ -355,17 +519,34 @@ export class WebDavProvider implements SyncProvider {
     }
     const url: string = item.dir.length === 0 ? this.baseUrl
       : `${this.baseUrl}/${WebDavProvider.encodePath(item.dir)}`;
-    const response: http.HttpResponse = await this.request(url, WebDavProvider.PROPFIND_METHOD,
-      http.HttpDataType.STRING, WebDavProvider.PROPFIND_BODY,
-      { 'Depth': '1', 'Content-Type': 'application/xml;charset=utf-8' });
+    let response: http.HttpResponse = await this.sendPropfind(url);
+    if (response.responseCode === 301 || response.responseCode === 302 ||
+      response.responseCode === 307 || response.responseCode === 308 ||
+      response.responseCode === 404) {
+      const slashUrl: string = url.endsWith('/') ? url : `${url}/`;
+      if (slashUrl !== url) {
+        const retrySlash: http.HttpResponse = await this.sendPropfind(slashUrl);
+        if (retrySlash.responseCode === 207 || retrySlash.responseCode === 200 ||
+          retrySlash.responseCode !== 301) {
+          response = retrySlash;
+        }
+      }
+    }
+    if (response.responseCode === 404 && item.dir.length === 0 &&
+      this.config.remoteRoot.trim().length > 0 && await this.ensureRemoteRoot()) {
+      const rootUrl: string = url.endsWith('/') ? url : `${url}/`;
+      response = await this.sendPropfind(rootUrl);
+    }
     if (response.responseCode !== 207 && response.responseCode !== 200) {
       LOG.error(`propfind ${response.responseCode} on ${url}`);
-      throw new Error(`propfind failed with ${response.responseCode}`);
+      if (item.dir.length === 0 &&
+        (response.responseCode === 405 || response.responseCode === 501)) {
+        throw new PropfindUnsupportedError(response.responseCode);
+      }
+      throw new Error(WebDavProvider.describeCode(response.responseCode, 'webdav propfind'));
     }
-    const payload: string | Object | ArrayBuffer = response.result;
-    if (typeof payload !== 'string') {
-      throw new Error('propfind response is not text');
-    }
+    const payload: string = WebDavProvider.extractTextPayload(
+      response.result, 'propfind response is not text');
     const items: PropfindItem[] = WebDavProvider.parseMultistatus(payload);
     for (const it of items) {
       const rel: string | null = this.hrefToRelative(it.href);
@@ -377,16 +558,16 @@ export class WebDavProvider implements SyncProvider {
       }
       const name: string = WebDavProvider.lastNameOf(rel);
       if (it.isDir) {
-        if (name.startsWith('.') || name === 'conflicts') {
+        if (WebDavProvider.hasIgnoredSegment(rel) || SyncPathGuard.isIgnoredDirName(name)) {
           continue;
         }
         result.subDirs.push(rel);
         continue;
       }
-      if (name.startsWith('.') || rel === WebDavProvider.MANIFEST) {
+      if (rel === WebDavProvider.MANIFEST || rel === WebDavProvider.LEGACY_MANIFEST) {
         continue;
       }
-      if (!SyncFileFilter.isSyncable(name)) {
+      if (!SyncPathGuard.isSafeSyncPath(rel)) {
         continue;
       }
       const entry: RemoteEntry = new RemoteEntry();
@@ -402,10 +583,44 @@ export class WebDavProvider implements SyncProvider {
     return result;
   }
 
+  private static assertSafeSyncPath(path: string): void {
+    if (!SyncPathGuard.isSafeSyncPath(path)) {
+      throw new Error(`受保护或非同步路径已拦截: ${path}`);
+    }
+  }
+
+  private static hasIgnoredSegment(path: string): boolean {
+    const segs: string[] = path.split('/');
+    for (const seg of segs) {
+      if (SyncPathGuard.isIgnoredDirName(seg)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  private static withCollisionSuffix(trashPath: string): string {
+    const slash: number = trashPath.lastIndexOf('/');
+    const dir: string = slash >= 0 ? trashPath.substring(0, slash + 1) : '';
+    const file: string = slash >= 0 ? trashPath.substring(slash + 1) : trashPath;
+    const dot: number = file.lastIndexOf('.');
+    const suffix: string = `_${Date.now()}`;
+    if (dot <= 0) {
+      return `${dir}${file}${suffix}`;
+    }
+    return `${dir}${file.substring(0, dot)}${suffix}${file.substring(dot)}`;
+  }
+
   /** 取路径最后一段名称。 */
   private static lastNameOf(path: string): string {
     const idx: number = path.lastIndexOf('/');
     return idx < 0 ? path : path.substring(idx + 1);
+  }
+
+  private async sendPropfind(targetUrl: string): Promise<http.HttpResponse> {
+    return this.request(targetUrl, WebDavProvider.PROPFIND_METHOD,
+      http.HttpDataType.STRING, WebDavProvider.PROPFIND_BODY,
+      { 'Depth': '1', 'Content-Type': 'application/xml;charset=utf-8' });
   }
 
   /** 将 multistatus XML 中的 href 转为相对 baseUrl 的路径；无法映射时返回 null。 */
@@ -413,16 +628,17 @@ export class WebDavProvider implements SyncProvider {
     if (href.length === 0) {
       return null;
     }
-    const basePath: string = WebDavProvider.urlPathOf(this.baseUrl);
-    let decoded: string = '';
-    try {
-      decoded = decodeURIComponent(href);
-    } catch (error) {
-      decoded = href;
+    const rawBasePath: string = WebDavProvider.urlPathOf(this.baseUrl);
+    const decodedBasePath: string = WebDavProvider.decodePathSafe(rawBasePath);
+    let rawHref: string = href;
+    if (rawHref.startsWith('http://') || rawHref.startsWith('https://')) {
+      rawHref = WebDavProvider.urlPathOf(rawHref);
     }
-    let path: string = decoded;
-    if (basePath.length > 0 && path.startsWith(basePath)) {
-      path = path.substring(basePath.length);
+    let path: string = WebDavProvider.decodePathSafe(rawHref);
+    if (decodedBasePath.length > 0 && path.startsWith(decodedBasePath)) {
+      path = path.substring(decodedBasePath.length);
+    } else if (rawBasePath.length > 0 && path.startsWith(rawBasePath)) {
+      path = path.substring(rawBasePath.length);
     } else {
       // 部分服务端返回相对 href：回退按路径段匹配远端根目录。
       // 用整段比较而非 indexOf 子串定位，避免根目录名是其它路径段
@@ -469,9 +685,16 @@ export class WebDavProvider implements SyncProvider {
     return path;
   }
 
+  private static decodePathSafe(raw: string): string {
+    try {
+      return decodeURIComponent(raw);
+    } catch (error) {
+      return raw;
+    }
+  }
+
   /**
    * 相对路径安全校验：拒绝绝对路径、反斜杠、空段与 "."/".." 穿越段。
-   * PROPFIND 与远端清单两条入口共用，防止被篡改清单把文件写出沙箱。
    */
   private static isSafeRelativePath(path: string): boolean {
     if (path.length === 0 || path.startsWith('/') || path.includes('\\')) {
@@ -558,15 +781,44 @@ export class WebDavProvider implements SyncProvider {
   }
 
   /**
-   * 发送单个 HTTP 请求。每次创建独立 HttpRequest 实例并在完成后销毁：
-   * 单实例并发在途请求会导致认证头竞态丢失（fnOS 返回 401），
-   * 独立实例可安全支撑 PROPFIND / 拉取的并发批处理。
+   * 发送 HTTP 请求（带 429 限流 / 5xx / 瞬时网络异常指数退避重试）。
+   * 每次尝试创建独立 HttpRequest 实例并在完成后销毁，防止并发认证头竞态丢失。
    */
   private async request(url: string, method: http.RequestMethod, expect: http.HttpDataType,
     body?: string | ArrayBuffer, extraHeaders?: Record<string, string>): Promise<http.HttpResponse> {
     if (this.baseUrl.length === 0) {
       throw new Error('webdav provider is not connected');
     }
+    let attempt: number = 0;
+    while (true) {
+      try {
+        const response: http.HttpResponse = await this.sendOnce(
+          url, method, expect, body, extraHeaders);
+        if (WebDavProvider.isRetryableStatus(response.responseCode) &&
+          attempt < WebDavProvider.MAX_RETRY_ATTEMPTS) {
+          const waitMs: number = WebDavProvider.computeRetryDelayMs(attempt, response);
+          attempt++;
+          LOG.warn(`webdav HTTP ${response.responseCode}, retry #${attempt} after ${waitMs}ms`);
+          await WebDavProvider.delay(waitMs);
+          continue;
+        }
+        return response;
+      } catch (error) {
+        if (attempt < WebDavProvider.MAX_RETRY_ATTEMPTS) {
+          const waitMs: number = WebDavProvider.computeRetryDelayMs(attempt, null);
+          attempt++;
+          const err = error as BusinessError;
+          LOG.warn(`webdav transient error (${err.code ?? ''}), retry #${attempt} after ${waitMs}ms: ${err.message}`);
+          await WebDavProvider.delay(waitMs);
+          continue;
+        }
+        throw error as Error;
+      }
+    }
+  }
+
+  private async sendOnce(url: string, method: http.RequestMethod, expect: http.HttpDataType,
+    body?: string | ArrayBuffer, extraHeaders?: Record<string, string>): Promise<http.HttpResponse> {
     const request: http.HttpRequest = http.createHttp();
     try {
       const headers: Record<string, string> = this.buildHeaders();
@@ -600,19 +852,56 @@ export class WebDavProvider implements SyncProvider {
     }
   }
 
+  private static isRetryableStatus(code: number): boolean {
+    return code === 408 || code === 429 || code === 502 || code === 503 || code === 504;
+  }
+
+  private static computeRetryDelayMs(attempt: number, response: http.HttpResponse | null): number {
+    if (response !== null) {
+      const retryAfterRaw: string = WebDavProvider.headerValueOf(
+        response, ['retry-after', 'Retry-After', 'RETRY-AFTER']);
+      const seconds: number = Number(retryAfterRaw.trim());
+      if (!Number.isNaN(seconds) && seconds > 0) {
+        return Math.min(Math.max(Math.round(seconds * 1000), 300), 6000);
+      }
+    }
+    const baseMs: number = 600;
+    return Math.min(baseMs * Math.pow(2, attempt), 4000);
+  }
+
+  private static async delay(ms: number): Promise<void> {
+    return new Promise<void>((resolve: () => void): void => {
+      setTimeout((): void => {
+        resolve();
+      }, ms);
+    });
+  }
+
   /** 将 HTTP 状态码翻译为带排查建议的中文提示。 */
   private static describeCode(code: number, action: string): string {
     if (code === 400) {
       return `服务器拒绝请求(400)：若使用明文 http://，请确认端口没有指向 HTTPS 服务（nginx 会返回 400）`;
     }
     if (code === 401) {
-      return `认证失败(401)，请检查 WebDAV 用户名与密码`;
+      return `认证失败(401)，请检查 WebDAV 用户名与应用密码`;
     }
     if (code === 403) {
       return `无权限(403)，该账号可能没有此目录的读写权限`;
     }
+    if (code === 404) {
+      return `远端路径不存在(404)，请检查 WebDAV 远端目录配置 (${action})`;
+    }
     if (code === 405) {
       return `方法不被允许(405)，服务端可能不支持 ${action}`;
+    }
+    if (code === 423) {
+      return `远端文件被锁定(423)，可能正在被桌面端同步占用`;
+    }
+    if (code === 429) {
+      return `WebDAV 请求过于频繁(429)，已自动退避重试但仍被限流，请稍后再试`;
+    }
+    if (code === 502 || code === 503 || code === 504) {
+      return `WebDAV 服务端暂时不可用(${code})，网络稳定后将自动恢复`;
     }
     return `${action} failed with code ${code}`;
   }
@@ -630,15 +919,20 @@ export class WebDavProvider implements SyncProvider {
     return headers;
   }
 
+  private static trimTrailingSlashes(url: string): string {
+    let trimmed: string = url;
+    while (trimmed.endsWith('/')) {
+      trimmed = trimmed.substring(0, trimmed.length - 1);
+    }
+    return trimmed;
+  }
+
   private static buildBaseUrl(serverUrl: string, remoteRoot: string): string {
     const base: string = serverUrl.replace(/\s+/g, '');
     if (base.length === 0) {
       throw new Error('服务器地址为空：请填写以 http:// 或 https:// 开头的完整地址');
     }
-    let trimmed: string = base;
-    while (trimmed.endsWith('/')) {
-      trimmed = trimmed.substring(0, trimmed.length - 1);
-    }
+    const trimmed: string = WebDavProvider.trimTrailingSlashes(base);
     if (!trimmed.startsWith('http://') && !trimmed.startsWith('https://')) {
       throw new Error(`服务器地址无效：请以 http:// 或 https:// 开头，` +
         `如 https://dav.jianguoyun.com/dav（当前填写 "${serverUrl.trim()}"）`);
@@ -667,7 +961,13 @@ export class WebDavProvider implements SyncProvider {
     if (payload.trim().length === 0) {
       return entries;
     }
-    const raw: WebDavManifestRaw = JSON.parse(payload) as WebDavManifestRaw;
+    let raw: WebDavManifestRaw;
+    try {
+      raw = JSON.parse(payload) as WebDavManifestRaw;
+    } catch (error) {
+      LOG.warn('manifest json parse failed, rebuilding from PROPFIND');
+      return entries;
+    }
     if (raw === undefined || raw === null || raw.files === undefined) {
       return entries;
     }
@@ -675,10 +975,9 @@ export class WebDavProvider implements SyncProvider {
       if (item === undefined || item.path === undefined || item.path.length === 0) {
         continue;
       }
-      // 路径穿越防护：清单来自远端，可能被篡改/损坏，
-      // 与 PROPFIND 分支保持同一套段校验。
-      if (!WebDavProvider.isSafeRelativePath(item.path)) {
-        LOG.warn(`manifest entry skipped (unsafe path): ${item.path}`);
+      // 统一经由路径安全防火墙校验，拦截隐藏目录（.obsidian/.trash/.git）及非同步文件。
+      if (!SyncPathGuard.isSafeSyncPath(item.path)) {
+        LOG.warn(`manifest entry skipped (protected or unsupported): ${item.path}`);
         continue;
       }
       const entry: RemoteEntry = new RemoteEntry();
@@ -733,6 +1032,19 @@ export class WebDavProvider implements SyncProvider {
     return buffer;
   }
 
+  /** 提取文本响应体：支持直接 string 及 UTF-8 ArrayBuffer（兼容 octet-stream MIME 返回）。 */
+  private static extractTextPayload(payload: string | Object | ArrayBuffer,
+    errorMessage: string): string {
+    if (typeof payload === 'string') {
+      return payload;
+    }
+    if (payload instanceof ArrayBuffer) {
+      const decoder: util.TextDecoder = util.TextDecoder.create('utf-8', { ignoreBOM: true });
+      return decoder.decodeToString(new Uint8Array(payload));
+    }
+    throw new Error(errorMessage);
+  }
+
   /** 把 HTTP 响应体收敛为 ArrayBuffer，非二进制时返回 null。 */
   private static toArrayBuffer(payload: string | Object | ArrayBuffer): ArrayBuffer | null {
     if (typeof payload === 'string') {
@@ -744,10 +1056,12 @@ export class WebDavProvider implements SyncProvider {
     return null;
   }
 
-  /** 提取响应头中的 ETag（大小写不敏感）。 */
-  private static etagOf(response: http.HttpResponse): string {
+  /** 按候选头名列表提取字符串响应头值（大小写不敏感匹配）。 */
+  private static headerValueOf(response: http.HttpResponse, keys: string[]): string {
     const headerMap: Record<string, string> = response.header as Record<string, string>;
-    const keys: string[] = ['etag', 'Etag', 'ETag'];
+    if (headerMap === undefined || headerMap === null) {
+      return '';
+    }
     for (const key of keys) {
       const value: string | undefined = headerMap[key];
       if (value !== undefined && typeof value === 'string') {
@@ -755,6 +1069,11 @@ export class WebDavProvider implements SyncProvider {
       }
     }
     return '';
+  }
+
+  /** 提取响应头中的 ETag（大小写不敏感）。 */
+  private static etagOf(response: http.HttpResponse): string {
+    return WebDavProvider.headerValueOf(response, ['etag', 'Etag', 'ETag']);
   }
 
   /** 取相对路径的目录部分（不含末尾分隔符）。 */

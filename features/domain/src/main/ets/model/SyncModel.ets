@@ -11,6 +11,19 @@ export enum SyncState {
   PAUSED = 'paused'
 }
 
+export enum RemoteTrashStatus {
+  MOVED = 'moved',
+  NOT_FOUND = 'notFound',
+  UNSUPPORTED = 'unsupported'
+}
+
+export enum SyncSafetyReason {
+  NONE = 'none',
+  TARGET_CHANGED = 'targetChanged',
+  INITIAL_NON_EMPTY_MERGE = 'initialMerge',
+  BULK_TRASH = 'bulkTrash'
+}
+
 export enum ConflictResolution {
   KEEP_LOCAL = 'keepLocal',
   KEEP_REMOTE = 'keepRemote',
@@ -57,6 +70,23 @@ export class SyncStatus {
   lastSyncAt: number = 0;
   pendingUploads: number = 0;
   pendingDownloads: number = 0;
+  /** 移入远端 .trash/ 的文件数（软删除） */
+  pendingTrashed: number = 0;
+  /** 因服务端不支持 MOVE 等原因而保留未删的远端文件数 */
+  skippedRemoteDeletes: number = 0;
+  /** 触发安全暂停（PAUSED）的原因 */
+  safetyReason: string = SyncSafetyReason.NONE;
+}
+
+/** 同步计划预览：执行远端写入/移动前的干跑统计。 */
+export class SyncPlanSummary {
+  uploads: number = 0;
+  downloads: number = 0;
+  conflicts: number = 0;
+  trashes: number = 0;
+  requiresConfirmation: boolean = false;
+  reason: string = SyncSafetyReason.NONE;
+  samplePaths: string[] = [];
 }
 
 /** 冲突记录。 */
@@ -66,4 +96,8 @@ export class SyncConflict {
   remoteHash: string = '';
   /** 冲突副本在本地仓库内的相对路径 */
   conflictPath: string = '';
+  /** 是否为二进制附件冲突 */
+  isBinary: boolean = false;
+  /** 远端版本标识（采用远端后同步更新本地基线） */
+  remoteServerTag: string = '';
 }

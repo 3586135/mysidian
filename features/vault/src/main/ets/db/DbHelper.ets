@@ -12,7 +12,7 @@ export class DbHelper {
   private static store: relationalStore.RdbStore | null = null;
   /** 平台 SQLite 是否支持 FTS5（不支持时搜索退化为 LIKE 扫描） */
   private static ftsReady: boolean = false;
-  private static readonly CURRENT_VERSION: number = 4;
+  private static readonly CURRENT_VERSION: number = 5;
 
   private static readonly SCHEMA_V1: string[] = [
     'CREATE TABLE IF NOT EXISTS vault (' +
@@ -38,7 +38,7 @@ export class DbHelper {
     'note_id INTEGER, prop_key TEXT, prop_value TEXT, vtype TEXT, PRIMARY KEY(note_id, prop_key))',
     'CREATE TABLE IF NOT EXISTS sync_state (' +
     'vault_id INTEGER NOT NULL, path TEXT NOT NULL, file_hash TEXT, mtime INTEGER, remote_etag TEXT,' +
-    'server_tag TEXT, last_sync_at INTEGER, state TEXT, size INTEGER DEFAULT 0, PRIMARY KEY(vault_id, path))'
+    "server_tag TEXT, last_sync_at INTEGER, state TEXT, size INTEGER DEFAULT 0, target_key TEXT DEFAULT '', PRIMARY KEY(vault_id, path))"
   ];
 
   private static readonly FTS_V1: string =
@@ -101,6 +101,15 @@ export class DbHelper {
         LOG.info('sync_state altered for v4 (size column)');
       } catch (error) {
         LOG.warn('sync_state size column already exists or alter failed');
+      }
+    }
+    if (version >= 1 && version < 5) {
+      // v5：sync_state 增加 target_key 列，绑定服务器与远端目录，防止切换配置后旧基线触发误删。
+      try {
+        await store.executeSql("ALTER TABLE sync_state ADD COLUMN target_key TEXT DEFAULT ''");
+        LOG.info('sync_state altered for v5 (target_key column)');
+      } catch (error) {
+        LOG.warn('sync_state target_key column already exists or alter failed');
       }
     }
     // FTS 可用性探测必须每次启动执行：早于本修复的版本在 schema 已是最新时

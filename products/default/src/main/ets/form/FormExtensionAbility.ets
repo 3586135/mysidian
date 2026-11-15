@@ -86,14 +86,16 @@ export default class FormExtensionAbility extends BaseFormExtensionAbility {
     }
     const vault = vaults[0];
     const files: string[] = await manager.listVaultFiles(vault);
-    const dailyPath: string = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}.md`;
+    const todayKey: string = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+    const preferredDailyPath: string = VaultPath.dailyNotePath(todayKey);
+    const dailyCandidates: string[] = VaultPath.dailyNoteCandidates(todayKey);
     const taskLines: string[] = [];
     for (const file of files) {
       if (!VaultPath.isMarkdown(file)) {
         continue;
       }
       const content: string = await manager.readNote(vault, file);
-      if (file === dailyPath) {
+      if (file === preferredDailyPath || (data.dailyNote.length === 0 && dailyCandidates.includes(file))) {
         data.dailyNote = content.substring(0, 120).replace(/\n/g, ' ');
       }
       const lines: string[] = content.split('\n');

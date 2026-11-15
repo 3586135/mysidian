@@ -2,7 +2,7 @@
   "color": [
     {
       "name": "start_window_background",
-      "value": "#000000"
+      "value": "#141211"
     },
     {
       "name": "hm_bg",
@@ -70,11 +70,23 @@
     },
     {
       "name": "design_surface",
-      "value": "#E6231F1E"
+      "value": "#59231F1E"
     },
     {
       "name": "design_surface_solid",
       "value": "#231F1E"
+    },
+    {
+      "name": "design_glass_bg",
+      "value": "#59231F1E"
+    },
+    {
+      "name": "design_glass_pill",
+      "value": "#523B3533"
+    },
+    {
+      "name": "design_glass_stroke",
+      "value": "#26FFFFFF"
     },
     {
       "name": "design_elevated",
@@ -119,6 +131,90 @@
     {
       "name": "design_danger",
       "value": "#FF6B5E"
+    },
+    {
+      "name": "design_cover_rose",
+      "value": "#6E4342"
+    },
+    {
+      "name": "design_cover_sage",
+      "value": "#3D5241"
+    },
+    {
+      "name": "design_cover_ochre",
+      "value": "#5E5338"
+    },
+    {
+      "name": "design_cover_violet",
+      "value": "#484168"
+    },
+    {
+      "name": "design_cover_ink",
+      "value": "#1A1716"
+    },
+    {
+      "name": "design_cover_text",
+      "value": "#F5EFEA"
+    },
+    {
+      "name": "design_tint_sage_bg",
+      "value": "#1D241F"
+    },
+    {
+      "name": "design_tint_sage_pill",
+      "value": "#27322A"
+    },
+    {
+      "name": "design_tint_sage_fg",
+      "value": "#8EAD94"
+    },
+    {
+      "name": "design_tint_ochre_bg",
+      "value": "#24201A"
+    },
+    {
+      "name": "design_tint_ochre_pill",
+      "value": "#312B22"
+    },
+    {
+      "name": "design_tint_ochre_fg",
+      "value": "#BCA778"
+    },
+    {
+      "name": "design_tint_rose_bg",
+      "value": "#251D1D"
+    },
+    {
+      "name": "design_tint_rose_pill",
+      "value": "#332727"
+    },
+    {
+      "name": "design_tint_rose_fg",
+      "value": "#BF8987"
+    },
+    {
+      "name": "design_tint_violet_bg",
+      "value": "#1F1D28"
+    },
+    {
+      "name": "design_tint_violet_pill",
+      "value": "#2A2738"
+    },
+    {
+      "name": "design_tint_violet_fg",
+      "value": "#A39BC9"
+    },
+    {
+      "name": "design_tint_sky_bg",
+      "value": "#1B2126"
+    },
+    {
+      "name": "design_tint_sky_pill",
+      "value": "#252E35"
+    },
+    {
+      "name": "design_tint_sky_fg",
+      "value": "#89A4B6"
     }
   ]
 }

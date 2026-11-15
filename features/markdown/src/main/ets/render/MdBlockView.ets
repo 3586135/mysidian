@@ -192,7 +192,7 @@ export struct MdBlockView {
         this.tableView()
       } else if (this.block.type === MdBlockType.THEMATIC_BREAK) {
         Divider()
-          .color($r('sys.color.ohos_id_color_text_secondary'))
+          .color($r('app.color.md_divider'))
           .margin({ top: 8, bottom: 8 })
       } else if (this.block.type === MdBlockType.HTML) {
         MdWebFallback({
@@ -248,13 +248,13 @@ export struct MdBlockView {
       Row() {
         Text(this.bulletText(item))
           .fontSize(this.fontSize)
-          .fontColor($r('sys.color.ohos_id_color_text_secondary'))
+          .fontColor($r('app.color.md_text_secondary'))
           .width(24)
         if (item.isTask) {
           SymbolGlyph(item.checked ? $r('sys.symbol.checkmark_circle') : $r('sys.symbol.circle'))
             .fontSize(20)
-            .fontColor([item.checked ? $r('sys.color.ohos_id_color_emphasize')
-              : $r('sys.color.ohos_id_color_text_secondary')])
+            .fontColor([item.checked ? $r('app.color.md_accent')
+              : $r('app.color.md_text_secondary')])
             .width(26)
             .margin({ top: 2 })
             .onClick(() => {
@@ -312,9 +312,9 @@ export struct MdBlockView {
       return $r('app.color.md_danger');
     }
     if (kind === 'accent') {
-      return $r('sys.color.ohos_id_color_emphasize');
+      return $r('app.color.md_accent');
     }
-    return $r('sys.color.ohos_id_color_text_secondary');
+    return $r('app.color.md_text_secondary');
   }
 
   private taskHasMeta(item: MdListItem): boolean {
@@ -373,11 +373,11 @@ export struct MdBlockView {
       Row() {
         Text(this.codeLangLabel())
           .fontSize(11)
-          .fontColor($r('sys.color.ohos_id_color_text_secondary'))
+          .fontColor($r('app.color.md_text_secondary'))
           .layoutWeight(1)
         SymbolGlyph(this.copied ? $r('sys.symbol.checkmark') : $r('sys.symbol.doc_text_on_doc_text'))
           .fontSize(15)
-          .fontColor([$r('sys.color.ohos_id_color_text_secondary')])
+          .fontColor([$r('app.color.md_text_secondary')])
           .padding(6)
           .borderRadius(12)
           .onClick(() => {
@@ -396,14 +396,14 @@ export struct MdBlockView {
       }
         .fontSize(this.fontSize - 2)
         .fontFamily('monospace')
-        .fontColor($r('sys.color.ohos_id_color_text_primary'))
+        .fontColor($r('app.color.md_text_primary'))
         .width('100%')
     }
     .width('100%')
     .alignItems(HorizontalAlign.Start)
     .padding(12)
     .borderRadius(8)
-    .backgroundColor($r('sys.color.ohos_id_color_card_bg'))
+    .backgroundColor($r('app.color.md_card_bg'))
     .margin({ top: 6, bottom: 6 })
   }
 
@@ -423,7 +423,7 @@ export struct MdBlockView {
     if (kind === CodeTokenKind.TYPE) {
       return $r('app.color.md_code_type');
     }
-    return $r('sys.color.ohos_id_color_text_primary');
+    return $r('app.color.md_text_primary');
   }
 
   /** 常见语言别名（fence 标记 �?显示名）�?*/
@@ -470,21 +470,21 @@ export struct MdBlockView {
       if (this.dataLoaded && this.dataTasks.length === 0) {
         Text($r('app.string.md_dataview_empty'))
           .fontSize(this.fontSize - 2)
-          .fontColor($r('sys.color.ohos_id_color_text_secondary'))
+          .fontColor($r('app.color.md_text_secondary'))
       }
       ForEach(this.dataTasks, (task: DataViewTask, index: number) => {
         if (this.needGroupHeader(index)) {
           Text(task.fileName)
             .fontSize(this.fontSize - 1)
             .fontWeight(FontWeight.Medium)
-            .fontColor($r('sys.color.ohos_id_color_text_primary'))
+            .fontColor($r('app.color.md_text_primary'))
             .margin({ top: index === 0 ? 0 : 10, bottom: 4 })
         }
         Row() {
           SymbolGlyph(task.item.checked ? $r('sys.symbol.checkmark_circle') : $r('sys.symbol.circle'))
             .fontSize(20)
-            .fontColor([task.item.checked ? $r('sys.color.ohos_id_color_emphasize')
-              : $r('sys.color.ohos_id_color_text_secondary')])
+            .fontColor([task.item.checked ? $r('app.color.md_accent')
+              : $r('app.color.md_text_secondary')])
             .width(26)
             .margin({ top: 2 })
             .onClick(() => {
@@ -522,7 +522,7 @@ export struct MdBlockView {
     .alignItems(HorizontalAlign.Start)
     .padding(12)
     .borderRadius(8)
-    .backgroundColor($r('sys.color.ohos_id_color_card_bg'))
+    .backgroundColor($r('app.color.md_card_bg'))
     .margin({ top: 6, bottom: 6 })
   }
 
@@ -533,7 +533,7 @@ export struct MdBlockView {
       if (this.dataViewTableLoaded && this.dataViewTableRows.length === 0) {
         Text($r('app.string.md_dataview_empty'))
           .fontSize(this.fontSize - 2)
-          .fontColor($r('sys.color.ohos_id_color_text_secondary'))
+          .fontColor($r('app.color.md_text_secondary'))
       }
       if (this.dataViewQuery !== null && this.dataViewQuery.tableColumns.length > 0) {
         Row() {
@@ -556,7 +556,7 @@ export struct MdBlockView {
         .width('100%')
         .padding({ bottom: 4 })
         Divider()
-          .color($r('sys.color.ohos_id_color_text_secondary'))
+          .color($r('app.color.md_divider'))
       }
       ForEach(this.dataViewTableRows, (row: string[], rowIndex: number) => {
         Row() {
@@ -583,7 +583,7 @@ export struct MdBlockView {
     .alignItems(HorizontalAlign.Start)
     .padding(12)
     .borderRadius(8)
-    .backgroundColor($r('sys.color.ohos_id_color_card_bg'))
+    .backgroundColor($r('app.color.md_card_bg'))
     .margin({ top: 6, bottom: 6 })
   }
 
@@ -594,7 +594,7 @@ export struct MdBlockView {
       if (this.dataViewListLoaded && this.dataViewListItems.length === 0) {
         Text($r('app.string.md_dataview_empty'))
           .fontSize(this.fontSize - 2)
-          .fontColor($r('sys.color.ohos_id_color_text_secondary'))
+          .fontColor($r('app.color.md_text_secondary'))
       }
       ForEach(this.dataViewListItems, (item: string, index: number) => {
         MdInlineText({
@@ -609,7 +609,7 @@ export struct MdBlockView {
         })
         if (index < this.dataViewListItems.length - 1) {
           Divider()
-            .color($r('sys.color.ohos_id_color_text_secondary'))
+            .color($r('app.color.md_divider'))
             .margin({ top: 2, bottom: 2 })
         }
       }, (item: string, index: number): string => `dvlist_${index}`)
@@ -618,7 +618,7 @@ export struct MdBlockView {
     .alignItems(HorizontalAlign.Start)
     .padding(12)
     .borderRadius(8)
-    .backgroundColor($r('sys.color.ohos_id_color_card_bg'))
+    .backgroundColor($r('app.color.md_card_bg'))
     .margin({ top: 6, bottom: 6 })
   }
 
@@ -670,7 +670,7 @@ export struct MdBlockView {
     .width('100%')
     .padding({ left: 12, top: 4, bottom: 4 })
     .borderWidth({ left: 3 })
-    .borderColor($r('sys.color.ohos_id_color_emphasize'))
+    .borderColor($r('app.color.md_accent'))
     .margin({ top: 4, bottom: 4 })
   }
 
@@ -680,18 +680,18 @@ export struct MdBlockView {
       Row() {
         SymbolGlyph(this.calloutOpen ? $r('sys.symbol.chevron_down') : $r('sys.symbol.chevron_right'))
           .fontSize(12)
-          .fontColor([$r('sys.color.ohos_id_color_text_secondary')])
+          .fontColor([$r('app.color.md_text_secondary')])
           .width(18)
         Text(this.calloutTitle())
           .fontSize(this.fontSize)
           .fontWeight(FontWeight.Bold)
-          .fontColor($r('sys.color.ohos_id_color_text_primary'))
+          .fontColor($r('app.color.md_text_primary'))
           .maxLines(2)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
           .layoutWeight(1)
         Text(this.block.calloutType)
           .fontSize(this.fontSize - 4)
-          .fontColor($r('sys.color.ohos_id_color_text_secondary'))
+          .fontColor($r('app.color.md_text_secondary'))
           .margin({ left: 6 })
       }
       .width('100%')
@@ -719,8 +719,8 @@ export struct MdBlockView {
     .alignItems(HorizontalAlign.Start)
     .padding(12)
     .borderRadius(8)
-    .backgroundColor($r('sys.color.ohos_id_color_component_activated'))
-    .border({ width: { left: 3 }, color: $r('sys.color.ohos_id_color_emphasize') })
+    .backgroundColor($r('app.color.md_accent_weak'))
+    .border({ width: { left: 3 }, color: $r('app.color.md_accent') })
     .margin({ top: 6, bottom: 6 })
   }
 
@@ -739,7 +739,7 @@ export struct MdBlockView {
       Text(MathRenderer.toPlain(this.block.rawContent))
         .fontSize(17)
         .fontFamily('serif')
-        .fontColor($r('app.color.design_text_primary'))
+        .fontColor($r('app.color.md_text_primary'))
         .textAlign(TextAlign.Center)
         .width('100%')
     }
@@ -747,7 +747,7 @@ export struct MdBlockView {
     .alignItems(HorizontalAlign.Center)
     .padding(12)
     .borderRadius(8)
-    .backgroundColor($r('sys.color.ohos_id_color_card_bg'))
+    .backgroundColor($r('app.color.md_card_bg'))
     .margin({ top: 6, bottom: 6 })
   }
 
@@ -785,7 +785,7 @@ export struct MdBlockView {
         .width('100%')
         .padding({ top: 6, bottom: 6 })
         Divider()
-          .color($r('sys.color.ohos_id_color_text_secondary'))
+          .color($r('app.color.md_divider'))
         ForEach(this.block.rows, (row: string[], rowIndex: number) => {
           Row() {
             ForEach(row, (cell: string, cellIndex: number) => {
@@ -841,13 +841,13 @@ export struct MdBlockView {
       Text(this.block.rawContent)
         .fontSize(this.fontSize - 2)
         .fontFamily('monospace')
-        .fontColor($r('sys.color.ohos_id_color_text_secondary'))
+        .fontColor($r('app.color.md_text_secondary'))
         .width('100%')
     }
     .width('100%')
     .padding(10)
     .borderRadius(8)
-    .backgroundColor($r('sys.color.ohos_id_color_card_bg'))
+    .backgroundColor($r('app.color.md_card_bg'))
     .margin({ top: 6, bottom: 6 })
   }
 
@@ -868,12 +868,12 @@ export struct MdBlockView {
       } else {
         Text($r('app.string.md_image_missing'))
           .fontSize(this.fontSize - 2)
-          .fontColor($r('sys.color.ohos_id_color_text_secondary'))
+          .fontColor($r('app.color.md_text_secondary'))
       }
       if (this.block.alt.length > 0) {
         Text(this.block.alt)
           .fontSize(this.fontSize - 3)
-          .fontColor($r('sys.color.ohos_id_color_text_secondary'))
+          .fontColor($r('app.color.md_text_secondary'))
           .margin({ top: 4 })
       }
     }
@@ -889,11 +889,11 @@ export struct MdBlockView {
       if (this.embedDepth >= MdBlockView.MAX_EMBED_DEPTH) {
         Text($r('app.string.md_embed_too_deep'))
           .fontSize(this.fontSize - 2)
-          .fontColor($r('sys.color.ohos_id_color_text_secondary'))
+          .fontColor($r('app.color.md_text_secondary'))
       } else if (!this.embedReady) {
         Text($r('app.string.md_embed_loading'))
           .fontSize(this.fontSize - 2)
-          .fontColor($r('sys.color.ohos_id_color_text_secondary'))
+          .fontColor($r('app.color.md_text_secondary'))
       } else {
         ForEach(this.embedBlocks, (block: MdBlock, index: number) => {
           MdBlockView({
@@ -930,7 +930,7 @@ export struct MdBlockView {
     .alignItems(HorizontalAlign.Start)
     .padding(10)
     .borderRadius(8)
-    .backgroundColor($r('sys.color.ohos_id_color_card_bg'))
+    .backgroundColor($r('app.color.md_card_bg'))
     .margin({ top: 6, bottom: 6 })
   }
 

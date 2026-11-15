@@ -1,4 +1,5 @@
-import { fileIo, hash } from '@kit.CoreFileKit';
+import { fileIo, fileUri, hash } from '@kit.CoreFileKit';
+import { util } from '@kit.ArkTS';
 import { common } from '@kit.AbilityKit';
 import { BusinessError } from '@kit.BasicServicesKit';
 import { FileNode, NoteRow, VaultInfo } from '@ohos/domain';
@@ -6,6 +7,7 @@ import { Logger } from '@ohos/common';
 import { DbHelper } from '../db/DbHelper';
 import { NoteDao } from '../db/NoteDao';
 import { VaultDao } from '../db/VaultDao';
+import { SyncStateDao } from '../db/SyncStateDao';
 import { VaultPath } from './VaultPath';
 import { ZipTransfer } from './ZipTransfer';
 import { DemoNote, DemoVaultContent } from './DemoVaultContent';
@@ -216,6 +218,7 @@ export class VaultManager {
   /** 删除仓库（包含磁盘目录）。 */
   public async deleteVault(vault: VaultInfo): Promise<void> {
     await NoteDao.removeByVault(this.context, vault.id);
+    await SyncStateDao.clear(this.context, vault.id);
     await VaultDao.remove(this.context, vault.id);
     this.removeDirectory(vault.rootPath);
     LOG.info(`deleted vault ${vault.name}`);
@@ -292,22 +295,58 @@ export class VaultManager {
     if (!fileIo.accessSync(absolute)) {
       return '';
     }
+    const trashRel: string = this.moveFileToTrashDir(vault, absolute, VaultPath.basename(relativePath));
+    await NoteDao.removeByPath(this.context, vault.id, relativePath);
+    await VaultDao.touch(this.context, vault.id);
+    return trashRel;
+  }
+
+  /**
+   * 删除文件夹：把目录内全部可见文件移入 .trash 回收站并移除该目录（含索引记录清理）。
+   * 返回结果包含是否执行成功及被移入回收站的相对文件路径集合。
+   */
+  public async trashFolder(vault: VaultInfo, relativeDir: string): Promise<TrashFolderResult> {
+    const result: TrashFolderResult = new TrashFolderResult();
+    const trimmed: string = VaultPath.normalize(relativeDir).replace(/\/+$/, '');
+    if (trimmed.length === 0 || trimmed === '.' || trimmed === VaultManager.TRASH_DIR ||
+      trimmed.startsWith(`${VaultManager.TRASH_DIR}/`) || trimmed.split('/').includes('..')) {
+      return result;
+    }
+    const absDir: string = VaultPath.absolute(vault.rootPath, trimmed);
+    if (!fileIo.accessSync(absDir) || !fileIo.statSync(absDir).isDirectory()) {
+      return result;
+    }
+    const files: string[] = [];
+    this.collectFiles(absDir, trimmed, files);
+    for (const file of files) {
+      const absFile: string = VaultPath.absolute(vault.rootPath, file);
+      if (fileIo.accessSync(absFile)) {
+        this.moveFileToTrashDir(vault, absFile, VaultPath.basename(file));
+      }
+      await NoteDao.removeByPath(this.context, vault.id, file);
+    }
+    this.removeDirectory(absDir);
+    await VaultDao.touch(this.context, vault.id);
+    result.ok = true;
+    result.files = files;
+    return result;
+  }
+
+  /** 把单个绝对路径文件改名移入 .trash 回收站，返回回收站相对路径。 */
+  private moveFileToTrashDir(vault: VaultInfo, absolutePath: string, basename: string): string {
     const trashDir: string = VaultPath.absolute(vault.rootPath, VaultManager.TRASH_DIR);
     if (!fileIo.accessSync(trashDir)) {
       fileIo.mkdirSync(trashDir, true);
     }
     // 时间戳前缀防同名覆盖；同一毫秒内连续删除同名文件（批量删除）时
     // 追加序号，避免 renameSync 静默覆盖先删的那份。
-    const basename: string = VaultPath.basename(relativePath);
     let name: string = `${Date.now()}_${basename}`;
     let suffix: number = 1;
     while (fileIo.accessSync(`${trashDir}/${name}`)) {
       name = `${Date.now()}_${suffix}_${basename}`;
       suffix++;
     }
-    fileIo.renameSync(absolute, `${trashDir}/${name}`);
-    await NoteDao.removeByPath(this.context, vault.id, relativePath);
-    await VaultDao.touch(this.context, vault.id);
+    fileIo.renameSync(absolutePath, `${trashDir}/${name}`);
     return `${VaultManager.TRASH_DIR}/${name}`;
   }
 
@@ -686,6 +725,88 @@ export class VaultManager {
       }
     }
   }
+
+  /** 外部 Markdown 文件只读上限（10 MB），防止超大非文本文件造成内存溢出。 */
+  private static readonly MAX_EXTERNAL_FILE_BYTES: number = 10 * 1024 * 1024;
+  private static readonly EXTERNAL_READ_CHUNK: number = 65536;
+
+  /**
+   * 按只读文件描述符从外部 URI 读取 UTF-8 文本；失败返回 null，空文件返回空串。
+   * 全程不改动外部原文件，也不隐式写入任何仓库。
+   */
+  public static readUriText(uri: string): string | null {
+    const trimmed: string = uri.trim();
+    if (trimmed.length === 0) {
+      return null;
+    }
+    let file: fileIo.File | undefined = undefined;
+    try {
+      file = fileIo.openSync(trimmed, fileIo.OpenMode.READ_ONLY);
+      const buffer: ArrayBuffer = new ArrayBuffer(VaultManager.EXTERNAL_READ_CHUNK);
+      const decoder: util.TextDecoder = util.TextDecoder.create('utf-8', { ignoreBOM: true });
+      const parts: string[] = [];
+      let total: number = 0;
+      while (total < VaultManager.MAX_EXTERNAL_FILE_BYTES) {
+        const readBytes: number = fileIo.readSync(file.fd, buffer);
+        if (readBytes <= 0) {
+          break;
+        }
+        total += readBytes;
+        const slice: Uint8Array = new Uint8Array(buffer, 0, readBytes);
+        const chunk: string = decoder.decodeToString(slice, { stream: true });
+        if (chunk.length > 0) {
+          parts.push(chunk);
+        }
+      }
+      const tail: string = decoder.decodeToString(new Uint8Array(0), { stream: false });
+      if (tail.length > 0) {
+        parts.push(tail);
+      }
+      return parts.join('');
+    } catch (error) {
+      const err = error as BusinessError;
+      LOG.error(`read uri text failed, code=${err.code}, message=${err.message}`);
+      return null;
+    } finally {
+      if (file !== undefined) {
+        try {
+          fileIo.closeSync(file.fd);
+        } catch (_ignored) {
+          // 忽略关闭异常，避免覆盖正常读结果
+        }
+      }
+    }
+  }
+
+  /**
+   * 从外部文件 URI 提取文件名（优先调用 FileUri，失败时按路径末段解码兜底）。
+   */
+  public static extractUriFileName(uri: string): string {
+    const trimmed: string = uri.trim();
+    if (trimmed.length === 0) {
+      return '外部笔记.md';
+    }
+    try {
+      const parsed: fileUri.FileUri = new fileUri.FileUri(trimmed);
+      if (parsed.name.length > 0) {
+        return parsed.name;
+      }
+    } catch (_ignored) {
+      // content:// / datashare:// 等非标准 URI 退回路径分段解析
+    }
+    const qMark: number = trimmed.indexOf('?');
+    const clean: string = qMark >= 0 ? trimmed.substring(0, qMark) : trimmed;
+    const slash: number = clean.lastIndexOf('/');
+    const rawName: string = slash >= 0 ? clean.substring(slash + 1) : clean;
+    if (rawName.length === 0) {
+      return '外部笔记.md';
+    }
+    try {
+      return decodeURIComponent(rawName);
+    } catch (_ignored) {
+      return rawName;
+    }
+  }
 }
 
 /** 文件状态信息（修改时间与大小，用于检测外部改动）。 */
@@ -702,4 +823,10 @@ export class VaultBackupInfo {
   path: string = '';
   createdAt: number = 0;
   sizeBytes: number = 0;
+}
+
+/** 删除文件夹结果：成功标志及被移入回收站的相对文件路径集合。 */
+export class TrashFolderResult {
+  ok: boolean = false;
+  files: string[] = [];
 }

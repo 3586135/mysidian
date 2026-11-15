@@ -1,5 +1,5 @@
 /**
- * 编辑模式底部格式化工具栏（横向滚动，避免窄屏按钮溢出）。
+ * 编辑模式底部格式化工具栏（单行横向滚动胶囊条，避免多行换行占用视口）。
  * 17 个按钮全部经 @Event 上抛，编辑逻辑归 EditorPane。
  */
 @ComponentV2
@@ -12,81 +12,70 @@ export struct EditorToolbar {
   @Event onPickImage: () => void = (): void => {};
 
   @Builder
-  toolbarButton(label: string, insertText: string, fontSize: number) {
+  chipButton(label: string, fontSize: number, hPad: number, btnOpacity: number, onTap: () => void) {
     Button(label)
+      .type(ButtonType.Normal)
       .fontSize(fontSize)
+      .fontWeight(FontWeight.Medium)
+      .fontColor($r('app.color.design_text_primary'))
       .height(32)
-      .padding({ left: 10, right: 10 })
-      .backgroundColor($r('app.color.design_surface_solid'))
-      .borderRadius(8)
+      .constraintSize({ minWidth: 34 })
+      .padding({ left: hPad, right: hPad })
+      .backgroundColor($r('app.color.design_elevated'))
+      .borderRadius(10)
       .border({ width: 1, color: $r('app.color.design_stroke') })
       .focusable(false)
+      .opacity(btnOpacity)
       .onClick(() => {
-        this.onInsertFormat(insertText);
+        onTap();
       })
+  }
+
+  @Builder
+  toolbarButton(label: string, insertText: string, fontSize: number) {
+    this.chipButton(label, fontSize, 10, 1, (): void => {
+      this.onInsertFormat(insertText);
+    })
   }
 
   build() {
     Scroll() {
-      Row() {
-        this.toolbarButton('B', '**', 14)
-        this.toolbarButton('I', '*', 14)
-        this.toolbarButton('~', '~~', 14)
-        this.toolbarButton('`', '`', 14)
-        this.toolbarButton('H1', '# ', 13)
-        this.toolbarButton('H2', '## ', 13)
-        this.toolbarButton('H3', '### ', 13)
-        this.toolbarButton('>', '> ', 14)
-        this.toolbarButton('-', '- ', 14)
-        this.toolbarButton('1.', '1. ', 13)
-        this.toolbarButton('-[]', '- [ ] ', 12)
-        this.toolbarButton('—', '---\n', 14)
-        Button('↶')
-          .fontSize(15)
-          .height(32)
-          .padding({ left: 10, right: 10 })
-          .backgroundColor($r('app.color.design_surface_solid'))
-          .borderRadius(8)
-          .border({ width: 1, color: $r('app.color.design_stroke') })
-          .focusable(false)
-          .opacity(this.undoDepth > 0 ? 1 : 0.4)
-          .onClick(() => {
-            this.onUndo();
-          })
-        Button('↷')
-          .fontSize(15)
-          .height(32)
-          .padding({ left: 10, right: 10 })
-          .backgroundColor($r('app.color.design_surface_solid'))
-          .borderRadius(8)
-          .border({ width: 1, color: $r('app.color.design_stroke') })
-          .focusable(false)
-          .opacity(this.redoDepth > 0 ? 1 : 0.4)
-          .onClick(() => {
-            this.onRedo();
-          })
-        Button('IMG')
-          .fontSize(12)
-          .height(32)
-          .padding({ left: 8, right: 8 })
-          .backgroundColor($r('app.color.design_surface_solid'))
-          .borderRadius(8)
-          .border({ width: 1, color: $r('app.color.design_stroke') })
-          .focusable(false)
-          .onClick(() => {
-            this.onPickImage();
-          })
+      Row({ space: 6 }) {
+        this.toolbarButton('B', '**', 13)
+        this.toolbarButton('I', '*', 13)
+        this.toolbarButton('~', '~~', 13)
+        this.toolbarButton('`', '`', 13)
+        this.toolbarButton('H1', '# ', 12)
+        this.toolbarButton('H2', '## ', 12)
+        this.toolbarButton('H3', '### ', 12)
+        this.toolbarButton('>', '> ', 13)
+        this.toolbarButton('-', '- ', 13)
+        this.toolbarButton('1.', '1. ', 12)
+        this.toolbarButton('-[]', '- [ ] ', 11)
+        this.toolbarButton('—', '---\n', 13)
+        this.chipButton('↶', 14, 10, this.undoDepth > 0 ? 1 : 0.4, (): void => {
+          this.onUndo();
+        })
+        this.chipButton('↷', 14, 10, this.redoDepth > 0 ? 1 : 0.4, (): void => {
+          this.onRedo();
+        })
+        this.chipButton('IMG', 11, 9, 1, (): void => {
+          this.onPickImage();
+        })
         this.toolbarButton('[[', '[[', 12)
         this.toolbarButton('#', '#', 12)
       }
-      .padding({ left: 12, right: 12, top: 8, bottom: 8 })
+      .height('100%')
+      .alignItems(VerticalAlign.Center)
+      .padding({ left: 12, right: 12 })
     }
     .scrollable(ScrollDirection.Horizontal)
     .scrollBar(BarState.Off)
+    .edgeEffect(EdgeEffect.Spring)
     .width('100%')
     .height(48)
-    .backgroundColor($r('app.color.design_surface'))
+    .backgroundColor($r('app.color.design_glass_bg'))
     .backgroundBlurStyle(BlurStyle.Thin)
-    .border({ width: { top: 1 }, color: $r('app.color.design_stroke') })
+    .border({ width: { top: 1 }, color: $r('app.color.design_divider') })
   }
 }

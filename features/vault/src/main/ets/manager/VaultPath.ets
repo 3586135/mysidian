@@ -41,11 +41,38 @@ export class VaultPath {
     return index <= 0 ? name : name.substring(0, index);
   }
 
-  /** 目录名（不含末尾分隔符）。 */
+  /** 默认日记根目录名。 */
+  public static readonly DAILY_ROOT_DIR: string = '日记';
+
+  /** 默认日记相对路径：`日记/YYYY-MM/YYYY-MM-DD.md`。 */
+  public static dailyNotePath(dateKey: string): string {
+    const cleanKey: string = VaultPath.normalize(dateKey).replace(/\.md$/i, '');
+    if (cleanKey.length >= 7) {
+      const monthDir: string = cleanKey.substring(0, 7);
+      return `${VaultPath.DAILY_ROOT_DIR}/${monthDir}/${cleanKey}.md`;
+    }
+    return `${VaultPath.DAILY_ROOT_DIR}/${cleanKey}.md`;
+  }
+
+  /** 返回同一天日记的候选路径（新目录格式优先，兼容历史根目录日记）。 */
+  public static dailyNoteCandidates(dateKey: string): string[] {
+    const cleanKey: string = VaultPath.normalize(dateKey).replace(/\.md$/i, '');
+    const preferred: string = VaultPath.dailyNotePath(cleanKey);
+    const legacy: string = `${cleanKey}.md`;
+    return preferred === legacy ? [preferred] : [preferred, legacy];
+  }
+
+  /** 目录名（不含末尾分隔符；若入参为绝对路径则保留前导 `/`）。 */
   public static dirname(path: string): string {
+    const trimmed: string = path.trim();
+    const isAbsolute: boolean = trimmed.startsWith('/') || trimmed.startsWith('\\');
     const normalized: string = VaultPath.normalize(path);
     const index: number = normalized.lastIndexOf('/');
-    return index <= 0 ? '' : normalized.substring(0, index);
+    if (index <= 0) {
+      return isAbsolute ? '/' : '';
+    }
+    const parent: string = normalized.substring(0, index);
+    return isAbsolute ? `/${parent}` : parent;
   }
 
   /** 扩展名（小写，不含点），无扩展名时返回空串。 */

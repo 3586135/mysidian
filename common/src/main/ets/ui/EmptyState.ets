@@ -7,6 +7,8 @@ export struct EmptyState {
   @Param description: ResourceStr = '';
   @Param icon: Resource | undefined = undefined;
   @Param iconColor: ResourceColor = $r('sys.color.ohos_id_color_text_secondary');
+  @Param titleColor: ResourceColor = $r('sys.color.ohos_id_color_text_primary');
+  @Param descColor: ResourceColor = $r('sys.color.ohos_id_color_text_secondary');
 
   build() {
     Column() {
@@ -19,10 +21,10 @@ export struct EmptyState {
       Text(this.title)
         .fontSize(18)
         .fontWeight(FontWeight.Medium)
-        .fontColor($r('sys.color.ohos_id_color_text_primary'))
+        .fontColor(this.titleColor)
       Text(this.description)
         .fontSize(14)
-        .fontColor($r('sys.color.ohos_id_color_text_secondary'))
+        .fontColor(this.descColor)
         .textAlign(TextAlign.Center)
         .margin({ top: 8 })
     }

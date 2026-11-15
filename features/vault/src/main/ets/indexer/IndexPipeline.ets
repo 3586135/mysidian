@@ -1,7 +1,7 @@
 import { common } from '@kit.AbilityKit';
 import { relationalStore } from '@kit.ArkData';
-import { LinkKind, LinkRef, MdBlock, MdDocument, MdInline, MdInlineType, MdListItem, NoteRow }
-  from '@ohos/domain';
+import { LinkKind, LinkRef, MdBlock, MdBlockType, MdDocument, MdInline, MdInlineType,
+  MdListItem, NoteRow, OutlineEntry } from '@ohos/domain';
 import { BlockDao } from '../db/BlockDao';
 import { DbHelper } from '../db/DbHelper';
 import { LinkDao } from '../db/LinkDao';
@@ -149,8 +149,29 @@ export class IndexPipeline {
     }
   }
 
+  /** 收集文档的大纲标题条目（供只读预览态与索引共用，避免解析规则分叉）。 */
+  public static collectOutline(document: MdDocument): OutlineEntry[] {
+    const entries: OutlineEntry[] = [];
+    for (let ordinal: number = 0; ordinal < document.blocks.length; ordinal++) {
+      const block: MdBlock = document.blocks[ordinal];
+      if (block.type !== MdBlockType.HEADING) {
+        continue;
+      }
+      const text: string = IndexPipeline.blockText(block);
+      if (text.length === 0) {
+        continue;
+      }
+      const entry: OutlineEntry = new OutlineEntry();
+      entry.ordinal = ordinal;
+      entry.level = block.level;
+      entry.text = text;
+      entries.push(entry);
+    }
+    return entries;
+  }
+
   /** 收集文档中的标签（含 frontmatter 标签与列表项内标签）。 */
-  private static collectTags(document: MdDocument): string[] {
+  public static collectTags(document: MdDocument): string[] {
     const tags: string[] = [];
     for (const tag of document.frontmatter.tags) {
       IndexPipeline.addTag(tags, tag);

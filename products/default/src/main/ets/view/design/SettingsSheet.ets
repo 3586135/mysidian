@@ -2,17 +2,22 @@ import { ConfigurationConstant } from '@kit.AbilityKit';
 import { VaultBackupInfo } from '@ohos/vault';
 import { VaultViewModel } from '../../viewmodel/VaultViewModel';
 
+export enum SettingsSheetMode {
+  NONE = -1,
+  APPEARANCE = 0,
+  MAINTENANCE = 1
+}
+
 /**
- * Material 3 设置浮层：字号 Slider、仓库管理入口、维护操作（重建索引 / 导出）、
- * WebDAV 同步入口与关于说明。替代旧 settingsTab 的全部能力。
+ * Material 3 偏好与维护浮层（融合鸿蒙原生分组白底卡片 + 内缩分割线设计）：
+ * 按 mode 单一职责呈现「外观与阅读」（字号 / 主题 / 关于）或「备份与维护」（重建索引 / 本地快照），
+ * 不再重复堆叠仓库管理与同步设置，避免嵌套弹窗。
  */
 @ComponentV2
 export struct SettingsSheet {
   @Param vm: VaultViewModel = new VaultViewModel();
+  @Param mode: number = SettingsSheetMode.APPEARANCE;
   @Event onClose: () => void = (): void => {};
-  @Event onOpenVaultManager: () => void = (): void => {};
-  @Event onOpenSync: () => void = (): void => {};
-  @Event onExport: () => void = (): void => {};
 
   build() {
     Stack() {
@@ -29,158 +34,165 @@ export struct SettingsSheet {
 
       Column() {
         Row() {
-          Text($r('app.string.settings_title'))
-            .fontSize(18)
-            .fontWeight(FontWeight.Medium)
+          Text(this.mode === SettingsSheetMode.MAINTENANCE ?
+            $r('app.string.design_more_backup') : $r('app.string.design_more_appearance'))
+            .fontSize(20)
+            .fontWeight(FontWeight.Bold)
             .fontColor($r('app.color.design_text_primary'))
             .layoutWeight(1)
           Row() {
             SymbolGlyph($r('sys.symbol.xmark'))
               .fontSize(16)
-              .fontColor([$r('app.color.design_text_secondary')])
+              .fontColor([$r('app.color.design_text_primary')])
           }
-          .width(32)
-          .height(32)
-          .borderRadius(16)
-          .backgroundColor($r('app.color.design_elevated'))
+          .width(36)
+          .height(36)
+          .borderRadius(18)
+          .backgroundColor($r('app.color.design_glass_bg'))
+          .backgroundBlurStyle(BlurStyle.Thin)
+          .border({ width: 1, color: $r('app.color.design_glass_stroke') })
           .justifyContent(FlexAlign.Center)
           .onClick(() => {
             this.onClose();
           })
         }
         .width('100%')
-        .margin({ bottom: 8 })
+        .margin({ bottom: 10 })
 
         Scroll() {
           Column() {
-            this.sectionLabel($r('app.string.settings_appearance'))
+            if (this.mode === SettingsSheetMode.APPEARANCE) {
+              this.sectionLabel($r('app.string.settings_appearance'))
 
-            Column() {
-              Row() {
-                Text($r('app.string.settings_font_size'))
-                  .fontSize(15)
-                  .fontColor($r('app.color.design_text_primary'))
-                Blank()
-                Text(`${this.vm.fontSize} fp`)
-                  .fontSize(13)
-                  .fontColor($r('app.color.design_accent'))
-                  .margin({ right: 4 })
+              Column() {
+                Row() {
+                  Text($r('app.string.settings_font_size'))
+                    .fontSize(15)
+                    .fontWeight(FontWeight.Medium)
+                    .fontColor($r('app.color.design_text_primary'))
+                  Blank()
+                  Text(`${this.vm.fontSize} fp`)
+                    .fontSize(13)
+                    .fontColor($r('app.color.design_accent'))
+                    .margin({ right: 4 })
+                }
+                .width('100%')
+
+                Slider({
+                  value: this.vm.fontSize,
+                  min: 12,
+                  max: 28,
+                  step: 1
+                })
+                  .selectedColor($r('app.color.design_accent'))
+                  .trackColor($r('app.color.design_elevated'))
+                  .blockColor($r('app.color.design_accent'))
+                  .width('100%')
+                  .margin({ top: 6 })
+                  .onChange((value: number) => {
+                    this.vm.setFontSize(Math.round(value));
+                  })
+
+                Divider()
+                  .color($r('app.color.design_divider'))
+                  .margin({ top: 10, bottom: 10 })
+
+                Row() {
+                  Text($r('app.string.settings_theme'))
+                    .fontSize(15)
+                    .fontWeight(FontWeight.Medium)
+                    .fontColor($r('app.color.design_text_primary'))
+                  Blank()
+                  Row({ space: 6 }) {
+                    this.themeChip($r('app.string.settings_theme_system'),
+                      ConfigurationConstant.ColorMode.COLOR_MODE_NOT_SET)
+                    this.themeChip($r('app.string.settings_theme_light'),
+                      ConfigurationConstant.ColorMode.COLOR_MODE_LIGHT)
+                    this.themeChip($r('app.string.settings_theme_dark'),
+                      ConfigurationConstant.ColorMode.COLOR_MODE_DARK)
+                  }
+                }
+                .width('100%')
+                .alignItems(VerticalAlign.Center)
               }
               .width('100%')
+              .padding(16)
+              .borderRadius(20)
+              .backgroundColor($r('app.color.design_surface_solid'))
+              .border({ width: 1, color: $r('app.color.design_stroke') })
 
-              Slider({
-                value: this.vm.fontSize,
-                min: 12,
-                max: 28,
-                step: 1
-              })
-                .selectedColor($r('app.color.design_accent'))
-                .trackColor($r('app.color.design_elevated'))
-                .blockColor($r('app.color.design_accent'))
+              Text($r('app.string.settings_about'))
+                .fontSize(12)
+                .fontColor($r('app.color.design_text_secondary'))
+                .lineHeight(19)
                 .width('100%')
-                .margin({ top: 6 })
-                .onChange((value: number) => {
-                  this.vm.setFontSize(Math.round(value));
-                })
+                .margin({ top: 16 })
+            } else {
+              this.sectionLabel($r('app.string.settings_maintenance'))
 
-              Row() {
-                Text($r('app.string.settings_theme'))
-                  .fontSize(15)
-                  .fontColor($r('app.color.design_text_primary'))
-                Blank()
-                Row({ space: 6 }) {
-                  this.themeChip($r('app.string.settings_theme_system'),
-                    ConfigurationConstant.ColorMode.COLOR_MODE_NOT_SET)
-                  this.themeChip($r('app.string.settings_theme_light'),
-                    ConfigurationConstant.ColorMode.COLOR_MODE_LIGHT)
-                  this.themeChip($r('app.string.settings_theme_dark'),
-                    ConfigurationConstant.ColorMode.COLOR_MODE_DARK)
+              Column() {
+                this.groupedRow($r('sys.symbol.arrow_clockwise'), $r('app.string.settings_reindex'),
+                  '', (): void => {
+                    this.vm.rescanVault();
+                    this.toast($r('app.string.msg_reindex_done'));
+                  })
+              }
+              .width('100%')
+              .borderRadius(20)
+              .backgroundColor($r('app.color.design_surface_solid'))
+              .border({ width: 1, color: $r('app.color.design_stroke') })
+              .clip(true)
+
+              this.sectionLabel($r('app.string.backup_section'))
+
+              Column() {
+                this.groupedRow($r('sys.symbol.doc_zipper'), $r('app.string.backup_create'),
+                  '', (): void => {
+                    this.vm.createBackup().then((name: string): void => {
+                      if (name.length > 0) {
+                        this.toast($r('app.string.msg_backup_created'));
+                      }
+                    });
+                  })
+
+                if (this.vm.backups.length === 0) {
+                  this.insetDivider()
+                  Text($r('app.string.backup_empty'))
+                    .fontSize(12)
+                    .fontColor($r('app.color.design_text_secondary'))
+                    .width('100%')
+                    .padding({ left: 16, right: 16, top: 12, bottom: 12 })
+                } else {
+                  ForEach(this.vm.backups, (item: VaultBackupInfo) => {
+                    Column() {
+                      this.insetDivider()
+                      this.backupRow(item)
+                    }
+                    .width('100%')
+                  }, (item: VaultBackupInfo) => item.name)
                 }
               }
               .width('100%')
-              .alignItems(VerticalAlign.Center)
-              .margin({ top: 10 })
+              .borderRadius(20)
+              .backgroundColor($r('app.color.design_surface_solid'))
+              .border({ width: 1, color: $r('app.color.design_stroke') })
+              .clip(true)
             }
-            .width('100%')
-            .padding(14)
-            .borderRadius(18)
-            .backgroundColor($r('app.color.design_elevated'))
-            .margin({ top: 2 })
-
-            this.sectionLabel($r('app.string.tab_vaults'))
-
-            this.actionRow($r('sys.symbol.folder'), $r('app.string.settings_vault_manage'),
-              this.vm.currentVault.name, (): void => {
-                this.onOpenVaultManager();
-              })
-
-            this.sectionLabel($r('app.string.settings_maintenance'))
-
-            this.actionRow($r('sys.symbol.arrow_clockwise'), $r('app.string.settings_reindex'),
-              '', (): void => {
-                this.vm.rescanVault();
-                this.toast($r('app.string.msg_reindex_done'));
-              })
-
-            this.actionRow($r('sys.symbol.doc_zipper'), $r('app.string.action_export_vault'),
-              '', (): void => {
-                this.onExport();
-              })
-
-            this.actionRow($r('sys.symbol.arrow_clockwise'), $r('app.string.sync_title'),
-              '', (): void => {
-                this.onOpenSync();
-              })
-
-            this.sectionLabel($r('app.string.backup_section'))
-
-            this.actionRow($r('sys.symbol.doc_zipper'), $r('app.string.backup_create'),
-              '', (): void => {
-                this.vm.createBackup().then((name: string): void => {
-                  if (name.length > 0) {
-                    this.toast($r('app.string.msg_backup_created'));
-                  }
-                });
-              })
-
-            if (this.vm.backups.length === 0) {
-              Text($r('app.string.backup_empty'))
-                .fontSize(12)
-                .fontColor($r('app.color.design_text_secondary'))
-                .width('100%')
-                .padding({ left: 4, top: 4, bottom: 4 })
-            } else {
-              Column({ space: 6 }) {
-                ForEach(this.vm.backups, (item: VaultBackupInfo) => {
-                  this.backupRow(item)
-                }, (item: VaultBackupInfo) => item.name)
-              }
-              .width('100%')
-              .margin({ top: 4 })
-            }
-
-            Text($r('app.string.settings_about'))
-              .fontSize(12)
-              .fontColor($r('app.color.design_text_secondary'))
-              .lineHeight(19)
-              .width('100%')
-              .margin({ top: 16 })
           }
           .width('100%')
           .alignItems(HorizontalAlign.Start)
           .padding({ bottom: 8 })
         }
-        .layoutWeight(1)
         .width('100%')
+        .flexShrink(1)
         .scrollBar(BarState.Off)
         .edgeEffect(EdgeEffect.Spring)
       }
-      .width('88%')
-      .height('76%')
-      .constraintSize({ maxWidth: 500 })
+      .width('90%')
+      .constraintSize({ maxWidth: 520, maxHeight: '80%' })
       .padding(20)
       .borderRadius(28)
-      .backgroundColor($r('app.color.design_surface_solid'))
+      .backgroundColor($r('app.color.design_bg'))
       .border({ width: 1, color: $r('app.color.design_stroke') })
       .shadow({ radius: 32, color: $r('app.color.design_shadow'), offsetY: 10 })
       .alignItems(HorizontalAlign.Start)
@@ -198,12 +210,12 @@ export struct SettingsSheet {
     Text(label)
       .fontSize(12)
       .fontWeight(this.vm.themeMode === mode ? FontWeight.Medium : FontWeight.Normal)
-      .fontColor(this.vm.themeMode === mode ? $r('app.color.design_on_accent') :
+      .fontColor(this.vm.themeMode === mode ? $r('app.color.design_surface_solid') :
         $r('app.color.design_text_secondary'))
-      .padding({ left: 10, right: 10, top: 5, bottom: 5 })
-      .borderRadius(12)
-      .backgroundColor(this.vm.themeMode === mode ? $r('app.color.design_accent') :
-        $r('app.color.design_surface_solid'))
+      .padding({ left: 12, right: 12, top: 6, bottom: 6 })
+      .borderRadius(14)
+      .backgroundColor(this.vm.themeMode === mode ? $r('app.color.design_text_primary') :
+        $r('app.color.design_elevated'))
       .onClick(() => {
         this.vm.setThemeMode(mode);
       })
@@ -217,12 +229,21 @@ export struct SettingsSheet {
       .fontWeight(FontWeight.Medium)
       .fontColor($r('app.color.design_text_secondary'))
       .width('100%')
+      .padding({ left: 6 })
       .margin({ top: 14, bottom: 6 })
   }
 
-  /** 操作行：图标 + 标题 + 右侧值。 */
+  /** 分组卡片内缩分割线。 */
   @Builder
-  actionRow(icon: Resource, label: ResourceStr, trailing: string, action: () => void) {
+  insetDivider() {
+    Divider()
+      .color($r('app.color.design_divider'))
+      .margin({ left: 48, right: 16 })
+  }
+
+  /** 分组卡片内操作行：图标 + 标题 + 右侧值 + 箭头。 */
+  @Builder
+  groupedRow(icon: Resource, label: ResourceStr, trailing: string, action: () => void) {
     Row({ space: 12 }) {
       SymbolGlyph(icon)
         .fontSize(18)
@@ -230,6 +251,7 @@ export struct SettingsSheet {
         .width(24)
       Text(label)
         .fontSize(15)
+        .fontWeight(FontWeight.Medium)
         .fontColor($r('app.color.design_text_primary'))
         .layoutWeight(1)
       if (trailing.length > 0) {
@@ -238,18 +260,16 @@ export struct SettingsSheet {
           .fontColor($r('app.color.design_text_secondary'))
           .maxLines(1)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
-          .constraintSize({ maxWidth: 140 })
-        SymbolGlyph($r('sys.symbol.chevron_right'))
-          .fontSize(14)
-          .fontColor([$r('app.color.design_text_secondary')])
+          .constraintSize({ maxWidth: 150 })
       }
+      SymbolGlyph($r('sys.symbol.chevron_right'))
+        .fontSize(14)
+        .fontColor([$r('app.color.design_text_secondary')])
+        .opacity(0.6)
     }
     .width('100%')
-    .height(48)
-    .padding({ left: 14, right: 14 })
-    .borderRadius(16)
-    .backgroundColor($r('app.color.design_elevated'))
-    .margin({ top: 4, bottom: 4 })
+    .height(52)
+    .padding({ left: 16, right: 16 })
     .onClick(() => {
       action();
     })
@@ -281,7 +301,7 @@ export struct SettingsSheet {
         .fontWeight(FontWeight.Medium)
         .fontColor($r('app.color.design_accent'))
         .padding({ left: 12, right: 12, top: 6, bottom: 6 })
-        .borderRadius(12)
+        .borderRadius(14)
         .backgroundColor($r('app.color.design_accent_weak'))
         .onClick(() => {
           this.vm.restoreBackup(item.name).then((ok: boolean): void => {
@@ -292,9 +312,7 @@ export struct SettingsSheet {
         })
     }
     .width('100%')
-    .padding({ left: 14, right: 12, top: 10, bottom: 10 })
-    .borderRadius(14)
-    .backgroundColor($r('app.color.design_elevated'))
+    .padding({ left: 16, right: 16, top: 10, bottom: 10 })
   }
 
   private formatBackupTime(ts: number): string {

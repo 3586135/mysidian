@@ -17,6 +17,8 @@ export struct FileTreeView {
   @Param selectedPath: string = '';
   @Param selectedBgColor: ResourceColor = $r('sys.color.ohos_id_color_component_activated');
   @Param selectedTextColor: ResourceColor = $r('sys.color.ohos_id_color_emphasize');
+  @Param textColor: ResourceColor = $r('sys.color.ohos_id_color_text_primary');
+  @Param secondaryTextColor: ResourceColor = $r('sys.color.ohos_id_color_text_secondary');
   @Event onSelect: (path: string, isDir: boolean) => void =
     (path: string, isDir: boolean): void => {};
   @Event onToggle: (path: string) => void = (path: string): void => {};
@@ -45,14 +47,14 @@ export struct FileTreeView {
             if (item.node.isDir) {
               SymbolGlyph(item.expanded ? $r('sys.symbol.chevron_down') : $r('sys.symbol.chevron_right'))
                 .fontSize(14)
-                .fontColor([$r('sys.color.ohos_id_color_text_secondary')])
+                .fontColor([this.secondaryTextColor])
                 .width(16)
                 .onClick(() => {
                   this.onToggle(item.node.path);
                 })
               SymbolGlyph($r('sys.symbol.folder'))
                 .fontSize(16)
-                .fontColor([$r('sys.color.ohos_id_color_text_secondary')])
+                .fontColor([this.secondaryTextColor])
                 .width(18)
                 .margin({ left: 2 })
             } else {
@@ -60,7 +62,7 @@ export struct FileTreeView {
                 SymbolGlyph($r('sys.symbol.doc_plaintext'))
                   .fontSize(16)
                   .fontColor([item.node.path === this.selectedPath ?
-                    this.selectedTextColor : $r('sys.color.ohos_id_color_text_secondary')])
+                    this.selectedTextColor : this.secondaryTextColor])
               }
               .width(36)
               .justifyContent(FlexAlign.End)
@@ -70,19 +72,24 @@ export struct FileTreeView {
               .fontSize(15)
               .fontWeight(item.node.isDir ? FontWeight.Medium : FontWeight.Normal)
               .fontColor(item.node.path === this.selectedPath ?
-                this.selectedTextColor : $r('sys.color.ohos_id_color_text_primary'))
+                this.selectedTextColor : this.textColor)
               .maxLines(1)
               .textOverflow({ overflow: TextOverflow.Ellipsis })
               .layoutWeight(1)
-            SymbolGlyph($r('sys.symbol.more'))
-              .fontSize(15)
-              .fontColor([$r('sys.color.ohos_id_color_text_secondary')])
-              .width(28)
-              .height(28)
+            Stack() {
+              Row({ space: 2.5 }) {
+                Column().width(3).height(3).borderRadius(1.5).backgroundColor(this.secondaryTextColor)
+                Column().width(3).height(3).borderRadius(1.5).backgroundColor(this.secondaryTextColor)
+                Column().width(3).height(3).borderRadius(1.5).backgroundColor(this.secondaryTextColor)
+              }
               .opacity(0.75)
-              .onClick(() => {
-                this.onItemAction(item.node.path, item.node.isDir);
-              })
+            }
+            .width(28)
+            .height(28)
+            .alignContent(Alignment.Center)
+            .onClick(() => {
+              this.onItemAction(item.node.path, item.node.isDir);
+            })
           }
           .width('100%')
           .height(38)
@@ -108,6 +115,7 @@ export struct FileTreeView {
     }
     .width('100%')
     .height('100%')
+    .cachedCount(12)
     .scrollBar(BarState.Auto)
     .padding({ left: 4, right: 4 })
   }

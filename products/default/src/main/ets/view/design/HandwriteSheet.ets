@@ -60,14 +60,20 @@ export struct HandwriteSheet {
             .onClick(() => {
               this.exportImage();
             })
-          Text($r('app.string.dialog_cancel'))
-            .fontSize(14)
-            .fontColor($r('app.color.design_text_secondary'))
-            .padding({ left: 12, right: 12, top: 6, bottom: 6 })
-            .margin({ left: 10 })
-            .onClick(() => {
-              this.onClose();
-            })
+          Stack() {
+            SymbolGlyph($r('sys.symbol.xmark'))
+              .fontSize(16)
+              .fontColor([$r('app.color.design_text_secondary')])
+          }
+          .width(32)
+          .height(32)
+          .borderRadius(16)
+          .backgroundColor($r('app.color.design_elevated'))
+          .alignContent(Alignment.Center)
+          .margin({ left: 8 })
+          .onClick(() => {
+            this.onClose();
+          })
         }
         .width('100%')
         .alignItems(VerticalAlign.Center)
@@ -78,6 +84,7 @@ export struct HandwriteSheet {
           .layoutWeight(1)
           .backgroundColor(Color.White)
           .borderRadius(16)
+          .border({ width: 1, color: $r('app.color.design_stroke') })
           .onReady((): void => {
             // 记录画布实际尺寸：清空与导出都必须覆盖整块画布。
             this.canvasWidth = this.context.width;

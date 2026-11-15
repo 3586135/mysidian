@@ -53,8 +53,9 @@ export struct MdWebFallback {
     const safe: string = this.html.replace(/<script[\s\S]*?<\/script>/gi, '');
     return '<!DOCTYPE html><html><head><meta name="viewport" content="width=device-width, ' +
       'initial-scale=1"><style>body{margin:0;padding:8px;font-size:15px;line-height:1.6;' +
-      'font-family:sans-serif;}img{max-width:100%;}@media (prefers-color-scheme: dark){' +
-      'body{color:#e6e6e6;background:#1b1b1b;}}' + this.extraStyle + '</style></head><body>' +
+      'font-family:sans-serif;color:#1D1B18;background:transparent;}img{max-width:100%;}' +
+      '@media (prefers-color-scheme: dark){body{color:#F5EFEA;background:#231F1E;}}' +
+      this.extraStyle + '</style></head><body>' +
       safe + '</body></html>';
   }
 }
