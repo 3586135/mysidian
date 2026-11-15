@@ -48,7 +48,7 @@
 - **阶段 6**（387fbc9）：删除 `pages/Index.ets` 与 8 个已替换旧组件（CalendarPanel/CommandPalette/HandwritePanel/QuickSwitcher/RecentNotesPanel/SearchOverlay/SettingsOverlay/SyncSettings）；`main_pages.json` 只留 DesignIndex；外部启动参数迁移至 DesignIndex（`handleLaunchParams`：openPath/expandPath/action→工作台或全局浮层）。**保留** `view/NoteInfoPanel.ets` + `GraphView.ets`——design 层 `NoteInfoSheet` 是其 Material 3 包装层（五页签数据引擎），后续如需彻底收编可把二者内联进 design。
 - **阶段 7**：验证与文档（本节）。
 
-**验证状态（2026-11-15，阶段 6 后）**：`devecocli build` 成功（24s）；三台模拟器（5555 Mate 90 Pro / 5559 Mate X7 / 5557 MatePad）签名包安装启动成功、Smoke PASS，截图像素分析 avgRGB≈245-247 且文件 235-346KB（浅色主题、内容丰富、非白屏）；faultlog 仅存 2026-11-11 旧 jscrash（重构前遗留），本轮零新增。深色模式运行时验证受阻：该模拟器镜像不支持 `persist.ace.darkmode` 参数（errNum 1002），settings 表无 dark/theme 键，无法 hdc 强切；dark 色板正确性以构建期资源校验为准，待模拟器设置界面手动切换或真机补验。真机（无线调试）当日离线。
+**验证状态（2026-11-15，阶段 6 后）**：`devecocli build` 成功（24s）；三台模拟器（5555 Mate 90 Pro / 5559 Mate X7 / 5557 MatePad）签名包安装启动成功、Smoke PASS，截图像素分析 avgRGB≈245-247 且文件 235-346KB（浅色主题、内容丰富、非白屏）；faultlog 仅存 2026-11-11 旧 jscrash（重构前遗留），本轮零新增。真机（nova 14 Ultra，192.168.3.149:42073）签名包安装启动成功、Smoke PASS。深色模式运行时验证受阻：该模拟器镜像不支持 `persist.ace.darkmode` 参数（errNum 1002），settings 表无 dark/theme 键，无法 hdc 强切；dark 色板正确性以构建期资源校验为准，待模拟器设置界面手动切换或真机补验。
 
 关键机制：
 
