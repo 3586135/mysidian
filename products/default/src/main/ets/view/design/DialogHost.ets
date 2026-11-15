@@ -64,7 +64,8 @@ export struct DialogHost {
       return;
     }
     if (this.kind === DesignDialogKind.NEW_FOLDER) {
-      this.inputText = '';
+      this.inputText = this.vm.pendingFolderPrefix;
+      this.vm.pendingFolderPrefix = '';
       return;
     }
     if (this.kind === DesignDialogKind.CREATE_VAULT) {
@@ -124,7 +125,7 @@ export struct DialogHost {
               .height(40)
               .fontSize(16)
               .backgroundColor($r('app.color.design_accent'))
-              .fontColor(Color.White)
+              .fontColor($r('app.color.design_on_accent'))
               .layoutWeight(1)
               .onClick(() => {
                 this.confirm();

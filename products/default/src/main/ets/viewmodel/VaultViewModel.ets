@@ -1,4 +1,4 @@
-import { common, Want } from '@kit.AbilityKit';
+import { common, ConfigurationConstant, Want } from '@kit.AbilityKit';
 import { UIContext } from '@kit.ArkUI';
 import { preferences } from '@kit.ArkData';
 import { BusinessError } from '@kit.BasicServicesKit';
@@ -8,7 +8,7 @@ import { BacklinkItem, CalendarDay, DataViewEntry, DataViewResult, DataViewTask,
   UnlinkedMention, VaultInfo } from '@ohos/domain';
 import { Logger } from '@ohos/common';
 import { DataViewQuery, FrontmatterSerializer, MarkdownParser, TaskMetadata } from '@ohos/markdown';
-import { AttachmentResolver, BlockDao, DiffLine, FileHistory, FileStatInfo, HistorySnapshot,
+import { AttachmentResolver, BlockDao, DbHelper, DiffLine, FileHistory, FileStatInfo, HistorySnapshot,
   IndexPipeline, LinkDao, LinkRewriter, NoteDao, NoteResolver, PropDao, TagDao, TemplateEngine,
   TemplateRenderResult, VaultManager, VaultPath } from '@ohos/vault';
 import { AbilityContextHolder } from '../defaultability/AbilityContextHolder';
@@ -65,6 +65,8 @@ export class VaultViewModel {
   draftBuffer: string = '';
   /** 待应用的光标位置（模板渲染后的 {{cursor}} 位置，-1 表示无）。 */
   @Trace pendingCaret: number = -1;
+  /** 新建文件夹对话框预填路径前缀（在目录下新建子文件夹时使用）。 */
+  pendingFolderPrefix: string = '';
   /** 信息面板。 */
   @Trace infoTabIndex: number = 0;
   @Trace outline: OutlineEntry[] = [];
@@ -73,13 +75,16 @@ export class VaultViewModel {
   @Trace noteProperties: MdProperty[] = [];
   /** 正文字号。 */
   @Trace fontSize: number = 16;
+  @Trace themeMode: number = ConfigurationConstant.ColorMode.COLOR_MODE_NOT_SET;
 
   /** 反向链接面板增强：未链接提及。 */
   @Trace unlinked: UnlinkedMention[] = [];
   /** 仓库内全部标签（# 标签补全候选）。 */
   @Trace allTagNames: string[] = [];
-  /** 局部关系图谱数据。 */
+  /** 局部关系图谱数据（信息面板页签用）。 */
   @Trace graph: GraphData = new GraphData();
+  /** 整库关系图谱数据（首页图谱页用）：仓库内全部笔记为节点、链接为边。 */
+  @Trace vaultGraph: GraphData = new GraphData();
   /** 分屏第二栏的笔记路径（宽屏分屏双开）。 */
   @Trace secondaryPath: string = '';
   @Trace secondaryContent: string = '';
@@ -223,6 +228,31 @@ export class VaultViewModel {
     }
   }
 
+  /** 更新主题模式（-1 跟随系统 / 0 深色 / 1 浅色）并持久化。 */
+  public async setThemeMode(mode: number): Promise<void> {
+    this.themeMode = mode;
+    this.applyThemeMode(mode);
+    await this.writePref('themeMode', mode);
+  }
+
+  private applyThemeMode(mode: number): void {
+    const context: common.Context | null = this.context;
+    if (context === null) {
+      return;
+    }
+    try {
+      if (mode === ConfigurationConstant.ColorMode.COLOR_MODE_DARK) {
+        context.getApplicationContext().setColorMode(ConfigurationConstant.ColorMode.COLOR_MODE_DARK);
+      } else if (mode === ConfigurationConstant.ColorMode.COLOR_MODE_LIGHT) {
+        context.getApplicationContext().setColorMode(ConfigurationConstant.ColorMode.COLOR_MODE_LIGHT);
+      } else {
+        context.getApplicationContext().setColorMode(ConfigurationConstant.ColorMode.COLOR_MODE_NOT_SET);
+      }
+    } catch (error) {
+      LOG.warn('apply theme mode failed');
+    }
+  }
+
   private async loadPreferences(context: common.Context): Promise<void> {
     try {
       const store: preferences.Preferences = await preferences.getPreferences(context,
@@ -230,6 +260,12 @@ export class VaultViewModel {
       const value: preferences.ValueType = await store.get('fontSize', 16);
       if (typeof value === 'number') {
         this.fontSize = value;
+      }
+      const theme: preferences.ValueType = await store.get('themeMode',
+        ConfigurationConstant.ColorMode.COLOR_MODE_NOT_SET);
+      if (typeof theme === 'number') {
+        this.themeMode = theme;
+        this.applyThemeMode(theme);
       }
     } catch (error) {
       LOG.error('load preferences failed');
@@ -258,6 +294,8 @@ export class VaultViewModel {
     await this.refreshTree();
     await this.ensureIndexed(vault);
     await this.loadRecentNotes();
+    // 整库图谱随仓库切换刷新（首页图谱页数据源）。
+    await this.loadVaultGraph();
   }
 
   /** 为尚未建立索引的笔记补建索引。 */
@@ -286,6 +324,10 @@ export class VaultViewModel {
     for (const path of files) {
       fileSet[path] = true;
     }
+    // FTS 自愈：历史版本存在 FTS 行缺失（ftsReady 误判 false 期间未写入），
+    // 对缺失行强制重建，保证全文检索可命中全部笔记。
+    const ftsReady: boolean = DbHelper.isFtsReady();
+    const ftsIds: Set<number> = ftsReady ? await NoteDao.listFtsRowIds(context) : new Set<number>();
     let changed: number = 0;
     for (const path of files) {
       if (!path.toLowerCase().endsWith('.md')) {
@@ -302,7 +344,8 @@ export class VaultViewModel {
         continue;
       }
       const blockCount: number = await BlockDao.countOfNote(context, row.id);
-      if (blockCount === 0 || stat.mtime !== row.mtime || stat.size !== row.size) {
+      if (blockCount === 0 || stat.mtime !== row.mtime || stat.size !== row.size ||
+        (ftsReady && !ftsIds.has(row.id))) {
         await this.indexNoteByPath(vault, path);
         changed++;
       }
@@ -1401,6 +1444,59 @@ export class VaultViewModel {
     this.graph = await this.localGraph(this.selectedPath);
   }
 
+  /** 加载整库关系图谱（首页图谱页）。 */
+  public async loadVaultGraph(): Promise<void> {
+    this.vaultGraph = await this.buildVaultGraph();
+  }
+
+  /**
+   * 构建整库关系图谱：仓库内全部笔记为节点，笔记间链接为边。
+   * 孤立笔记（无任何链接）也作为节点呈现；同一对笔记间多条链接只画一条边。
+   */
+  private async buildVaultGraph(): Promise<GraphData> {
+    const context: common.Context | null = this.context;
+    const graph: GraphData = new GraphData();
+    if (context === null) {
+      return graph;
+    }
+    const notes: NoteRow[] = await NoteDao.listByVault(context, this.currentVault.id);
+    const idToPath: Map<number, string> = new Map<number, string>();
+    const nodeMap: Map<string, GraphNode> = new Map<string, GraphNode>();
+    for (const note of notes) {
+      const node: GraphNode = new GraphNode();
+      node.path = note.path;
+      node.title = note.title.length > 0 ? note.title : this.noteDisplayName(note.path);
+      idToPath.set(note.id, note.path);
+      nodeMap.set(note.path, node);
+      graph.nodes.push(node);
+    }
+    const links: LinkRef[] = await LinkDao.listByVault(context, this.currentVault.id);
+    const edgeKeys: Set<string> = new Set<string>();
+    for (const link of links) {
+      if (link.targetPath.length === 0) {
+        continue;
+      }
+      const fromPath: string | undefined = idToPath.get(link.sourceNoteId);
+      if (fromPath === undefined) {
+        continue;
+      }
+      // 目标不在本仓库（跨仓库 / 未解析链接）：不出边，仅保留源节点。
+      if (!nodeMap.has(link.targetPath)) {
+        continue;
+      }
+      const key: string = `${fromPath}\u0001${link.targetPath}`;
+      if (edgeKeys.has(key)) {
+        continue;
+      }
+      edgeKeys.add(key);
+      const edge: GraphEdge = new GraphEdge();
+      edge.from = fromPath;
+      edge.to = link.targetPath;
+      graph.edges.push(edge);
+    }
+    return graph;
+  }
+
   /** 打开分屏第二栏的笔记。 */
   public async openSecondary(path: string): Promise<void> {
     const manager: VaultManager | null = this.manager;
@@ -1554,8 +1650,8 @@ export class VaultViewModel {
     LOG.info(`tag selected: ${tag}`);
   }
 
-  /** 在当前仓库根目录新建空笔记并打开。 */
-  public async createNote(): Promise<void> {
+  /** 在当前仓库根目录（或指定子目录）新建空笔记并打开。 */
+  public async createNote(folder: string = ''): Promise<void> {
     const manager: VaultManager | null = this.manager;
     if (manager === null) {
       return;
@@ -1565,13 +1661,17 @@ export class VaultViewModel {
     const stamp: string = `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}` +
       `${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
     const title: string = `未命名-${stamp}`;
-    // 存在默认模板时套用模板。
-    const template: string = await this.findTemplate(['默认', 'default', 'Default', '笔记']);
-    if (template.length > 0) {
-      await this.createNoteWithTemplate(template, title);
-      return;
+    if (folder.length === 0) {
+      // 根目录存在默认模板时套用模板。
+      const template: string = await this.findTemplate(['默认', 'default', 'Default', '笔记']);
+      if (template.length > 0) {
+        await this.createNoteWithTemplate(template, title);
+        return;
+      }
+    } else if (!this.expandedPaths.includes(folder)) {
+      this.expandedPaths.push(folder);
     }
-    const path: string = `${title}.md`;
+    const path: string = folder.length > 0 ? `${folder}/${title}.md` : `${title}.md`;
     await manager.writeNote(this.currentVault, path, '');
     await manager.refreshNote(this.currentVault, path);
     await this.refreshTree();
@@ -1689,26 +1789,24 @@ export class VaultViewModel {
     for (const item of backlinks) {
       linked.add(item.sourcePath);
     }
-    for (const file of this.vaultFiles) {
-      if (!VaultPath.isMarkdown(file) || file === path || linked.has(file)) {
-        continue;
+    const hits: Map<string, string> = await BlockDao.findMentions(context,
+      this.currentVault.id, title, path);
+    hits.forEach((blockText: string, file: string): void => {
+      if (!VaultPath.isMarkdown(file) || linked.has(file)) {
+        return;
       }
-      const content: string = await manager.readNote(this.currentVault, file);
-      if (content.length === 0) {
-        continue;
-      }
-      const index: number = content.indexOf(title);
+      const index: number = blockText.indexOf(title);
       if (index < 0) {
-        continue;
+        return;
       }
       const item: UnlinkedMention = new UnlinkedMention();
       item.path = file;
       item.title = this.noteDisplayName(file);
       const start: number = Math.max(0, index - 20);
-      const end: number = Math.min(content.length, index + title.length + 20);
-      item.context = content.substring(start, end).replace(/\n/g, ' ');
+      const end: number = Math.min(blockText.length, index + title.length + 20);
+      item.context = blockText.substring(start, end).replace(/\n/g, ' ');
       items.push(item);
-    }
+    });
     return items;
   }
 
@@ -2039,6 +2137,7 @@ export class VaultViewModel {
           await this.selectVault(this.vaults[0]);
         } else {
           this.currentVault = new VaultInfo();
+          await this.loadVaultGraph();
         }
       }
     } finally {
@@ -2062,6 +2161,8 @@ export class VaultViewModel {
     }
     await this.refreshTree();
     await this.refreshNoteInfo();
+    // 索引重建后链接关系可能变化，同步刷新整库图谱。
+    await this.loadVaultGraph();
   }
 
   private async refreshNoteMeta(): Promise<void> {

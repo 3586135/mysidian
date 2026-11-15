@@ -81,7 +81,7 @@ export struct VaultManagerSheet {
             .fontSize(14)
             .layoutWeight(1)
             .backgroundColor($r('app.color.design_accent'))
-            .fontColor(Color.White)
+            .fontColor($r('app.color.design_on_accent'))
             .onClick(() => {
               this.onCreateVault();
             })
@@ -148,7 +148,7 @@ export struct VaultManagerSheet {
             .height(32)
             .fontSize(13)
             .backgroundColor($r('app.color.design_accent'))
-            .fontColor(Color.White)
+            .fontColor($r('app.color.design_on_accent'))
             .onClick(() => {
               this.openVault(vault);
             })

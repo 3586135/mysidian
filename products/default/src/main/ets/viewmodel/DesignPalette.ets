@@ -7,11 +7,14 @@ import { resourceManager } from '@kit.LocalizationKit';
  * 把 ARGB 整数转为 '#RRGGBB' 字符串，深浅色切换后重新调用即得新模式色值。
  */
 export class DesignPalette {
+  /** 资源解析失败时的中性灰兜底色。 */
+  public static readonly FALLBACK: string = '#808080';
+
   /** 颜色资源名集合（与各 resources 目录下 element 里 color.json 的 design_ 前缀项对应）。 */
   public static readonly NAMES: string[] = [
     'design_bg', 'design_surface', 'design_surface_solid', 'design_elevated',
     'design_text_primary', 'design_text_secondary', 'design_accent', 'design_accent_weak',
-    'design_stroke', 'design_divider', 'design_dim', 'design_shadow'
+    'design_stroke', 'design_divider', 'design_dim', 'design_shadow', 'design_on_accent'
   ];
 
   /** 按 ARGB 整数生成 '#RRGGBB' 字符串（忽略 alpha 通道）。 */
@@ -38,7 +41,7 @@ export class DesignPalette {
       const argb: number = mgr.getColorByNameSync(name);
       return DesignPalette.hex(argb);
     } catch (error) {
-      return '#808080';
+      return DesignPalette.FALLBACK;
     }
   }
 

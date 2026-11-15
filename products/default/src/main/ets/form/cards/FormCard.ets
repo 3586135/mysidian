@@ -15,25 +15,25 @@ struct FormCard {
         Text('MySidian')
           .fontSize(14)
           .fontWeight(FontWeight.Bold)
-          .fontColor('#1b1b1b')
+          .fontColor($r('app.color.design_text_primary'))
           .layoutWeight(1)
         Text('速记')
           .fontSize(9)
-          .fontColor('#8a8a8a')
+          .fontColor($r('app.color.design_text_secondary'))
       }
       .width('100%')
       .alignItems(VerticalAlign.Center)
 
       Text('今日日记与待办任务已同步到桌面卡片')
         .fontSize(11)
-        .fontColor('#4a4a4a')
+        .fontColor($r('app.color.design_text_primary'))
         .maxLines(2)
         .width('100%')
         .margin({ top: 6 })
 
       Text('打开应用可查看完整内容')
         .fontSize(10)
-        .fontColor('#8a8a8a')
+        .fontColor($r('app.color.design_text_secondary'))
         .width('100%')
         .margin({ top: 4 })
     }
@@ -41,6 +41,6 @@ struct FormCard {
     .height('100%')
     .alignItems(HorizontalAlign.Start)
     .padding(10)
-    .backgroundColor('#f5f5f5')
+    .backgroundColor($r('app.color.design_bg'))
   }
 }

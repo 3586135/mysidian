@@ -65,7 +65,7 @@ export struct QuickNoteSheet {
             .height(40)
             .fontSize(16)
             .backgroundColor($r('app.color.design_accent'))
-            .fontColor(Color.White)
+            .fontColor($r('app.color.design_on_accent'))
             .layoutWeight(1)
             .margin({ left: 12 })
             .onClick(() => {

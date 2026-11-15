@@ -113,6 +113,10 @@
       "value": "#59000000"
     },
     {
+      "name": "design_on_accent",
+      "value": "#141211"
+    },
+    {
       "name": "design_danger",
       "value": "#FF6B5E"
     }

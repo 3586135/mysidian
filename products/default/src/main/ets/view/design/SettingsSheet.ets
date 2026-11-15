@@ -1,3 +1,4 @@
+import { ConfigurationConstant } from '@kit.AbilityKit';
 import { VaultViewModel } from '../../viewmodel/VaultViewModel';
 
 /**
@@ -32,16 +33,19 @@ export struct SettingsSheet {
             .fontWeight(FontWeight.Medium)
             .fontColor($r('app.color.design_text_primary'))
             .layoutWeight(1)
-          SymbolGlyph($r('sys.symbol.xmark'))
-            .fontSize(16)
-            .fontColor([$r('app.color.design_text_secondary')])
-            .width(32)
-            .height(32)
-            .borderRadius(16)
-            .backgroundColor($r('app.color.design_elevated'))
-            .onClick(() => {
-              this.onClose();
-            })
+          Row() {
+            SymbolGlyph($r('sys.symbol.xmark'))
+              .fontSize(16)
+              .fontColor([$r('app.color.design_text_secondary')])
+          }
+          .width(32)
+          .height(32)
+          .borderRadius(16)
+          .backgroundColor($r('app.color.design_elevated'))
+          .justifyContent(FlexAlign.Center)
+          .onClick(() => {
+            this.onClose();
+          })
         }
         .width('100%')
         .margin({ bottom: 8 })
@@ -77,6 +81,24 @@ export struct SettingsSheet {
                 .onChange((value: number) => {
                   this.vm.setFontSize(Math.round(value));
                 })
+
+              Row() {
+                Text($r('app.string.settings_theme'))
+                  .fontSize(15)
+                  .fontColor($r('app.color.design_text_primary'))
+                Blank()
+                Row({ space: 6 }) {
+                  this.themeChip($r('app.string.settings_theme_system'),
+                    ConfigurationConstant.ColorMode.COLOR_MODE_NOT_SET)
+                  this.themeChip($r('app.string.settings_theme_light'),
+                    ConfigurationConstant.ColorMode.COLOR_MODE_LIGHT)
+                  this.themeChip($r('app.string.settings_theme_dark'),
+                    ConfigurationConstant.ColorMode.COLOR_MODE_DARK)
+                }
+              }
+              .width('100%')
+              .alignItems(VerticalAlign.Center)
+              .margin({ top: 10 })
             }
             .width('100%')
             .padding(14)
@@ -126,7 +148,7 @@ export struct SettingsSheet {
         .edgeEffect(EdgeEffect.Spring)
       }
       .width('88%')
-      .height('72%')
+      .height('76%')
       .constraintSize({ maxWidth: 500 })
       .padding(20)
       .borderRadius(28)
@@ -140,6 +162,23 @@ export struct SettingsSheet {
     }
     .width('100%')
     .height('100%')
+  }
+
+  /** 主题模式单选胶囊。 */
+  @Builder
+  themeChip(label: ResourceStr, mode: number) {
+    Text(label)
+      .fontSize(12)
+      .fontWeight(this.vm.themeMode === mode ? FontWeight.Medium : FontWeight.Normal)
+      .fontColor(this.vm.themeMode === mode ? $r('app.color.design_on_accent') :
+        $r('app.color.design_text_secondary'))
+      .padding({ left: 10, right: 10, top: 5, bottom: 5 })
+      .borderRadius(12)
+      .backgroundColor(this.vm.themeMode === mode ? $r('app.color.design_accent') :
+        $r('app.color.design_surface_solid'))
+      .onClick(() => {
+        this.vm.setThemeMode(mode);
+      })
   }
 
   /** 分组标题。 */

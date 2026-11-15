@@ -137,7 +137,7 @@ export struct SearchOverlay {
             Text(`#${ref.tag} (${ref.count})`)
               .fontSize(12)
               .fontWeight(this.searchVm.activeTag === ref.tag ? FontWeight.Medium : FontWeight.Normal)
-              .fontColor(this.searchVm.activeTag === ref.tag ? Color.White
+              .fontColor(this.searchVm.activeTag === ref.tag ? $r('app.color.design_on_accent')
                 : $r('app.color.design_accent'))
               .padding({ left: 12, right: 12, top: 5, bottom: 5 })
               .borderRadius(14)

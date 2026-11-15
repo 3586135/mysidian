@@ -36,6 +36,26 @@
 
 ## 近期变更（未发布，v0.4.0）
 
+### 审美、架构安全与生产力全方位优化（2026-11-15）
+
+- **安全与同步层加固**：
+  - **WebDAV 密码硬件级加密（Asset Store Kit）**：新增 `common/src/main/ets/utils/SecretStore.ets`（`@kit.AssetStoreKit`，`DEVICE_FIRST_UNLOCKED` 访问控制）；`SyncViewModel` 启动自动将旧版 `preferences` 明文密码迁移至 `SecretStore` 并清空明文残留（真机/模拟器 hilog 与 preferences XML 实测验证）。
+  - **证书校验风险警示与状态本地化**：`SyncSettingsSheet` 开启「跳过证书验证」时展示 `$r('app.color.design_danger')` 红色安全提示；`SyncViewModel.statusText` 全面接入 `$r('app.string.sync_status_*')`。
+  - **同步冲突处理中心（Conflict Center）**：`SyncSettingsSheet` 与 `SyncViewModel` 新增冲突逐条「对比差异」（内联展开 LCS 行级 Diff）、「保留本地」（清理冲突副本）、「采用远端」（先调用 `FileHistory.snapshot` 保护本地，再覆盖并重索引）。
+  - **同步本地哈希缓存（DB v4）与决策单测**：`DbHelper` 升至 v4（`sync_state` 新增 `size` 列，平滑 `ALTER TABLE` 迁移）；`SyncEngine.isHashReusable` 对 `mtime` 与 `size` 未变且早于上次同步 2 秒以上的文件直接复用基线 SHA-256，消除大库同步全量重算；抽出 `SyncEngine.decideLocalEntry` / `decideRemoteOnlyEntry` 纯函数并新增 `SyncEngine.test.ets`（9 项单测）。
+- **搜索、索引与大库性能**：
+  - **FTS5 自愈与 BM25 相关性排序**：`DbHelper` 每次打开探测 `FTS_V1`，`VaultViewModel.syncIndex` 对比 `listFtsRowIds` 自动补建缺失的全文索引；`SearchDao.searchByFts` 引入 `bm25(note_fts, 10.0, 1.0)` 标题高权重排序；`SearchDao.fillSnippets` 改为 200 条分批 `note_id IN (...)` + `ESCAPE '\'`，消除 `N+1` 查询。
+  - **未链接提及 RDB 化**：`BlockDao.findMentions` 直接在 `block` 表按 `LIKE ... ESCAPE '\'` 检索正文块，消除逐篇读取磁盘 Markdown 文件的开销。
+- **编辑器、文件树与阅读体验（完成原待办 #1/#2/#3/#4）**：
+  - **页内查找与替换**：新增 `FindReplaceUtils`、`FindReplaceBar` 与 `FindReplace.test.ets`（7 项单测）；编辑态顶栏放大镜按钮展开查找/替换栏，支持匹配计数、上下跳转（`setTextSelection` + `MenuPolicy.HIDE`）、单次替换与全部替换（自动记入撤销栈）。
+  - **文件树节点操作菜单**：`FileTreeView` 新增行尾 `⋯` 按钮与 `onItemAction` 回调；新增 `TreeItemMenuSheet`（文件夹：在此新建笔记 / 新建子文件夹；笔记：打开 / 分屏双开 / 重命名 / 移动到… / 移入回收站）。
+  - **图片全屏预览与双指缩放**：新增 `ImagePreviewOverlay`（`PinchGesture` 1x–5x 缩放、`PanGesture` 拖拽、双击 1x/2.5x 切换、返回键关闭），点击笔记内任意图片即可全屏查看。
+  - **全库图谱手势增强**：`DesignIndex` 图谱页支持双指捏合缩放（1x–16x）、单指平移、缩放按钮及按节点度数动态分级显示标签。
+- **审美、深浅色切换与无障碍**：
+  - **设计令牌与语义色收敛**：新增 `DesignTokens.ets`；新增 `design_on_accent`（浅色 `#FFFFFF` / 深色 `#141211`），清除 9 个视图文件中的 `Color.White` 与硬编码十六进制色值。
+  - **应用内主题模式切换**：`SettingsSheet` 新增「主题模式」（跟随系统 / 浅色 / 深色）胶囊选择器，联动 `ApplicationContext.setColorMode` 并持久化，解锁模拟器的深色模式实机验证。
+  - **无障碍基线**：为 `EditorPane` 与 `WorkspaceView` 核心纯图标按钮补齐 `.accessibilityText(...)`。
+
 ### 单页架构 Material 3 全量重构（2026-11-15，7 阶段）
 
 以 DesignIndex 为**唯一 @Entry**，旧 4160 行工作台 `pages/Index.ets` 全部功能等价迁移为**页内全屏子视图**，删除 router 跳转与旧组件群（净删 ~5400 行）。
@@ -151,10 +171,10 @@
 
 ### 待办（下一轮，按优先级）
 
-1. 文件树长按菜单：目录（在此新建/新建子目录/重命名/删除）、文件（重命名/移动/回收站/分屏打开）。
-2. 页内查找 & 替换（当前只有全库搜索）。
-3. 图片点击全屏预览 + 双指缩放；代码块语法着色。
-4. Dataview TABLE/LIST（`collectEntries`）、未链接提及（`unlinkedMentions`）、日历统计（`calendarMonth`）仍逐篇 `readNote` + `MarkdownParser.parse`，大仓库需改走 RDB 索引。
+1. ~~文件树长按菜单：目录（在此新建/新建子目录/重命名/删除）、文件（重命名/移动/回收站/分屏打开）。~~ → 已完成（`TreeItemMenuSheet` + `FileTreeView.onItemAction`）。
+2. ~~页内查找 & 替换（当前只有全库搜索）。~~ → 已完成（`FindReplaceBar` + `FindReplaceUtils`）。
+3. ~~图片点击全屏预览 + 双指缩放~~（已完成 `ImagePreviewOverlay`）；代码块语法着色（待办）。
+4. ~~未链接提及（`unlinkedMentions`）改走 RDB 索引~~（已完成 `BlockDao.findMentions`）；Dataview TABLE/LIST（`collectEntries`）、日历统计（`calendarMonth`）进一步 RDB 化（待办）。
 5. 书签（★ 置顶区）与全屏全局图谱入口。
 
 ### Dataview live TABLE/LIST + 勾选实时消失（2026-11-10，TODO #4/#5 完成）

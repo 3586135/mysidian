@@ -108,7 +108,7 @@ export struct CalendarSheet {
             .height(36)
             .fontSize(14)
             .backgroundColor($r('app.color.design_accent'))
-            .fontColor(Color.White)
+            .fontColor($r('app.color.design_on_accent'))
             .layoutWeight(1)
             .margin({ left: 12 })
             .onClick(() => {
@@ -152,7 +152,7 @@ export struct CalendarSheet {
       if (cell.openTasks > 0) {
         Text(`${cell.openTasks}`)
           .fontSize(9)
-          .fontColor(Color.White)
+          .fontColor($r('app.color.design_on_accent'))
           .width(14)
           .height(14)
           .borderRadius(7)

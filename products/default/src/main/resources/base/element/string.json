@@ -177,6 +177,114 @@
       "value": "不校验服务器证书（不安全，自签名服务器可开启）"
     },
     {
+      "name": "sync_status_idle",
+      "value": "尚未同步"
+    },
+    {
+      "name": "sync_status_syncing",
+      "value": "正在同步…"
+    },
+    {
+      "name": "sync_status_success",
+      "value": "同步完成（上传 %d · 下载 %d）"
+    },
+    {
+      "name": "sync_status_conflict",
+      "value": "发现 %d 个冲突，已保存冲突副本"
+    },
+    {
+      "name": "sync_status_failed",
+      "value": "同步失败：%s"
+    },
+    {
+      "name": "sync_status_failed_plain",
+      "value": "同步失败"
+    },
+    {
+      "name": "sync_skip_cert_warning",
+      "value": "已关闭证书校验：连接可能被窃听或篡改，仅建议在可信内网使用。可改为导入 CA 证书。"
+    },
+    {
+      "name": "find_placeholder",
+      "value": "查找"
+    },
+    {
+      "name": "replace_placeholder",
+      "value": "替换为"
+    },
+    {
+      "name": "replace_one",
+      "value": "替换"
+    },
+    {
+      "name": "replace_all",
+      "value": "全部替换"
+    },
+    {
+      "name": "find_toggle_replace",
+      "value": "展开或收起替换"
+    },
+    {
+      "name": "find_prev",
+      "value": "上一个匹配"
+    },
+    {
+      "name": "find_next",
+      "value": "下一个匹配"
+    },
+    {
+      "name": "find_close",
+      "value": "关闭查找"
+    },
+    {
+      "name": "find_open",
+      "value": "查找与替换"
+    },
+    {
+      "name": "msg_replace_done",
+      "value": "已替换 %d 处"
+    },
+    {
+      "name": "settings_theme",
+      "value": "主题模式"
+    },
+    {
+      "name": "settings_theme_system",
+      "value": "跟随系统"
+    },
+    {
+      "name": "settings_theme_light",
+      "value": "浅色"
+    },
+    {
+      "name": "settings_theme_dark",
+      "value": "深色"
+    },
+    {
+      "name": "sync_conflict_diff",
+      "value": "对比差异"
+    },
+    {
+      "name": "sync_conflict_keep_local",
+      "value": "保留本地"
+    },
+    {
+      "name": "sync_conflict_use_remote",
+      "value": "采用远端"
+    },
+    {
+      "name": "msg_conflict_resolved",
+      "value": "冲突已处理"
+    },
+    {
+      "name": "tree_new_note_here",
+      "value": "在此新建笔记"
+    },
+    {
+      "name": "tree_new_subfolder",
+      "value": "新建子文件夹"
+    },
+    {
       "name": "sync_now",
       "value": "立即同步"
     },
@@ -1014,7 +1122,11 @@
     },
     {
       "name": "design_graph_hint",
-      "value": "点按节点高亮，再次点按打开笔记"
+      "value": "点按节点聚焦，再点打开笔记；双指缩放，单指拖动平移"
+    },
+    {
+      "name": "design_graph_stats",
+      "value": "%d 个链接群簇 · %d 篇未链接笔记"
     },
     {
       "name": "design_editor_title",
@@ -1241,8 +1353,12 @@
       "value": "关系图谱"
     },
     {
+      "name": "design_graph_scope",
+      "value": "%s · %d 篇笔记"
+    },
+    {
       "name": "design_graph_empty",
-      "value": "先打开一篇笔记，这里会展示它的关联关系"
+      "value": "当前仓库暂无笔记"
     },
     {
       "name": "design_more_sync_configured",
