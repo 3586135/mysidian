@@ -1,4 +1,5 @@
-import { SyncConflict } from '@ohos/domain';
+import { SyncConflict, VaultInfo } from '@ohos/domain';
+import { DiffLine } from '@ohos/vault';
 import { SyncViewModel } from '../../viewmodel/SyncViewModel';
 
 /**
@@ -9,10 +10,13 @@ import { SyncViewModel } from '../../viewmodel/SyncViewModel';
 @ComponentV2
 export struct SyncSettingsSheet {
   @Param syncVm: SyncViewModel = new SyncViewModel();
+  @Param vault: VaultInfo = new VaultInfo();
   @Event onImportCert: () => void = (): void => {};
   @Event onAutoSyncChange: (value: boolean) => void = (value: boolean): void => {};
   @Event onSyncNow: () => void = (): void => {};
   @Event onClose: () => void = (): void => {};
+  @Local activeConflictPath: string = '';
+  @Local conflictDiffLines: DiffLine[] = [];
 
   build() {
     Stack() {
@@ -108,9 +112,11 @@ export struct SyncSettingsSheet {
                 Text($r('app.string.sync_skip_cert'))
                   .fontSize(14)
                   .fontColor($r('app.color.design_text_primary'))
-                Text($r('app.string.sync_skip_cert_desc'))
+                Text(this.syncVm.skipCertVerify ? $r('app.string.sync_skip_cert_warning') :
+                  $r('app.string.sync_skip_cert_desc'))
                   .fontSize(12)
-                  .fontColor($r('app.color.design_text_secondary'))
+                  .fontColor(this.syncVm.skipCertVerify ? $r('app.color.design_danger') :
+                    $r('app.color.design_text_secondary'))
                   .margin({ top: 2 })
               }
               .layoutWeight(1)
@@ -154,7 +160,7 @@ export struct SyncSettingsSheet {
               .height(42)
               .fontSize(15)
               .backgroundColor($r('app.color.design_accent'))
-              .fontColor(Color.White)
+              .fontColor($r('app.color.design_on_accent'))
               .margin({ top: 12, bottom: 8 })
               .onClick(() => {
                 this.onSyncNow();
@@ -178,19 +184,58 @@ export struct SyncSettingsSheet {
                   Column() {
                     Text(conflict.path)
                       .fontSize(13)
+                      .fontWeight(FontWeight.Medium)
                       .fontColor($r('app.color.design_text_primary'))
                       .width('100%')
                     Text(conflict.conflictPath)
                       .fontSize(12)
                       .fontColor($r('app.color.design_text_secondary'))
                       .width('100%')
+                      .margin({ top: 2 })
+                    Row({ space: 8 }) {
+                      this.conflictActionChip($r('app.string.sync_conflict_diff'), false, (): void => {
+                        this.toggleConflictDiff(conflict);
+                      })
+                      this.conflictActionChip($r('app.string.sync_conflict_keep_local'), false, (): void => {
+                        if (this.syncVm.resolveConflictKeepLocal(this.vault, conflict)) {
+                          this.activeConflictPath = '';
+                          this.toast($r('app.string.msg_conflict_resolved'));
+                        }
+                      })
+                      this.conflictActionChip($r('app.string.sync_conflict_use_remote'), true, (): void => {
+                        this.syncVm.resolveConflictUseRemote(this.vault, conflict).then((ok: boolean): void => {
+                          if (ok) {
+                            this.activeConflictPath = '';
+                            this.toast($r('app.string.msg_conflict_resolved'));
+                          }
+                        });
+                      })
+                    }
+                    .width('100%')
+                    .margin({ top: 8 })
+                    if (this.activeConflictPath === conflict.conflictPath) {
+                      Column() {
+                        ForEach(this.conflictDiffLines, (line: DiffLine, lineIndex: number) => {
+                          Text(`${line.marker}${line.text}`)
+                            .fontSize(11)
+                            .fontFamily('monospace')
+                            .fontColor(this.diffColor(line))
+                            .width('100%')
+                            .maxLines(1)
+                            .textOverflow({ overflow: TextOverflow.Ellipsis })
+                        }, (line: DiffLine, lineIndex: number): string => `cd_${lineIndex}_${line.marker}`)
+                      }
+                      .width('100%')
+                      .alignItems(HorizontalAlign.Start)
+                      .margin({ top: 6 })
+                    }
                   }
                   .width('100%')
                   .alignItems(HorizontalAlign.Start)
-                  .padding({ top: 6, bottom: 6, left: 10, right: 10 })
+                  .padding({ top: 8, bottom: 8, left: 10, right: 10 })
                   .borderRadius(10)
                   .backgroundColor($r('app.color.design_elevated'))
-                  .margin({ bottom: 4 })
+                  .margin({ bottom: 6 })
                 }, (conflict: SyncConflict): string =>
                 `conflict_${conflict.path}_${conflict.conflictPath}`)
               }
@@ -222,6 +267,46 @@ export struct SyncSettingsSheet {
     }
     .width('100%')
     .height('100%')
+  }
+
+  /** 冲突操作胶囊按钮。 */
+  @Builder
+  conflictActionChip(label: ResourceStr, primary: boolean, action: () => void) {
+    Text(label)
+      .fontSize(12)
+      .fontWeight(primary ? FontWeight.Medium : FontWeight.Normal)
+      .fontColor(primary ? $r('app.color.design_accent') : $r('app.color.design_text_primary'))
+      .padding({ left: 10, right: 10, top: 4, bottom: 4 })
+      .borderRadius(12)
+      .backgroundColor(primary ? $r('app.color.design_accent_weak') :
+        $r('app.color.design_surface_solid'))
+      .onClick(() => {
+        action();
+      })
+  }
+
+  private toggleConflictDiff(conflict: SyncConflict): void {
+    if (this.activeConflictPath === conflict.conflictPath) {
+      this.activeConflictPath = '';
+      this.conflictDiffLines = [];
+      return;
+    }
+    this.activeConflictPath = conflict.conflictPath;
+    this.conflictDiffLines = this.syncVm.diffConflict(this.vault, conflict);
+  }
+
+  private diffColor(line: DiffLine): ResourceColor {
+    if (line.marker === '+') {
+      return $r('app.color.design_accent');
+    }
+    if (line.marker === '-') {
+      return $r('app.color.design_danger');
+    }
+    return $r('app.color.design_text_secondary');
+  }
+
+  private toast(message: ResourceStr): void {
+    this.getUIContext().getPromptAction().showToast({ message: message });
   }
 
   /** 字段标签。 */

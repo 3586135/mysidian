@@ -12,7 +12,7 @@ export class DbHelper {
   private static store: relationalStore.RdbStore | null = null;
   /** 平台 SQLite 是否支持 FTS5（不支持时搜索退化为 LIKE 扫描） */
   private static ftsReady: boolean = false;
-  private static readonly CURRENT_VERSION: number = 3;
+  private static readonly CURRENT_VERSION: number = 4;
 
   private static readonly SCHEMA_V1: string[] = [
     'CREATE TABLE IF NOT EXISTS vault (' +
@@ -38,7 +38,7 @@ export class DbHelper {
     'note_id INTEGER, prop_key TEXT, prop_value TEXT, vtype TEXT, PRIMARY KEY(note_id, prop_key))',
     'CREATE TABLE IF NOT EXISTS sync_state (' +
     'vault_id INTEGER NOT NULL, path TEXT NOT NULL, file_hash TEXT, mtime INTEGER, remote_etag TEXT,' +
-    'server_tag TEXT, last_sync_at INTEGER, state TEXT, PRIMARY KEY(vault_id, path))'
+    'server_tag TEXT, last_sync_at INTEGER, state TEXT, size INTEGER DEFAULT 0, PRIMARY KEY(vault_id, path))'
   ];
 
   private static readonly FTS_V1: string =
@@ -74,9 +74,6 @@ export class DbHelper {
 
   private static async migrate(store: relationalStore.RdbStore): Promise<void> {
     const version: number = await DbHelper.readUserVersion(store);
-    if (version >= DbHelper.CURRENT_VERSION) {
-      return;
-    }
     if (version < 1) {
       for (const sql of DbHelper.SCHEMA_V1) {
         await store.executeSql(sql);
@@ -96,15 +93,30 @@ export class DbHelper {
       await store.executeSql(DbHelper.SCHEMA_V1[DbHelper.SCHEMA_V1.length - 1]);
       LOG.info('sync_state rebuilt for v3 (vault_id column)');
     }
+    if (version === 3) {
+      // v4：sync_state 增加 size 列，配合 mtime 作为本地内容哈希缓存键，
+      // 避免每轮同步对全部文件重算 sha256。保留现有基线，仅追加列。
+      try {
+        await store.executeSql('ALTER TABLE sync_state ADD COLUMN size INTEGER DEFAULT 0');
+        LOG.info('sync_state altered for v4 (size column)');
+      } catch (error) {
+        LOG.warn('sync_state size column already exists or alter failed');
+      }
+    }
+    // FTS 可用性探测必须每次启动执行：早于本修复的版本在 schema 已是最新时
+    // 提前返回，导致 ftsReady 恒为 false，全文搜索静默退化为 LIKE（只查标题）。
     try {
       await store.executeSql(DbHelper.FTS_V1);
       DbHelper.ftsReady = true;
-      LOG.info(`fts5 enabled, schema migrated to ${DbHelper.CURRENT_VERSION}`);
+      LOG.info('fts5 enabled');
     } catch (error) {
       DbHelper.ftsReady = false;
       LOG.warn('fts5 not available, search falls back to LIKE scan');
     }
-    await store.executeSql(`PRAGMA user_version = ${DbHelper.CURRENT_VERSION}`);
+    if (version < DbHelper.CURRENT_VERSION) {
+      await store.executeSql(`PRAGMA user_version = ${DbHelper.CURRENT_VERSION}`);
+      LOG.info(`schema migrated to ${DbHelper.CURRENT_VERSION}`);
+    }
   }
 
   private static async readUserVersion(store: relationalStore.RdbStore): Promise<number> {

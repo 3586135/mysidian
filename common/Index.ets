@@ -1,4 +1,5 @@
 export { Logger } from './src/main/ets/utils/Logger';
+export { SecretStore } from './src/main/ets/utils/SecretStore';
 
 export { BreakpointSystem, BreakPointType } from './src/main/ets/utils/BreakpointSystem';
 

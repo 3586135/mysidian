@@ -23,6 +23,18 @@ const PULL_CONCURRENCY: number = 1;
  * 另以服务器原生版本标识（serverTag，来自 PROPFIND 的 etag）检测
  * 清单协议之外的外部修改（如桌面 Obsidian 直接写入 WebDAV）。
  */
+export enum SyncDecision {
+  NONE = 'none',
+  PUSH_NEW = 'pushNew',
+  PUSH_CHANGED = 'pushChanged',
+  PULL_NEW = 'pullNew',
+  PULL_CHANGED = 'pullChanged',
+  PULL_EXTERNAL = 'pullExternal',
+  DELETE_REMOTE = 'deleteRemote',
+  CONFLICT = 'conflict',
+  CHECK_CONTENT = 'checkContent'
+}
+
 export class SyncEngine {
   private provider: SyncProvider | null = null;
   private status: SyncStatus = new SyncStatus();
@@ -50,8 +62,8 @@ export class SyncEngine {
     try {
       await provider.connect(config);
       const remoteEntries: RemoteEntry[] = await provider.list('');
-      const localEntries: RemoteEntry[] = await this.collectLocalEntries(vault);
       const baselines: Map<string, SyncBaseline> = await SyncStateDao.baselines(context, vault.id);
+      const localEntries: RemoteEntry[] = await this.collectLocalEntries(vault, baselines);
       LOG.info(`sync plan: local=${localEntries.length}, remote=${remoteEntries.length}`);
 
       const remoteMap: Map<string, RemoteEntry> = new Map<string, RemoteEntry>();
@@ -72,37 +84,25 @@ export class SyncEngine {
 
       for (const local of localEntries) {
         const remote: RemoteEntry | undefined = remoteMap.get(local.path);
-        if (remote === undefined) {
+        const baseline: SyncBaseline | undefined = baselines.get(local.path);
+        const decision: SyncDecision = SyncEngine.decideLocalEntry(
+          local, remote, baseline, SyncFileFilter.isMarkdown(local.path));
+        if (decision === SyncDecision.NONE) {
+          continue;
+        }
+        if (decision === SyncDecision.PUSH_NEW) {
           LOG.info(`sync push (new): ${local.path}`);
           await this.pushEntry(provider, vault, local, serverTagMap);
           this.status.pendingUploads++;
           continue;
         }
-        if (remote.etag === local.etag) {
-          // 内容与上次同步一致：以服务器版本标识兜底检测外部修改
-          // （清单哈希未变但桌面端直接改写了文件的场景）。
-          const baseline: SyncBaseline | undefined = baselines.get(local.path);
-          if (baseline !== undefined && baseline.serverTag.length > 0 &&
-            remote.serverTag.length > 0 && remote.serverTag !== baseline.serverTag) {
-            LOG.info(`sync pull (external change): ${local.path}`);
-            await this.pullEntry(provider, vault, remote, context);
-            this.status.pendingDownloads++;
-          }
+        if (decision === SyncDecision.PULL_EXTERNAL && remote !== undefined) {
+          LOG.info(`sync pull (external change): ${local.path}`);
+          await this.pullEntry(provider, vault, remote, context);
+          this.status.pendingDownloads++;
           continue;
         }
-        if (remote.etag.length === 0) {
-          // 远端哈希未知（PROPFIND 发现的清单外文件）：serverTag 与基线一致可跳过。
-          const unhashedBaseline: SyncBaseline | undefined = baselines.get(local.path);
-          if (unhashedBaseline !== undefined && unhashedBaseline.serverTag.length > 0 &&
-            remote.serverTag.length > 0 && unhashedBaseline.serverTag === remote.serverTag) {
-            continue;
-          }
-          // 否则按内容判断是否一致（二进制附件无法按文本比对，直接以本地为准）。
-          if (!SyncFileFilter.isMarkdown(local.path)) {
-            LOG.info(`sync conflict (unhashed binary): ${local.path}`);
-            await this.resolveConflict(provider, vault, local, remote, serverTagMap);
-            continue;
-          }
+        if (decision === SyncDecision.CHECK_CONTENT && remote !== undefined) {
           const remoteText: string = await provider.readRemote(local.path);
           const localAbs: string = `${vault.rootPath}/${local.path}`;
           const localText: string = fileIo.readTextSync(localAbs);
@@ -113,21 +113,22 @@ export class SyncEngine {
           await this.resolveConflict(provider, vault, local, remote, serverTagMap);
           continue;
         }
-        const baseline: SyncBaseline | undefined = baselines.get(local.path);
-        if (baseline !== undefined && baseline.fileHash === remote.etag) {
+        if (decision === SyncDecision.PUSH_CHANGED) {
           LOG.info(`sync push (local changed): ${local.path}`);
           await this.pushEntry(provider, vault, local, serverTagMap);
           this.status.pendingUploads++;
           continue;
         }
-        if (baseline !== undefined && baseline.fileHash === local.etag) {
+        if (decision === SyncDecision.PULL_CHANGED && remote !== undefined) {
           LOG.info(`sync pull (remote changed): ${remote.path}`);
           await this.pullEntry(provider, vault, remote, context);
           this.status.pendingDownloads++;
           continue;
         }
-        LOG.info(`sync conflict: ${local.path}`);
-        await this.resolveConflict(provider, vault, local, remote, serverTagMap);
+        if (remote !== undefined) {
+          LOG.info(`sync conflict: ${local.path}`);
+          await this.resolveConflict(provider, vault, local, remote, serverTagMap);
+        }
       }
 
       // 远端存在、本地没有的文件分两类：
@@ -139,7 +140,9 @@ export class SyncEngine {
       const pendingDeletes: RemoteEntry[] = [];
       for (const remote of remoteEntries) {
         if (!localMap.has(remote.path)) {
-          if (baselines.has(remote.path)) {
+          const remoteDecision: SyncDecision = SyncEngine.decideRemoteOnlyEntry(
+            baselines.has(remote.path));
+          if (remoteDecision === SyncDecision.DELETE_REMOTE) {
             pendingDeletes.push(remote);
           } else {
             pendingPulls.push(remote);
@@ -174,7 +177,7 @@ export class SyncEngine {
 
       // 拉取/推送完成后重新收集本地条目：新拉取的文件需进入清单与基线，
       // 否则清单回写会丢失它们，下次同步将重复处理。
-      const finalEntries: RemoteEntry[] = await this.collectLocalEntries(vault);
+      const finalEntries: RemoteEntry[] = await this.collectLocalEntries(vault, baselines);
       await provider.putManifest(finalEntries);
       // 基线回写整体事务化：中途失败不得留下「部分文件有基线、部分没有」
       // 的状态，否则缺基线文件下次同步会被误判为冲突。
@@ -184,6 +187,7 @@ export class SyncEngine {
         row.path = entry.path;
         row.fileHash = entry.etag;
         row.mtime = entry.mtime;
+        row.size = entry.size;
         row.etag = entry.etag;
         row.serverTag = serverTagMap.get(entry.path) ?? '';
         baselineRows.push(row);
@@ -208,8 +212,13 @@ export class SyncEngine {
     return this.status;
   }
 
-  /** 收集本地可同步文件（Markdown 笔记与图片附件）。 */
-  private async collectLocalEntries(vault: VaultInfo): Promise<RemoteEntry[]> {
+  /**
+   * 收集本地可同步文件（Markdown 笔记与图片附件）。
+   * 传入上次同步的基线时，mtime 与 size 均未变化的文件直接复用基线哈希，
+   * 不再重算 sha256（大库的主要同步耗时）。
+   */
+  private async collectLocalEntries(vault: VaultInfo,
+    baselines: Map<string, SyncBaseline> = new Map<string, SyncBaseline>()): Promise<RemoteEntry[]> {
     const entries: RemoteEntry[] = [];
     this.collectFiles(vault.rootPath, '', entries);
     const result: RemoteEntry[] = [];
@@ -220,6 +229,13 @@ export class SyncEngine {
       item.path = entry.path;
       item.size = stat.size;
       item.mtime = stat.mtime;
+      const cached: SyncBaseline | undefined = baselines.get(entry.path);
+      if (cached !== undefined && SyncEngine.isHashReusable(cached, stat.mtime, stat.size)) {
+        item.etag = cached.fileHash;
+        item.isDir = false;
+        result.push(item);
+        continue;
+      }
       // 全部文件（含二进制附件）统一 sha256 内容哈希。
       // 此前二进制用 mtime~size 做标识，但 mtime 是本机写入时间、跨设备必然
       // 不同，多设备间每轮同步都会互相判定变化而重复拉取同一张图片（乒乓）。
@@ -229,6 +245,62 @@ export class SyncEngine {
       result.push(item);
     }
     return result;
+  }
+
+  /**
+   * 判断基线哈希是否可复用：mtime（秒）与 size 均未变，且文件在上次同步完成
+   * 至少 2 秒前就已稳定——排除「同一秒内同尺寸改写」导致的缓存误命中。
+   */
+  public static isHashReusable(baseline: SyncBaseline, mtime: number, size: number): boolean {
+    if (baseline.fileHash.length === 0 || baseline.lastSyncAt <= 0 || baseline.size <= 0) {
+      return false;
+    }
+    if (baseline.mtime !== mtime || baseline.size !== size) {
+      return false;
+    }
+    return mtime + 2 <= Math.floor(baseline.lastSyncAt / 1000);
+  }
+
+  /**
+   * 对单个本地条目的三方决策（本地 / 远端 / 上次同步基线）。
+   */
+  public static decideLocalEntry(local: RemoteEntry, remote: RemoteEntry | undefined,
+    baseline: SyncBaseline | undefined, isMarkdown: boolean = true): SyncDecision {
+    if (remote === undefined) {
+      return SyncDecision.PUSH_NEW;
+    }
+    if (remote.etag === local.etag) {
+      if (baseline !== undefined && baseline.serverTag.length > 0 &&
+        remote.serverTag.length > 0 && remote.serverTag !== baseline.serverTag) {
+        return SyncDecision.PULL_EXTERNAL;
+      }
+      return SyncDecision.NONE;
+    }
+    if (remote.etag.length === 0) {
+      if (baseline !== undefined && baseline.serverTag.length > 0 &&
+        remote.serverTag.length > 0 && baseline.serverTag === remote.serverTag) {
+        return SyncDecision.NONE;
+      }
+      if (!isMarkdown) {
+        return SyncDecision.CONFLICT;
+      }
+      return SyncDecision.CHECK_CONTENT;
+    }
+    if (baseline !== undefined && baseline.fileHash === remote.etag) {
+      return SyncDecision.PUSH_CHANGED;
+    }
+    if (baseline !== undefined && baseline.fileHash === local.etag) {
+      return SyncDecision.PULL_CHANGED;
+    }
+    return SyncDecision.CONFLICT;
+  }
+
+  /**
+   * 对仅存在于远端（本地不存在）的条目做决策：
+   * 命中基线表示本地已删除，应删除远端；未命中基线表示远端新增，应拉取。
+   */
+  public static decideRemoteOnlyEntry(hasBaseline: boolean): SyncDecision {
+    return hasBaseline ? SyncDecision.DELETE_REMOTE : SyncDecision.PULL_NEW;
   }
 
   private collectFiles(fullPath: string, relativePath: string, output: RemoteEntry[]): void {
