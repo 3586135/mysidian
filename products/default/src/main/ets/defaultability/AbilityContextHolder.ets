@@ -8,4 +8,8 @@ import { common } from '@kit.AbilityKit';
 export class AbilityContextHolder {
   /** 当前 UIAbility 上下文；未注册时为 undefined。 */
   public static context: common.UIAbilityContext | undefined = undefined;
+  /** 桌面长按快捷方式待消费动作（quick_note / daily_note / search）。 */
+  public static pendingShortcutAction: string = '';
+  /** 热启动快捷方式动作回调（由 DesignIndex 注册）。 */
+  public static onShortcutAction: (() => void) | null = null;
 }

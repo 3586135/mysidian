@@ -13,6 +13,7 @@ import { DesignPalette } from '../viewmodel/DesignPalette';
 import { SearchViewModel } from '../viewmodel/SearchViewModel';
 import { SyncViewModel } from '../viewmodel/SyncViewModel';
 import { RecentNoteItem, RootFolderSummary, VaultViewModel } from '../viewmodel/VaultViewModel';
+import { AbilityContextHolder } from '../defaultability/AbilityContextHolder';
 
 const LOG: Logger = new Logger('DesignIndex');
 
@@ -350,10 +351,16 @@ struct DesignIndex {
     this.vm.init(context).then((): void => {
       this.initReady = true;
       this.handleLaunchParams();
+      this.consumeShortcutAction();
       this.vm.loadVaultGraph().then((): void => {
         this.rebuildGraphLayout();
       });
     });
+    AbilityContextHolder.onShortcutAction = (): void => {
+      if (this.initReady) {
+        this.consumeShortcutAction();
+      }
+    };
     // 深浅色切换：Canvas 色值需按新模式重绘
     this.darkModeListener = this.getUIContext().getMediaQuery().matchMediaSync('(dark-mode: true)');
     this.darkModeListener.on('change', (result: mediaquery.MediaQueryResult) => {
@@ -361,7 +368,14 @@ struct DesignIndex {
     });
   }
 
+  onPageShow(): void {
+    if (this.initReady) {
+      this.consumeShortcutAction();
+    }
+  }
+
   aboutToDisappear(): void {
+    AbilityContextHolder.onShortcutAction = null;
     this.stopAutoSyncTimer();
     if (this.mainWindow !== undefined) {
       this.mainWindow.off('keyboardHeightChange', this.keyboardCallback);
@@ -763,6 +777,24 @@ struct DesignIndex {
               .width('100%')
             }
 
+            if (this.vm.bookmarks.length > 0) {
+              Row({ space: 6 }) {
+                SymbolGlyph($r('sys.symbol.star_fill'))
+                  .fontSize(13)
+                  .fontColor([$r('app.color.design_accent')])
+                Text($r('app.string.bookmark_section'))
+                  .fontSize(13)
+                  .fontWeight(FontWeight.Medium)
+                  .fontColor($r('app.color.design_text_secondary'))
+              }
+              .width('100%')
+              .margin({ top: 4 })
+
+              ForEach(this.vm.bookmarks, (path: string) => {
+                this.bookmarkNoteCard(path)
+              }, (path: string) => path)
+            }
+
             Text($r('app.string.design_files_recent'))
               .fontSize(13)
               .fontWeight(FontWeight.Medium)
@@ -905,6 +937,48 @@ struct DesignIndex {
     .onClick(() => {
       this.openWorkspace({ 'openPath': item.path });
     })
+  }
+
+  @Builder
+  bookmarkNoteCard(path: string) {
+    Row({ space: 10 }) {
+      SymbolGlyph($r('sys.symbol.star_fill'))
+        .fontSize(16)
+        .fontColor([$r('app.color.design_accent')])
+      Column({ space: 2 }) {
+        Text(this.noteTitleFromPath(path))
+          .fontSize(15)
+          .fontWeight(FontWeight.Medium)
+          .fontColor($r('app.color.design_text_primary'))
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+        Text(path)
+          .fontSize(11)
+          .fontColor($r('app.color.design_text_secondary'))
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+      }
+      .alignItems(HorizontalAlign.Start)
+      .layoutWeight(1)
+      SymbolGlyph($r('sys.symbol.chevron_right'))
+        .fontSize(14)
+        .fontColor([$r('app.color.design_text_secondary')])
+        .opacity(0.6)
+    }
+    .width('100%')
+    .padding(14)
+    .borderRadius(16)
+    .backgroundColor($r('app.color.design_surface_solid'))
+    .border({ width: 1, color: $r('app.color.design_stroke') })
+    .onClick(() => {
+      this.openWorkspace({ 'openPath': path });
+    })
+  }
+
+  private noteTitleFromPath(path: string): string {
+    const slash: number = path.lastIndexOf('/');
+    const file: string = slash >= 0 ? path.substring(slash + 1) : path;
+    return file.endsWith('.md') ? file.substring(0, file.length - 3) : file;
   }
 
   // ==================== 搜索页 ====================
@@ -1795,6 +1869,32 @@ struct DesignIndex {
     }
     if (action === 'settings') {
       this.showSettingsPanel = true;
+    }
+  }
+
+  /** 消费桌面长按快捷方式注入的动作（quick_note / daily_note / search）。 */
+  private consumeShortcutAction(): void {
+    const action: string = AbilityContextHolder.pendingShortcutAction;
+    if (action.length === 0) {
+      return;
+    }
+    AbilityContextHolder.pendingShortcutAction = '';
+    if (action === 'quick_note') {
+      if (this.viewMode === DesignViewMode.WORKSPACE) {
+        this.exitWorkspace();
+      }
+      this.openQuickEditor('');
+      return;
+    }
+    if (action === 'daily_note') {
+      this.openDailyAndJump();
+      return;
+    }
+    if (action === 'search') {
+      if (this.viewMode === DesignViewMode.WORKSPACE) {
+        this.exitWorkspace();
+      }
+      this.changeTab(1);
     }
   }
 

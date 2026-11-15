@@ -1,4 +1,4 @@
-import { ConfigurationConstant, UIAbility } from '@kit.AbilityKit';
+import { AbilityConstant, ConfigurationConstant, UIAbility, Want } from '@kit.AbilityKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { KeyboardAvoidMode, window } from '@kit.ArkUI';
 import { AbilityContextHolder } from './AbilityContextHolder';
@@ -6,10 +6,30 @@ import { AbilityContextHolder } from './AbilityContextHolder';
 const DOMAIN = 0x0000;
 
 export default class DefaultAbility extends UIAbility {
-  onCreate(): void {
+  onCreate(want: Want, _launchParam: AbilityConstant.LaunchParam): void {
     hilog.info(DOMAIN, 'testTag', '%{public}s', 'Ability onCreate');
     // 注册 Ability 上下文，供视图模型启动外部链接（系统浏览器）。
     AbilityContextHolder.context = this.context;
+    this.extractShortcutWant(want);
+  }
+
+  onNewWant(want: Want, _launchParam: AbilityConstant.LaunchParam): void {
+    hilog.info(DOMAIN, 'testTag', '%{public}s', 'Ability onNewWant');
+    this.extractShortcutWant(want);
+  }
+
+  private extractShortcutWant(want: Want): void {
+    const params: Record<string, Object> | undefined = want.parameters;
+    if (params === undefined) {
+      return;
+    }
+    const actionRaw: Object | undefined = params['shortcutAction'];
+    if (typeof actionRaw === 'string' && actionRaw.length > 0) {
+      AbilityContextHolder.pendingShortcutAction = actionRaw;
+      if (AbilityContextHolder.onShortcutAction !== null) {
+        AbilityContextHolder.onShortcutAction();
+      }
+    }
   }
 
   onDestroy(): void {

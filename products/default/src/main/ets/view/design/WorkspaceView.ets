@@ -345,6 +345,7 @@ export struct WorkspaceView {
         TreeItemMenuSheet({
           targetPath: this.treeMenuPath,
           isDir: this.treeMenuIsDir,
+          bookmarked: this.vm.isBookmarked(this.treeMenuPath),
           onClose: (): void => {
             this.animAssign((): void => {
               this.treeMenuPath = '';
@@ -367,6 +368,11 @@ export struct WorkspaceView {
               this.showRightPanel = false;
             }
             this.vm.openSecondary(path);
+          },
+          onToggleBookmark: (path: string): void => {
+            this.vm.toggleBookmark(path).then((added: boolean): void => {
+              this.toast(added ? $r('app.string.msg_bookmark_added') : $r('app.string.msg_bookmark_removed'));
+            });
           },
           onRenameNote: (path: string): void => {
             this.vm.openNote(path).then((): void => {
@@ -409,6 +415,9 @@ export struct WorkspaceView {
       Row() {
         Column() {
           this.notesHeader()
+          if (this.vm.bookmarks.length > 0) {
+            this.bookmarkSection()
+          }
           FileTreeView({
             items: this.vm.treeItems,
             selectedPath: this.vm.selectedPath,
@@ -566,6 +575,9 @@ export struct WorkspaceView {
       SideBarContainer(SideBarContainerType.Overlay) {
         Column() {
           this.notesHeader()
+          if (this.vm.bookmarks.length > 0) {
+            this.bookmarkSection()
+          }
           FileTreeView({
             items: this.vm.treeItems,
             selectedPath: this.vm.selectedPath,
@@ -715,6 +727,18 @@ export struct WorkspaceView {
   @Builder
   notesHeader() {
     Row() {
+      Blank().width(0).height(0)
+        .keyboardShortcut('p', [ModifierKey.CTRL])
+        .onClick(() => {
+          this.animAssign((): void => {
+            this.showCommandPalette = true;
+          });
+        })
+      Blank().width(0).height(0)
+        .keyboardShortcut('o', [ModifierKey.CTRL])
+        .onClick(() => {
+          this.openQuickSwitcher();
+        })
       SymbolGlyph($r('sys.symbol.chevron_left'))
         .fontSize(22)
         .fontColor([$r('app.color.design_text_primary')])
@@ -744,6 +768,63 @@ export struct WorkspaceView {
     .height(56)
     .padding({ left: 12, right: 4 })
     .alignItems(VerticalAlign.Center)
+  }
+
+  /** 侧栏置顶书签列表。 */
+  @Builder
+  bookmarkSection() {
+    Column({ space: 2 }) {
+      Row({ space: 6 }) {
+        SymbolGlyph($r('sys.symbol.star_fill'))
+          .fontSize(12)
+          .fontColor([$r('app.color.design_accent')])
+        Text($r('app.string.bookmark_section'))
+          .fontSize(11)
+          .fontWeight(FontWeight.Medium)
+          .fontColor($r('app.color.design_text_secondary'))
+      }
+      .width('100%')
+      .padding({ left: 10, right: 10, top: 4, bottom: 2 })
+
+      ForEach(this.vm.bookmarks, (path: string) => {
+        Row({ space: 8 }) {
+          SymbolGlyph($r('sys.symbol.doc_text'))
+            .fontSize(14)
+            .fontColor([path === this.vm.selectedPath ?
+              $r('app.color.design_accent') : $r('app.color.design_text_secondary')])
+          Text(this.noteTitleOf(path))
+            .fontSize(13)
+            .fontColor(path === this.vm.selectedPath ?
+              $r('app.color.design_text_primary') : $r('app.color.design_text_secondary'))
+            .fontWeight(path === this.vm.selectedPath ? FontWeight.Medium : FontWeight.Normal)
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+            .layoutWeight(1)
+          SymbolGlyph($r('sys.symbol.star_fill'))
+            .fontSize(13)
+            .fontColor([$r('app.color.design_accent')])
+            .width(24)
+            .height(24)
+            .onClick(() => {
+              this.vm.toggleBookmark(path).then((): void => {
+                this.toast($r('app.string.msg_bookmark_removed'));
+              });
+            })
+        }
+        .width('100%')
+        .height(32)
+        .padding({ left: 10, right: 6 })
+        .borderRadius(8)
+        .backgroundColor(path === this.vm.selectedPath ?
+          $r('app.color.design_accent_weak') : Color.Transparent)
+        .onClick(() => {
+          this.openNoteFrom(path);
+        })
+      }, (path: string) => path)
+    }
+    .width('100%')
+    .padding({ left: 8, right: 8, bottom: 6 })
+    .border({ width: { bottom: 1 }, color: $r('app.color.design_divider') })
   }
 
   /** 更多菜单：文件操作与弹层入口（对标旧工作台全量菜单）。 */
@@ -922,6 +1003,7 @@ export struct WorkspaceView {
     .justifyContent(FlexAlign.Center)
     .margin({ right: 20, bottom: bottomMargin })
     .accessibilityText($r('app.string.action_new_note'))
+    .keyboardShortcut('n', [ModifierKey.CTRL])
     .transition(TransitionEffect.scale({ x: 0, y: 0 })
       .combine(TransitionEffect.opacity(0))
       .animation({ duration: 250, curve: Curve.Friction }))
@@ -930,6 +1012,13 @@ export struct WorkspaceView {
         this.onNoteMutated();
       });
     })
+  }
+
+  /** 从相对路径提取无扩展名标题。 */
+  private noteTitleOf(path: string): string {
+    const slash: number = path.lastIndexOf('/');
+    const file: string = slash >= 0 ? path.substring(slash + 1) : path;
+    return file.endsWith('.md') ? file.substring(0, file.length - 3) : file;
   }
 
   /** 仓库为空时的引导视图：新建 / 导入 / WebDAV 同步三入口。 */

@@ -10,7 +10,7 @@ import { Logger } from '@ohos/common';
 import { DataViewQuery, FrontmatterSerializer, MarkdownParser, TaskMetadata } from '@ohos/markdown';
 import { AttachmentResolver, BlockDao, DbHelper, DiffLine, FileHistory, FileStatInfo, HistorySnapshot,
   IndexPipeline, LinkDao, LinkRewriter, NoteDao, NoteResolver, PropDao, TagDao, TemplateEngine,
-  TemplateRenderResult, VaultManager, VaultPath } from '@ohos/vault';
+  TemplateRenderResult, VaultBackupInfo, VaultManager, VaultPath } from '@ohos/vault';
 import { AbilityContextHolder } from '../defaultability/AbilityContextHolder';
 
 const LOG: Logger = new Logger('MySidianVM');
@@ -58,6 +58,10 @@ export class VaultViewModel {
   @Trace canGoBack: boolean = false;
   /** 最近访问的笔记（当前仓库）。 */
   @Trace recentNotes: RecentNoteItem[] = [];
+  /** 当前仓库的书签置顶笔记相对路径列表。 */
+  @Trace bookmarks: string[] = [];
+  /** 当前仓库的本地 zip 备份快照列表。 */
+  @Trace backups: VaultBackupInfo[] = [];
 
   /** 编辑态。 */
   @Trace editMode: boolean = false;
@@ -294,6 +298,9 @@ export class VaultViewModel {
     await this.refreshTree();
     await this.ensureIndexed(vault);
     await this.loadRecentNotes();
+    await this.loadBookmarks();
+    this.refreshBackups();
+    await this.autoBackupIfNeeded();
     // 整库图谱随仓库切换刷新（首页图谱页数据源）。
     await this.loadVaultGraph();
   }
@@ -486,8 +493,19 @@ export class VaultViewModel {
     if (dvQuery.isTaskQuery()) {
       const tasks: DataViewTask[] = [];
       const rows: NoteRow[] = await NoteDao.listByVault(context, this.currentVault.id);
+      let tagFilterPaths: Set<string> | null = null;
+      if (dvQuery.fromTag.length > 0) {
+        const matchedPaths: string[] = await TagDao.notesByTag(
+          context, this.currentVault.id, dvQuery.fromTag);
+        if (matchedPaths.length > 0) {
+          tagFilterPaths = new Set<string>(matchedPaths);
+        }
+      }
       for (const row of rows) {
         if (row.ext !== 'md' || (dvQuery.excludeCurrent && row.path === this.selectedPath)) {
+          continue;
+        }
+        if (tagFilterPaths !== null && !tagFilterPaths.has(row.path)) {
           continue;
         }
         const content: string = await manager.readNote(this.currentVault, row.path);
@@ -510,7 +528,10 @@ export class VaultViewModel {
     return result;
   }
 
-  /** 聚合 live TABLE/LIST 查询的笔记条目（按路径升序）。 */
+  /**
+   * 聚合 live TABLE/LIST 查询的笔记条目（按路径升序）。
+   * 优先使用 RDB 中的 tag / prop 批量索引完成过滤与属性提取，仅在查询含正文关键词或未建索引时回退读文件。
+   */
   private async collectEntries(query: DataViewQuery): Promise<DataViewEntry[]> {
     const manager: VaultManager | null = this.manager;
     const context: common.Context | null = this.context;
@@ -519,8 +540,45 @@ export class VaultViewModel {
       return entries;
     }
     const rows: NoteRow[] = await NoteDao.listByVault(context, this.currentVault.id);
+    const tagMap: Map<number, string[]> = await TagDao.tagsByVault(context, this.currentVault.id);
+    const propMap: Map<number, MdProperty[]> = await PropDao.propsByVault(context, this.currentVault.id);
+    const useRdbOnly: boolean = query.containsText.length === 0 &&
+      (tagMap.size > 0 || propMap.size > 0);
     for (const row of rows) {
       if (row.ext !== 'md') {
+        continue;
+      }
+      if (query.excludeCurrent && row.path === this.selectedPath) {
+        continue;
+      }
+      if (query.fromFolder.length > 0 &&
+        !(row.path === query.fromFolder || row.path.startsWith(`${query.fromFolder}/`))) {
+        continue;
+      }
+      if (useRdbOnly && (tagMap.has(row.id) || propMap.has(row.id) ||
+        (query.fromTag.length === 0 && query.requiredTags.length === 0))) {
+        const noteTags: string[] = tagMap.get(row.id) ?? [];
+        if (query.fromTag.length > 0 && !noteTags.includes(query.fromTag)) {
+          continue;
+        }
+        let allTagsMatched: boolean = true;
+        for (const reqTag of query.requiredTags) {
+          if (!noteTags.includes(reqTag)) {
+            allTagsMatched = false;
+            break;
+          }
+        }
+        if (!allTagsMatched) {
+          continue;
+        }
+        const fm: MdFrontmatter = new MdFrontmatter();
+        fm.tags = noteTags;
+        fm.properties = propMap.get(row.id) ?? [];
+        const entry: DataViewEntry = new DataViewEntry();
+        entry.path = row.path;
+        entry.fileName = this.noteDisplayName(row.path);
+        entry.cells = this.extractEntryCells(query, fm, entry.fileName);
+        entries.push(entry);
         continue;
       }
       const content: string = await manager.readNote(this.currentVault, row.path);
@@ -781,6 +839,121 @@ export class VaultViewModel {
     if (changed) {
       await this.writePref(RECENT_LOG_KEY, JSON.stringify(entries));
       await this.loadRecentNotes();
+    }
+    const bmIndex: number = this.bookmarks.indexOf(oldPath);
+    if (bmIndex >= 0) {
+      const nextBookmarks: string[] = this.bookmarks.slice();
+      nextBookmarks[bmIndex] = newPath;
+      await this.saveBookmarks(nextBookmarks);
+    }
+  }
+
+  /** 判断指定笔记是否已加入书签。 */
+  public isBookmarked(path: string): boolean {
+    return path.length > 0 && this.bookmarks.includes(path);
+  }
+
+  /** 切换指定笔记的书签状态（返回切换后是否已加书签）。 */
+  public async toggleBookmark(path: string): Promise<boolean> {
+    if (path.length === 0) {
+      return false;
+    }
+    const next: string[] = [];
+    let removed: boolean = false;
+    for (const item of this.bookmarks) {
+      if (item === path) {
+        removed = true;
+      } else {
+        next.push(item);
+      }
+    }
+    if (!removed) {
+      next.unshift(path);
+    }
+    await this.saveBookmarks(next);
+    return !removed;
+  }
+
+  private async loadBookmarks(): Promise<void> {
+    const context: common.Context | null = this.context;
+    if (context === null || this.currentVault.id < 0) {
+      this.bookmarks = [];
+      return;
+    }
+    const raw: string = await this.readStringPref(
+      context, `bookmarks_${this.currentVault.id}`, '[]');
+    const loaded: string[] = [];
+    try {
+      const arr: string[] = JSON.parse(raw) as string[];
+      if (Array.isArray(arr)) {
+        for (const el of arr) {
+          if (el.length > 0 && this.vaultFiles.includes(el) && !loaded.includes(el)) {
+            loaded.push(el);
+          }
+        }
+      }
+    } catch (error) {
+      LOG.warn('parse bookmarks failed');
+    }
+    this.bookmarks = loaded;
+  }
+
+  private async saveBookmarks(list: string[]): Promise<void> {
+    this.bookmarks = list.slice();
+    if (this.currentVault.id >= 0) {
+      await this.writePref(`bookmarks_${this.currentVault.id}`, JSON.stringify(this.bookmarks));
+    }
+  }
+
+  /** 刷新当前仓库的本地备份快照列表。 */
+  public refreshBackups(): void {
+    const manager: VaultManager | null = this.manager;
+    if (manager === null || this.currentVault.id < 0) {
+      this.backups = [];
+      return;
+    }
+    this.backups = manager.listBackups(this.currentVault);
+  }
+
+  /** 立即创建一份当前仓库的本地备份快照（最多保留 5 份）。 */
+  public async createBackup(): Promise<string> {
+    const manager: VaultManager | null = this.manager;
+    if (manager === null || this.currentVault.id < 0) {
+      return '';
+    }
+    try {
+      const name: string = await manager.createBackup(this.currentVault, 5);
+      this.refreshBackups();
+      return name;
+    } catch (error) {
+      LOG.warn('create backup failed');
+      return '';
+    }
+  }
+
+  /** 从指定的本地备份快照恢复当前仓库。 */
+  public async restoreBackup(backupName: string): Promise<boolean> {
+    const manager: VaultManager | null = this.manager;
+    if (manager === null || this.currentVault.id < 0 || backupName.length === 0) {
+      return false;
+    }
+    const ok: boolean = await manager.restoreBackup(this.currentVault, backupName);
+    if (ok) {
+      this.closeNote();
+      await this.rescanVault();
+      this.refreshBackups();
+    }
+    return ok;
+  }
+
+  /** 每日自动快照备份：距上次备份超过 24 小时且仓库非空时静默生成一份快照。 */
+  private async autoBackupIfNeeded(): Promise<void> {
+    if (this.vaultFiles.length === 0) {
+      return;
+    }
+    const dayMs: number = 24 * 60 * 60 * 1000;
+    if (this.backups.length === 0 || Date.now() - this.backups[0].createdAt >= dayMs) {
+      await this.createBackup();
     }
   }
 
@@ -1051,6 +1224,9 @@ export class VaultViewModel {
     }
     if (this.selectedPath === path) {
       this.closeNote();
+    }
+    if (this.bookmarks.includes(path)) {
+      await this.saveBookmarks(this.bookmarks.filter((item: string): boolean => item !== path));
     }
     await this.refreshTree();
     return true;
@@ -1954,9 +2130,10 @@ export class VaultViewModel {
     return true;
   }
 
-  /** 查询某月的日历数据（有日记标记 + 未完成任务角标）。 */
+  /** 查询某月的日历数据（有日记标记 + 未完成任务角标，优先从 RDB 列表块索引统计）。 */
   public async calendarMonth(year: number, month: number): Promise<CalendarDay[]> {
     const manager: VaultManager | null = this.manager;
+    const context: common.Context | null = this.context;
     const days: CalendarDay[] = [];
     if (manager === null) {
       return days;
@@ -1965,6 +2142,17 @@ export class VaultViewModel {
     const todayKey: string = VaultViewModel.dateKey(now.getFullYear(), now.getMonth() + 1,
       now.getDate());
     const total: number = new Date(year, month, 0).getDate();
+    const existingPaths: string[] = [];
+    for (let day = 1; day <= total; day++) {
+      const dateStr: string = VaultViewModel.dateKey(year, month, day);
+      const path: string = `${dateStr}.md`;
+      if (this.vaultFiles.includes(path)) {
+        existingPaths.push(path);
+      }
+    }
+    const listTextByPath: Map<string, string> = context !== null && existingPaths.length > 0 ?
+      await BlockDao.listBlocksByPaths(context, this.currentVault.id, existingPaths) :
+      new Map<string, string>();
     for (let day = 1; day <= total; day++) {
       const item: CalendarDay = new CalendarDay();
       item.day = day;
@@ -1973,8 +2161,13 @@ export class VaultViewModel {
       const path: string = `${item.date}.md`;
       if (this.vaultFiles.includes(path)) {
         item.hasNote = true;
-        const content: string = await manager.readNote(this.currentVault, path);
-        item.openTasks = VaultViewModel.countOpenTasks(content);
+        const indexedListText: string | undefined = listTextByPath.get(path);
+        if (indexedListText !== undefined && indexedListText.length > 0) {
+          item.openTasks = VaultViewModel.countOpenTasks(indexedListText);
+        } else {
+          const content: string = await manager.readNote(this.currentVault, path);
+          item.openTasks = VaultViewModel.countOpenTasks(content);
+        }
       }
       days.push(item);
     }

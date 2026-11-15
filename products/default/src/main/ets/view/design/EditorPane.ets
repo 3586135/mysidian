@@ -319,6 +319,7 @@ export struct EditorPane {
           .width(36)
           .height(36)
           .accessibilityText($r('app.string.find_open'))
+          .keyboardShortcut('f', [ModifierKey.CTRL])
           .onClick(() => {
             if (this.showFind) {
               this.closeFind();
@@ -343,6 +344,7 @@ export struct EditorPane {
           .height(36)
           .padding({ left: 8, right: 8 })
           .margin({ left: 4 })
+          .keyboardShortcut('s', [ModifierKey.CTRL])
           .onClick(() => {
             this.onEditorKeyboardMode(false);
             this.vm.saveDraft().then((): void => {
@@ -350,6 +352,25 @@ export struct EditorPane {
             });
           })
       } else {
+        if (this.vm.selectedPath.length > 0) {
+          SymbolGlyph(this.vm.isBookmarked(this.vm.selectedPath) ?
+            $r('sys.symbol.star_fill') : $r('sys.symbol.star'))
+            .fontSize(20)
+            .fontColor([this.vm.isBookmarked(this.vm.selectedPath) ?
+              $r('app.color.design_accent') : $r('app.color.design_text_primary')])
+            .width(36)
+            .height(36)
+            .margin({ left: 4 })
+            .accessibilityText(this.vm.isBookmarked(this.vm.selectedPath) ?
+              $r('app.string.bookmark_remove') : $r('app.string.bookmark_add'))
+            .onClick(() => {
+              this.vm.toggleBookmark(this.vm.selectedPath).then((added: boolean): void => {
+                this.getUIContext().getPromptAction().showToast({
+                  message: added ? $r('app.string.msg_bookmark_added') : $r('app.string.msg_bookmark_removed')
+                });
+              });
+            })
+        }
         SymbolGlyph($r('sys.symbol.doc_plaintext_and_pencil'))
           .fontSize(20)
           .fontColor([$r('app.color.design_text_primary')])
@@ -357,6 +378,7 @@ export struct EditorPane {
           .height(36)
           .margin({ left: 4 })
           .accessibilityText($r('app.string.action_edit'))
+          .keyboardShortcut('e', [ModifierKey.CTRL])
           .onClick(() => {
             this.vm.startEdit();
           })

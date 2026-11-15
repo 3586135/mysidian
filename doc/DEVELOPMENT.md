@@ -14,6 +14,32 @@
 | v0.2.0 | 引导页重构（新建/导入/WebDAV 三入口）、新建仓库同时配置 WebDAV、首个仓库预填示例笔记、Dataview TABLE/LIST 查询、编辑格式工具栏 |
 | v0.3.x | Material 3 首页 DesignIndex（四页签横滑 + 悬浮胶囊底栏 + FAB 气泡菜单 + Canvas 图谱） |
 | v0.4.0 | **单页架构全量重构（7 阶段）**：DesignIndex 唯一 @Entry，旧 4160 行工作台 Index.ets 全部功能迁移为页内全屏子视图 + `view/design/` 组件群（21 文件），深浅双模式 design_ 色板 |
+| v0.5.0 | **安全、性能与生产力增强**：Asset Store 密码硬件级加密、DB v4 同步哈希缓存、冲突处理中心、FTS5 自愈 + BM25 排序、未链接提及 RDB 化、页内查找替换、文件树节点操作菜单、图片全屏缩放预览、应用内主题切换 |
+| v0.6.0 | **查询引擎 RDB 化、代码高亮、书签、本地快照备份与多端生态**：Dataview/日历 RDB 批量加速、列表项文本与标签入库、原生代码块语法着色、置顶书签、本地定时/一键快照备份恢复、2in1 键盘快捷键与桌面长按快捷方式 |
+
+## 近期变更（v0.6.0，2026-11-15）
+
+### 1. 查询引擎 RDB 加速与列表项索引闭环（完成原待办 #4）
+- **列表/任务块全文与标签入库**：修复 `BlockDao.plainTextOfBlock` 对 `LIST` 块（`block.inlines` 为空、文本存于 `block.items`）返回空串的缺陷，新增 `itemsText` 递归提取列表文本入库 `block.block_text` 与 `note_fts`；`IndexPipeline` 新增 `collectItemTags` 递归提取列表项内 `#tag` 入库 `tag` 表。
+- **Dataview TABLE/LIST 与 TASK 查询 RDB 化**：`TagDao.tagsByVault` 与 `PropDao.propsByVault` 单次 SQL 批量拉取全库笔记的标签与属性；`VaultViewModel.collectEntries` 在无正文 `contains(text, ...)` 过滤时零磁盘 I/O 直接从 RDB 组装 `NoteEntry`；`runDataViewQuery` 对 `TASK` 查询支持按 `TagDao.notesByTag` 预过滤候选笔记。
+- **日历月度统计批量 SQL 化**：新增 `BlockDao.listBlocksByPaths`（200 条分批 `IN` 查询），`VaultViewModel.calendarMonth` 不再逐篇读取磁盘 Markdown 文件解析未完成任务数。
+
+### 2. 原生代码块语法着色（完成原待办 #3）
+- 新增 `features/markdown/src/main/ets/render/CodeHighlighter.ets`：零正则回溯风险的线性扫描词法分析器，识别行/块注释（`//`、`/* */`、`#`）、字符串（`"`、`'`、`` ` ``）、数字字面量、ArkTS/TS/JS/Python/Java/Go/Rust/C/SQL 关键字与常见类型名。
+- 深浅双色板新增 `md_code_keyword`、`md_code_string`、`md_code_comment`、`md_code_number`、`md_code_type`；`MdBlockView.codeView` 使用多色 `Span` 渲染，并新增 `CodeHighlighter.test.ets`（4 项单测）。
+
+### 3. 书签置顶系统（`★ 书签`，完成原待办 #5）
+- `VaultViewModel` 新增按仓库持久化的 `@Trace bookmarks: string[]`（支持 `isBookmarked`、`toggleBookmark`，并在笔记重命名/移动/移入回收站时自动同步或清理书签路径）。
+- 三处 UI 联动：编辑器顶栏预览态星标按钮（`sys.symbol.star` / `star_fill`）、文件树节点菜单（`TreeItemMenuSheet` 加入/取消书签）、工作台侧栏顶部「★ 书签」置顶区与首页「文件」页签顶部「★ 书签」卡片区。
+
+### 4. 定期与一键本地快照备份恢复
+- `ZipTransfer` 新增沙箱直写 `compressToFile` / `decompressFromFile`；`VaultManager` 新增 `createBackup`、`listBackups`、`restoreBackup`（存于 `<filesDir>/backups/vault_<id>_<timestamp>.zip`，自动轮转最多保留 5 份）。
+- `VaultViewModel` 在打开仓库时按 24 小时周期自动创建本地快照备份（`autoBackupIfNeeded`）；`SettingsSheet` 新增「本地快照备份」专区，支持一键创建快照、查看快照时间与体积、一键恢复任意快照并自动重建索引。
+
+### 5. 2in1 / 平板键盘快捷键与桌面长按快捷方式
+- **2in1 键盘快捷键**：`EditorPane` 与 `WorkspaceView` 挂载 `.keyboardShortcut`——`Ctrl+S` 保存草稿、`Ctrl+E` 切换编辑/阅读、`Ctrl+F` 页内查找替换、`Ctrl+N` 新建笔记、`Ctrl+P` 命令面板、`Ctrl+O` 快速切换器。
+- **桌面长按快捷方式（App Shortcuts）**：新增 `shortcuts_config.json` 与 `module.json5` `ohos.ability.shortcuts` 元数据，提供「新建闪念」「今日日记」「全局搜索」三项桌面快捷入口，支持冷启动与热启动（`DefaultAbility` + `AbilityContextHolder` + `DesignIndex.consumeShortcutAction`）。
+- 应用版本号升至 `v0.6.0`（`versionCode: 1000008`）。
 
 ## 近期变更（v0.2.0，已发布）
 
@@ -173,9 +199,9 @@
 
 1. ~~文件树长按菜单：目录（在此新建/新建子目录/重命名/删除）、文件（重命名/移动/回收站/分屏打开）。~~ → 已完成（`TreeItemMenuSheet` + `FileTreeView.onItemAction`）。
 2. ~~页内查找 & 替换（当前只有全库搜索）。~~ → 已完成（`FindReplaceBar` + `FindReplaceUtils`）。
-3. ~~图片点击全屏预览 + 双指缩放~~（已完成 `ImagePreviewOverlay`）；代码块语法着色（待办）。
-4. ~~未链接提及（`unlinkedMentions`）改走 RDB 索引~~（已完成 `BlockDao.findMentions`）；Dataview TABLE/LIST（`collectEntries`）、日历统计（`calendarMonth`）进一步 RDB 化（待办）。
-5. 书签（★ 置顶区）与全屏全局图谱入口。
+3. ~~图片点击全屏预览 + 双指缩放；代码块语法着色。~~ → 已全部完成（`ImagePreviewOverlay` + `CodeHighlighter`）。
+4. ~~未链接提及（`unlinkedMentions`）、Dataview TABLE/LIST（`collectEntries`）、日历统计（`calendarMonth`）改走 RDB 索引。~~ → 已全部完成（`BlockDao.findMentions`、`TagDao.tagsByVault`、`PropDao.propsByVault`、`BlockDao.listBlocksByPaths`）。
+5. ~~书签（★ 置顶区）与全屏全局图谱入口。~~ → 已全部完成（`VaultViewModel.bookmarks` + 首页/工作台书签区 + `DesignIndex` 图谱页）。
 
 ### Dataview live TABLE/LIST + 勾选实时消失（2026-11-10，TODO #4/#5 完成）
 

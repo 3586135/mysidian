@@ -1,4 +1,5 @@
 import { ConfigurationConstant } from '@kit.AbilityKit';
+import { VaultBackupInfo } from '@ohos/vault';
 import { VaultViewModel } from '../../viewmodel/VaultViewModel';
 
 /**
@@ -131,6 +132,33 @@ export struct SettingsSheet {
                 this.onOpenSync();
               })
 
+            this.sectionLabel($r('app.string.backup_section'))
+
+            this.actionRow($r('sys.symbol.doc_zipper'), $r('app.string.backup_create'),
+              '', (): void => {
+                this.vm.createBackup().then((name: string): void => {
+                  if (name.length > 0) {
+                    this.toast($r('app.string.msg_backup_created'));
+                  }
+                });
+              })
+
+            if (this.vm.backups.length === 0) {
+              Text($r('app.string.backup_empty'))
+                .fontSize(12)
+                .fontColor($r('app.color.design_text_secondary'))
+                .width('100%')
+                .padding({ left: 4, top: 4, bottom: 4 })
+            } else {
+              Column({ space: 6 }) {
+                ForEach(this.vm.backups, (item: VaultBackupInfo) => {
+                  this.backupRow(item)
+                }, (item: VaultBackupInfo) => item.name)
+              }
+              .width('100%')
+              .margin({ top: 4 })
+            }
+
             Text($r('app.string.settings_about'))
               .fontSize(12)
               .fontColor($r('app.color.design_text_secondary'))
@@ -230,5 +258,48 @@ export struct SettingsSheet {
   /** 轻提示（使用 UIContext 的 PromptAction，避免全局 promptAction 的弃用告警）。 */
   private toast(message: ResourceStr): void {
     this.getUIContext().getPromptAction().showToast({ message: message });
+  }
+
+  /** 本地快照行：时间与体积 + 恢复按钮。 */
+  @Builder
+  backupRow(item: VaultBackupInfo) {
+    Row({ space: 10 }) {
+      Column({ space: 2 }) {
+        Text(this.formatBackupTime(item.createdAt))
+          .fontSize(13)
+          .fontWeight(FontWeight.Medium)
+          .fontColor($r('app.color.design_text_primary'))
+        Text(`${Math.max(1, Math.round(item.sizeBytes / 1024))} KB`)
+          .fontSize(11)
+          .fontColor($r('app.color.design_text_secondary'))
+      }
+      .alignItems(HorizontalAlign.Start)
+      .layoutWeight(1)
+
+      Text($r('app.string.backup_restore'))
+        .fontSize(12)
+        .fontWeight(FontWeight.Medium)
+        .fontColor($r('app.color.design_accent'))
+        .padding({ left: 12, right: 12, top: 6, bottom: 6 })
+        .borderRadius(12)
+        .backgroundColor($r('app.color.design_accent_weak'))
+        .onClick(() => {
+          this.vm.restoreBackup(item.name).then((ok: boolean): void => {
+            if (ok) {
+              this.toast($r('app.string.msg_backup_restored'));
+            }
+          });
+        })
+    }
+    .width('100%')
+    .padding({ left: 14, right: 12, top: 10, bottom: 10 })
+    .borderRadius(14)
+    .backgroundColor($r('app.color.design_elevated'))
+  }
+
+  private formatBackupTime(ts: number): string {
+    const d: Date = new Date(ts);
+    const pad = (v: number): string => v < 10 ? `0${v}` : `${v}`;
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
   }
 }

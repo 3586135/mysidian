@@ -8,11 +8,13 @@
 export struct TreeItemMenuSheet {
   @Param targetPath: string = '';
   @Param isDir: boolean = false;
+  @Param bookmarked: boolean = false;
   @Event onClose: () => void = (): void => {};
   @Event onNewNoteInFolder: (folder: string) => void = (_folder: string): void => {};
   @Event onNewSubfolder: (folder: string) => void = (_folder: string): void => {};
   @Event onOpenNote: (path: string) => void = (_path: string): void => {};
   @Event onSplitOpen: (path: string) => void = (_path: string): void => {};
+  @Event onToggleBookmark: (path: string) => void = (_path: string): void => {};
   @Event onRenameNote: (path: string) => void = (_path: string): void => {};
   @Event onMoveNote: (path: string) => void = (_path: string): void => {};
   @Event onTrashNote: (path: string) => void = (_path: string): void => {};
@@ -103,6 +105,11 @@ export struct TreeItemMenuSheet {
           this.menuRow($r('sys.symbol.doc_plaintext'), $r('app.string.vault_card_open'),
             false, (): void => {
               this.onOpenNote(this.targetPath);
+            })
+          this.menuRow(this.bookmarked ? $r('sys.symbol.star_fill') : $r('sys.symbol.star'),
+            this.bookmarked ? $r('app.string.bookmark_remove') : $r('app.string.bookmark_add'),
+            false, (): void => {
+              this.onToggleBookmark(this.targetPath);
             })
           this.menuRow($r('sys.symbol.rectangle_grid_1x2'), $r('app.string.action_split'),
             false, (): void => {

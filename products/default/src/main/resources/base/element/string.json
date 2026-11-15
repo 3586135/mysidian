@@ -1367,6 +1367,62 @@
     {
       "name": "design_more_sync_not_configured",
       "value": "未配置 WebDAV 服务器"
+    },
+    {
+      "name": "bookmark_section",
+      "value": "书签"
+    },
+    {
+      "name": "bookmark_add",
+      "value": "加入书签"
+    },
+    {
+      "name": "bookmark_remove",
+      "value": "取消书签"
+    },
+    {
+      "name": "msg_bookmark_added",
+      "value": "已加入书签"
+    },
+    {
+      "name": "msg_bookmark_removed",
+      "value": "已从书签移除"
+    },
+    {
+      "name": "backup_section",
+      "value": "本地快照备份"
+    },
+    {
+      "name": "backup_create",
+      "value": "立即创建备份快照"
+    },
+    {
+      "name": "backup_restore",
+      "value": "恢复此快照"
+    },
+    {
+      "name": "backup_empty",
+      "value": "暂无本地备份快照（每日首次打开自动备份，最多保留 5 份）"
+    },
+    {
+      "name": "msg_backup_created",
+      "value": "已创建本地备份快照"
+    },
+    {
+      "name": "msg_backup_restored",
+      "value": "已从备份快照恢复仓库"
+    },
+    {
+      "name": "shortcut_quick_note",
+      "value": "新建闪念"
+    },
+    {
+      "name": "shortcut_daily_note",
+      "value": "今日日记"
+    },
+    {
+      "name": "shortcut_search",
+      "value": "全局搜索"
     }
   ]
 }

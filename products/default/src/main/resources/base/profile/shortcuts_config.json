@@ -1,0 +1,49 @@
+{
+  "shortcuts": [
+    {
+      "shortcutId": "shortcut_quick_note",
+      "label": "$string:shortcut_quick_note",
+      "icon": "$media:layered_image",
+      "wants": [
+        {
+          "bundleName": "com.mrs.mysidian",
+          "moduleName": "default",
+          "abilityName": "DefaultAbility",
+          "parameters": {
+            "shortcutAction": "quick_note"
+          }
+        }
+      ]
+    },
+    {
+      "shortcutId": "shortcut_daily_note",
+      "label": "$string:shortcut_daily_note",
+      "icon": "$media:layered_image",
+      "wants": [
+        {
+          "bundleName": "com.mrs.mysidian",
+          "moduleName": "default",
+          "abilityName": "DefaultAbility",
+          "parameters": {
+            "shortcutAction": "daily_note"
+          }
+        }
+      ]
+    },
+    {
+      "shortcutId": "shortcut_search",
+      "label": "$string:shortcut_search",
+      "icon": "$media:layered_image",
+      "wants": [
+        {
+          "bundleName": "com.mrs.mysidian",
+          "moduleName": "default",
+          "abilityName": "DefaultAbility",
+          "parameters": {
+            "shortcutAction": "search"
+          }
+        }
+      ]
+    }
+  ]
+}
