@@ -4,6 +4,7 @@ import { BusinessError, pasteboard } from '@kit.BasicServicesKit';
 import { BlockParser } from '../parser/BlockParser';
 import { DataViewQuery } from '../parser/DataViewQuery';
 import { InlineParser } from '../parser/InlineParser';
+import { CodeHighlighter, CodeToken, CodeTokenKind } from './CodeHighlighter';
 import { MathRenderer } from './MathRenderer';
 import { MdInlineFlattener } from './MdInlineFlattener';
 import { MdInlineText } from './MdInlineText';
@@ -386,7 +387,13 @@ export struct MdBlockView {
       .width('100%')
       .margin({ bottom: 6 })
 
-      Text(this.block.rawContent)
+      Text() {
+        ForEach(CodeHighlighter.tokenize(this.block.rawContent, this.block.lang),
+          (token: CodeToken, index: number) => {
+            Span(token.text)
+              .fontColor(this.codeTokenColor(token.kind))
+          }, (token: CodeToken, index: number): string => `code_${index}_${token.kind}`)
+      }
         .fontSize(this.fontSize - 2)
         .fontFamily('monospace')
         .fontColor($r('sys.color.ohos_id_color_text_primary'))
@@ -398,6 +405,25 @@ export struct MdBlockView {
     .borderRadius(8)
     .backgroundColor($r('sys.color.ohos_id_color_card_bg'))
     .margin({ top: 6, bottom: 6 })
+  }
+
+  private codeTokenColor(kind: CodeTokenKind): ResourceColor {
+    if (kind === CodeTokenKind.KEYWORD) {
+      return $r('app.color.md_code_keyword');
+    }
+    if (kind === CodeTokenKind.STRING) {
+      return $r('app.color.md_code_string');
+    }
+    if (kind === CodeTokenKind.COMMENT) {
+      return $r('app.color.md_code_comment');
+    }
+    if (kind === CodeTokenKind.NUMBER) {
+      return $r('app.color.md_code_number');
+    }
+    if (kind === CodeTokenKind.TYPE) {
+      return $r('app.color.md_code_type');
+    }
+    return $r('sys.color.ohos_id_color_text_primary');
   }
 
   /** 常见语言别名（fence 标记 �?显示名）�?*/

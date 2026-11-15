@@ -10,6 +10,7 @@ export { MdInlineFlattener } from './src/main/ets/render/MdInlineFlattener';
 export { MathRenderer } from './src/main/ets/render/MathRenderer';
 export { MermaidFlow, FlowNode, FlowEdge, FlowGraph } from './src/main/ets/render/MermaidFlow';
 export { MdMermaidView } from './src/main/ets/render/MdMermaidView';
+export { CodeHighlighter, CodeToken, CodeTokenKind } from './src/main/ets/render/CodeHighlighter';
 export { MdInlineText } from './src/main/ets/render/MdInlineText';
 export { MdBlockView } from './src/main/ets/render/MdBlockView';
 export { MdDocumentView, MdDocumentViewController } from './src/main/ets/render/MdDocumentView';

@@ -11,6 +11,26 @@
     {
       "name": "md_highlight_bg",
       "value": "#40FFC107"
+    },
+    {
+      "name": "md_code_keyword",
+      "value": "#A78BFA"
+    },
+    {
+      "name": "md_code_string",
+      "value": "#4ADE80"
+    },
+    {
+      "name": "md_code_comment",
+      "value": "#9CA3AF"
+    },
+    {
+      "name": "md_code_number",
+      "value": "#FB923C"
+    },
+    {
+      "name": "md_code_type",
+      "value": "#38BDF8"
     }
   ]
 }
