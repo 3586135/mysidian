@@ -1,6 +1,6 @@
 # 开发状态与设计决策
 
-> 最后更新：2026-11-11。本文档记录各里程碑的功能实现、关键设计决策、验证状态与已知问题，供后续开发（含 AI 协作）快速接续。
+> 最后更新：2026-11-15。本文档记录各里程碑的功能实现、关键设计决策、验证状态与已知问题，供后续开发（含 AI 协作）快速接续。
 
 ## 里程碑历史（git 提交）
 
@@ -12,6 +12,8 @@
 | M3 | 源码编辑器（TextArea）、增量索引管线（block/link/tag/prop）、大纲/反链/标签/属性面板 |
 | M5-M6 | WebDAV 同步引擎（manifest 协议 + 冲突副本）、FTS 搜索、快速切换器、命令面板、设置、ArkWeb HTML 兜底、懒加载文件树 |
 | v0.2.0 | 引导页重构（新建/导入/WebDAV 三入口）、新建仓库同时配置 WebDAV、首个仓库预填示例笔记、Dataview TABLE/LIST 查询、编辑格式工具栏 |
+| v0.3.x | Material 3 首页 DesignIndex（四页签横滑 + 悬浮胶囊底栏 + FAB 气泡菜单 + Canvas 图谱） |
+| v0.4.0 | **单页架构全量重构（7 阶段）**：DesignIndex 唯一 @Entry，旧 4160 行工作台 Index.ets 全部功能迁移为页内全屏子视图 + `view/design/` 组件群（21 文件），深浅双模式 design_ 色板 |
 
 ## 近期变更（v0.2.0，已发布）
 
@@ -33,6 +35,27 @@
 - 编辑模式底部工具栏（`editToolbar`）：标题/加粗/列表/任务/有序列表/分隔线快捷插入；TextArea 聚焦显示、失焦隐藏。
 
 ## 近期变更（未发布，v0.4.0）
+
+### 单页架构 Material 3 全量重构（2026-11-15，7 阶段）
+
+以 DesignIndex 为**唯一 @Entry**，旧 4160 行工作台 `pages/Index.ets` 全部功能等价迁移为**页内全屏子视图**，删除 router 跳转与旧组件群（净删 ~5400 行）。
+
+- **阶段 1**（75e75b7）：design_ 色板深浅双模式（base/dark 两份 color.json，跟随系统）；`DesignPalette` 运行时取色；drawGraph design 化。
+- **阶段 2**（cfaf906）：单页状态机——DesignIndex 内 HOME（四页签）/WORKSPACE 两模式切换（viewMode + animateTo 进出场）；键盘避让策略迁移（窄屏编辑态 NONE、其余 RESIZE）；`WorkspaceView` 骨架。
+- **阶段 3**（d220aa7）：工作台核心迁移——`CompletionPopup`/`EditorToolbar`/`NoteInfoSheet`/`EditorPane` 新建，WorkspaceView 重写（文件树/编辑器/信息面板三区）；`sys.symbol.sidebar_left` 不存在，以 SDK `id_defined.json` 查证换 `rectangle_lefthalf_inset_filled`。
+- **阶段 4**（9a90423）：弹层 A——`DialogHost`（新建仓库/删除确认/重建索引/创建请求四场景）、`TrashSheet`/`HistorySheet`/`TemplateSheet`。
+- **阶段 5**（8642f62）：弹层 B 与全局浮层——`CalendarSheet`/`HandwriteSheet`/`QuickNoteSheet`/`CommandPalette`/`QuickSwitcher`/`RecentNotesPanel`/`SearchOverlay`/`OnboardView`/`SyncSettingsSheet`/`SettingsSheet`/`VaultManagerSheet` 共 11 件；WorkspaceView 全量接线（17 项 moreMenu、handleBack 全链、命令表、手写插入桥接、快切分屏）；DesignIndex 顶层 Stack 挂全局浮层。
+- **阶段 6**（387fbc9）：删除 `pages/Index.ets` 与 8 个已替换旧组件（CalendarPanel/CommandPalette/HandwritePanel/QuickSwitcher/RecentNotesPanel/SearchOverlay/SettingsOverlay/SyncSettings）；`main_pages.json` 只留 DesignIndex；外部启动参数迁移至 DesignIndex（`handleLaunchParams`：openPath/expandPath/action→工作台或全局浮层）。**保留** `view/NoteInfoPanel.ets` + `GraphView.ets`——design 层 `NoteInfoSheet` 是其 Material 3 包装层（五页签数据引擎），后续如需彻底收编可把二者内联进 design。
+- **阶段 7**：验证与文档（本节）。
+
+**验证状态（2026-11-15，阶段 6 后）**：`devecocli build` 成功（24s）；三台模拟器（5555 Mate 90 Pro / 5559 Mate X7 / 5557 MatePad）签名包安装启动成功、Smoke PASS，截图像素分析 avgRGB≈245-247 且文件 235-346KB（浅色主题、内容丰富、非白屏）；faultlog 仅存 2026-11-11 旧 jscrash（重构前遗留），本轮零新增。深色模式运行时验证受阻：该模拟器镜像不支持 `persist.ace.darkmode` 参数（errNum 1002），settings 表无 dark/theme 键，无法 hdc 强切；dark 色板正确性以构建期资源校验为准，待模拟器设置界面手动切换或真机补验。真机（无线调试）当日离线。
+
+关键机制：
+
+- **返回键下探**：onBackPress 无法直达子组件——`WorkspaceBackSignal`（@ObservedV2+@Trace count）信号对象，DesignIndex onBackPress→request()，WorkspaceView @Monitor('backSignal.count') 消费，链序 dialog→trash→…→sideBar→exit。
+- **弹层按需挂载**：父级 if 条件渲染→每次打开全新实例，内部 @Local 在 aboutToAppear 按场景预填。
+- **手写插入桥接**：`VaultViewModel.onInsertTextAtCaret` 钩子 + EditorPane 生命周期注册 + WorkspaceView.saveHandwrite 分流（编辑态直插/预览态 startEdit+150ms 延迟+atEnd）。
+- **状态分代纪律**：WorkspaceView 为 @ComponentV2（@Local/@Param/@Event/@Monitor），深层突变配 slice()/key 重建；Vm 均 @ObservedV2+@Trace。
 
 ### Material 3 首页改版：DesignIndex（2026-11-14）
 
