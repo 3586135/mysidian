@@ -38,10 +38,26 @@ export class SyncViewModel {
   private queuedVault: VaultInfo | null = null;
   private autoRetryCount: number = 0;
   private lastPassiveTriggerAt: number = 0;
+  private lastAuthFailAt: number = 0;
+  private confirmArmedAt: number = 0;
   private static readonly STORE: string = 'mysidian_sync';
   private static readonly EDIT_DEBOUNCE_MS: number = 1500;
   private static readonly PASSIVE_COOLDOWN_MS: number = 20000;
   private static readonly SILENT_RETRY_MS: number = 8000;
+  /**
+   * 安全确认武装延迟：闸门暂停后确认卡片刚渲染的短时间内忽略「确认继续」，
+   * 防止穿透点击/双击投递的第二次点击恰好落在滑入原按钮位置的确认按钮上
+   * （确认卡片插入会使已到底部的面板内容上移，确认按钮可能移动到
+   * 用户刚点过的「立即同步」坐标附近）。
+   */
+  private static readonly CONFIRM_ARM_DELAY_MS: number = 800;
+  /**
+   * 认证失败(401/403)后的自动同步冷却期：期间挂起一切自动/无感同步。
+   * fnOS/nginx 会累计失败认证并临时限流封禁客户端 IP（表现为「过一阵又 401 又恢复」），
+   * 冷却期避免应用在封禁窗口内反复发请求不断续期封禁，形成自维持 401 循环。
+   * 用户手动「立即同步」不受冷却期限制并会重置它。
+   */
+  private static readonly AUTH_FAIL_COOLDOWN_MS: number = 5 * 60 * 1000;
 
   /** 同步完成后回调（由界面层设置，用于重建索引与刷新文件树）。 */
   public onSyncComplete: (() => void) | null = null;
@@ -173,7 +189,8 @@ export class SyncViewModel {
    */
   public scheduleAutoSync(vault: VaultInfo, delayMs: number = SyncViewModel.EDIT_DEBOUNCE_MS): void {
     if (!this.autoSync || this.serverUrl.trim().length === 0 ||
-      vault.rootPath.length === 0 || this.awaitingConfirmation) {
+      vault.rootPath.length === 0 || this.awaitingConfirmation ||
+      this.isInAuthFailCooldown()) {
       return;
     }
     if (this.syncing) {
@@ -192,7 +209,8 @@ export class SyncViewModel {
    */
   public requestPassiveSync(vault: VaultInfo): void {
     if (!this.autoSync || this.serverUrl.trim().length === 0 ||
-      vault.rootPath.length === 0 || this.awaitingConfirmation || this.syncing) {
+      vault.rootPath.length === 0 || this.awaitingConfirmation || this.syncing ||
+      this.isInAuthFailCooldown()) {
       return;
     }
     const now: number = Date.now();
@@ -251,6 +269,8 @@ export class SyncViewModel {
     this.queuedVault = null;
     if (userInitiated) {
       this.autoRetryCount = 0;
+      // 手动同步始终允许：用户可能刚修正凭据或服务器封禁已过，重置认证冷却期。
+      this.lastAuthFailAt = 0;
     }
     this.syncing = true;
     try {
@@ -261,6 +281,7 @@ export class SyncViewModel {
       if (this.status.state === SyncState.PAUSED) {
         this.pendingPlan = this.engine.getPendingPlan();
         this.awaitingConfirmation = true;
+        this.confirmArmedAt = Date.now();
         if (userInitiated && this.onNeedsConfirm !== null) {
           this.onNeedsConfirm(this.pendingPlan);
         }
@@ -270,6 +291,15 @@ export class SyncViewModel {
       this.pendingPlan = new SyncPlanSummary();
       if (this.status.state === SyncState.SUCCESS || this.status.state === SyncState.CONFLICT) {
         this.autoRetryCount = 0;
+        this.lastAuthFailAt = 0;
+      }
+      if (this.status.state === SyncState.FAILED &&
+        SyncViewModel.isAuthOrConfigError(this.status.message)) {
+        // 进入认证冷却期：停止自动同步，等待服务器端限流/封禁窗口过期。
+        this.lastAuthFailAt = Date.now();
+        this.autoRetryCount = 0;
+        LOG.warn(`auth/config failure, auto-sync paused for ` +
+          `${Math.round(SyncViewModel.AUTH_FAIL_COOLDOWN_MS / 1000)}s`);
       }
       if (this.onSyncComplete !== null && (this.status.pendingDownloads > 0 ||
         this.status.pendingTrashed > 0 || this.conflicts.length > 0)) {
@@ -295,14 +325,26 @@ export class SyncViewModel {
     }
   }
 
-  /** 用户确认安全提示后继续执行同步。 */
+  /** 认证失败冷却期内返回 true：挂起一切自动/无感同步，避免反复认证失败触发/续期服务端封禁。 */
+  private isInAuthFailCooldown(): boolean {
+    return this.lastAuthFailAt > 0 &&
+      Date.now() - this.lastAuthFailAt < SyncViewModel.AUTH_FAIL_COOLDOWN_MS;
+  }
+
+  /** 用户确认安全提示后继续执行同步；卡片刚渲染的武装期内忽略，防穿透点击误确认。 */
   public async confirmPendingSync(vault: VaultInfo): Promise<void> {
+    if (Date.now() - this.confirmArmedAt < SyncViewModel.CONFIRM_ARM_DELAY_MS) {
+      LOG.warn('sync confirm ignored: within arm delay (likely tap-through)');
+      return;
+    }
+    this.confirmArmedAt = 0;
     await this.runSync(vault, true, true);
   }
 
   /** 取消本次等待确认的同步，复位为安全空闲状态。 */
   public cancelPendingSync(): void {
     this.awaitingConfirmation = false;
+    this.confirmArmedAt = 0;
     this.pendingPlan = new SyncPlanSummary();
     if (this.status.state === SyncState.PAUSED) {
       this.status = new SyncStatus();

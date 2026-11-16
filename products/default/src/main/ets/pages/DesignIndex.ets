@@ -378,7 +378,9 @@ struct DesignIndex {
     });
     // 同步拉取了新文件后重建索引并刷新文件树，使新笔记可见。
     this.syncVm.onSyncComplete = (): void => {
-      this.vm.rescanVault();
+      this.vm.rescanVault().catch((error: BusinessError): void => {
+        LOG.error(`rescan vault after sync failed: ${error.message}`);
+      });
     };
     this.syncVm.onNeedsConfirm = (): void => {
       this.showSyncSafetyConfirmDialog();

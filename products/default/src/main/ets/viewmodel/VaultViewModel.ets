@@ -2562,12 +2562,21 @@ export class VaultViewModel {
     if (manager === null || context === null) {
       return;
     }
+    // 文件树直接读文件系统：先刷新让同步拉取的新笔记立即可见，
+    // 不必等待下方全量扫描与逐篇索引（720 篇约需十几秒）完成。
+    await this.refreshTree();
     await manager.scanVault(this.currentVault);
     const notes: NoteRow[] = await NoteDao.listByVault(context, this.currentVault.id);
     for (const note of notes) {
-      const content: string = await manager.readNote(this.currentVault, note.path);
-      const document: MdDocument = MarkdownParser.parse(content);
-      await IndexPipeline.indexNote(context, note, document);
+      // 单篇笔记读取/解析/索引失败不中断整批：本方法常以 fire-and-forget 方式
+      // 在同步完成后调用，任何一处抛错都会静默吞掉后续的树刷新，导致笔记不出现。
+      try {
+        const content: string = await manager.readNote(this.currentVault, note.path);
+        const document: MdDocument = MarkdownParser.parse(content);
+        await IndexPipeline.indexNote(context, note, document);
+      } catch (error) {
+        LOG.warn(`rescan index note failed: ${note.path}`);
+      }
     }
     await this.refreshTree();
     if (!this.editMode && this.selectedPath.length > 0) {
