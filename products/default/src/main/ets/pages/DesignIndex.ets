@@ -262,6 +262,7 @@ struct DesignIndex {
   @Local filesSegment: number = 0;         // 文件页分段：0 书架 / 1 书签 / 2 时间轴 / 3 目录
   @Local currentFolderPath: string = '';   // 文件页：当前目录穿透浏览路径（'' 为根目录）
   @Local filesGridMode: boolean = false;   // 文件页视图模式：false 素雅列表视图 / true 书架封面宫格
+  @Local filesSortMode: number = 0;       // 收藏/文件夹页签笔记排序：0 默认 / 1 最近修改 / 2 文件名
   @Local searchKeyword: string = '';       // 搜索页：关键词
   @Local searchRows: DesignSearchRow[] = [];// 搜索页：命中结果（含高亮分段）
   @Local selectedGraphPath: string = '';   // 图谱页：选中节点路径（默认当前笔记）
@@ -1118,6 +1119,49 @@ struct DesignIndex {
     this.filesScroller.scrollEdge(Edge.Top);
   }
 
+  /** 收藏/文件夹页签的笔记排序切换胶囊行（默认 / 最近修改 / 文件名）。 */
+  @Builder
+  filesSortChips() {
+    Row({ space: 6 }) {
+      Text($r('app.string.files_sort_label'))
+        .fontSize(11)
+        .fontColor($r('app.color.design_text_secondary'))
+      this.sortChip(0, $r('app.string.files_sort_default'))
+      this.sortChip(1, $r('app.string.files_sort_mtime'))
+      this.sortChip(2, $r('app.string.files_sort_name'))
+    }
+    .width('100%')
+    .justifyContent(FlexAlign.End)
+    .alignItems(VerticalAlign.Center)
+  }
+
+  /** 单个排序胶囊。 */
+  @Builder
+  sortChip(mode: number, label: Resource) {
+    Text(label)
+      .fontSize(11)
+      .fontWeight(this.filesSortMode === mode ? FontWeight.Bold : FontWeight.Medium)
+      .fontColor(this.filesSortMode === mode ?
+        $r('app.color.design_surface_solid') : $r('app.color.design_text_secondary'))
+      .padding({ left: 10, right: 10, top: 4, bottom: 4 })
+      .borderRadius(12)
+      .backgroundColor(this.filesSortMode === mode ?
+        $r('app.color.design_text_primary') : $r('app.color.design_glass_bg'))
+      .border({
+        width: 1,
+        color: this.filesSortMode === mode ?
+          $r('app.color.design_stroke') : $r('app.color.design_glass_stroke')
+      })
+      .onClick(() => {
+        if (this.filesSortMode === mode) {
+          return;
+        }
+        this.getUIContext().animateTo({ duration: 200, curve: Curve.Friction }, () => {
+          this.filesSortMode = mode;
+        });
+      })
+  }
+
   /** 分段 0：全部笔记视图（支持便签卡片宫格 / 经典列表双模式，目录点击原地穿透浏览）。 */
   @Builder
   shelfSegmentContent() {
@@ -1187,12 +1231,16 @@ struct DesignIndex {
           .width('100%')
           .padding({ top: 32, bottom: 32, left: 20, right: 20 })
           .textAlign(TextAlign.Center)
-      } else if (this.filesGridMode) {
-        this.bookshelfGridView(false, true)
       } else {
-        ForEach(this.vm.bookmarks, (path: string) => {
-          this.bookmarkNoteCard(path)
-        }, (path: string) => path)
+        this.filesSortChips()
+
+        if (this.filesGridMode) {
+          this.bookshelfGridView(false, true)
+        } else {
+          ForEach(this.bookmarkNotes, (item: RecentNoteItem) => {
+            this.bookmarkNoteCard(item.path)
+          }, (item: RecentNoteItem) => item.path)
+        }
       }
     }
     .width('100%')
@@ -1239,6 +1287,8 @@ struct DesignIndex {
         }
 
         if (this.rootNotes.length > 0) {
+          this.filesSortChips()
+
           Text($r('app.string.files_root_notes_header', this.rootNotes.length))
             .fontSize(12)
             .fontWeight(FontWeight.Medium)
@@ -1280,6 +1330,8 @@ struct DesignIndex {
         }
 
         if (this.activeFolderNotes.length > 0) {
+          this.filesSortChips()
+
           if (this.activeSubFolders.length > 0) {
             Text($r('app.string.files_folder_section_notes', this.activeFolderNotes.length))
               .fontSize(12)
@@ -1831,7 +1883,7 @@ struct DesignIndex {
     return result;
   }
 
-  /** 根目录直属笔记列表（用于「文件夹」页签展示）。 */
+  /** 根目录直属笔记列表（用于「文件夹」页签展示，按当前排序模式整理）。 */
   @Computed
   get rootNotes(): RecentNoteItem[] {
     const result: RecentNoteItem[] = [];
@@ -1844,10 +1896,10 @@ struct DesignIndex {
         });
       }
     }
-    return result;
+    return this.sortNoteList(result);
   }
 
-  /** 收藏笔记转为 RecentNoteItem 列表。 */
+  /** 收藏笔记转为 RecentNoteItem 列表（按当前排序模式整理）。 */
   @Computed
   get bookmarkNotes(): RecentNoteItem[] {
     const result: RecentNoteItem[] = [];
@@ -1858,7 +1910,7 @@ struct DesignIndex {
         openedAt: 0
       });
     }
-    return result;
+    return this.sortNoteList(result);
   }
 
   /** 当前浏览目录的直接子目录摘要（按当前仓库目录树计算）。 */
@@ -1902,7 +1954,31 @@ struct DesignIndex {
         openedAt: openedAt !== undefined ? openedAt : 0
       });
     }
-    return result;
+    return this.sortNoteList(result);
+  }
+
+  /** 按当前排序模式整理笔记列表：0 默认（原顺序）/ 1 最近修改（新→旧）/ 2 文件名（A→Z）。 */
+  private sortNoteList(items: RecentNoteItem[]): RecentNoteItem[] {
+    if (this.filesSortMode === 0 || items.length < 2) {
+      return items;
+    }
+    const sorted: RecentNoteItem[] = items.slice();
+    if (this.filesSortMode === 1) {
+      sorted.sort((a: RecentNoteItem, b: RecentNoteItem): number => {
+        const ma: number = this.vm.mtimeByPath.get(a.path) ?? 0;
+        const mb: number = this.vm.mtimeByPath.get(b.path) ?? 0;
+        if (ma !== mb) {
+          return mb - ma;
+        }
+        return a.path.localeCompare(b.path);
+      });
+      return sorted;
+    }
+    sorted.sort((a: RecentNoteItem, b: RecentNoteItem): number => {
+      const byTitle: number = a.title.localeCompare(b.title);
+      return byTitle !== 0 ? byTitle : a.path.localeCompare(b.path);
+    });
+    return sorted;
   }
 
   private gridNotesForSource(source: number): RecentNoteItem[] {

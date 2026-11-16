@@ -47,6 +47,8 @@ export class VaultViewModel {
   @Trace vaults: VaultInfo[] = [];
   @Trace currentVault: VaultInfo = new VaultInfo();
   @Trace treeItems: FlatFileNode[] = [];
+  /** 全仓库笔记 path → 最后修改时间（秒）映射（首页笔记列表排序用）。 */
+  @Trace mtimeByPath: Map<string, number> = new Map<string, number>();
   /** 根级目录摘要（首页文件页展示）。 */
   @Trace rootFolders: RootFolderSummary[] = [];
   @Trace selectedPath: string = '';
@@ -1856,10 +1858,28 @@ export class VaultViewModel {
       return;
     }
     this.tree = await manager.buildTree(this.currentVault);
+    this.mtimeByPath = VaultViewModel.buildMtimeMap(this.tree);
     this.refreshTreeItems();
     this.vaultFiles = await manager.listVaultFiles(this.currentVault);
     this.refreshRootFolders();
     await this.refreshAllTags();
+  }
+
+  /** 遍历完整文件树，收集 path → mtime（秒）映射（含未展开目录）。 */
+  private static buildMtimeMap(nodes: FileNode[]): Map<string, number> {
+    const map: Map<string, number> = new Map<string, number>();
+    VaultViewModel.collectMtime(nodes, map);
+    return map;
+  }
+
+  private static collectMtime(nodes: FileNode[], output: Map<string, number>): void {
+    for (const node of nodes) {
+      if (node.isDir) {
+        VaultViewModel.collectMtime(node.children, output);
+      } else {
+        output.set(node.path, node.mtime);
+      }
+    }
   }
 
   /** 列出指定目录（'' 表示根目录）的直接子目录摘要（含子目录递归笔记数）。 */
@@ -2543,6 +2563,7 @@ export class VaultViewModel {
         this.closeNote();
         this.tree = [];
         this.treeItems = [];
+        this.mtimeByPath = new Map<string, number>();
         if (this.vaults.length > 0) {
           await this.selectVault(this.vaults[0]);
         } else {

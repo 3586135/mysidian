@@ -1461,6 +1461,22 @@
       "value": "切换卡片/列表视图"
     },
     {
+      "name": "files_sort_label",
+      "value": "排序"
+    },
+    {
+      "name": "files_sort_default",
+      "value": "默认"
+    },
+    {
+      "name": "files_sort_mtime",
+      "value": "最近修改"
+    },
+    {
+      "name": "files_sort_name",
+      "value": "文件名"
+    },
+    {
       "name": "files_cover_footer",
       "value": "Markdown"
     },
