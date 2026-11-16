@@ -138,6 +138,152 @@ export class DemoVaultContent {
       '#任务'
     ].join('\n');
 
-    return [welcome, syntax, tasks];
+    // ---- 内置模板（Templates/ 目录，模板库 / 今日日记 / 周报自动套用） ----
+
+    const dailyTpl: DemoNote = new DemoNote();
+    dailyTpl.path = 'Templates/日记.md';
+    dailyTpl.content = [
+      '---',
+      'tags: [日记]',
+      '---',
+      '',
+      '# {{title}}',
+      '',
+      '## 今日待办',
+      '',
+      '- [ ] {{cursor}}',
+      '',
+      '## 记录',
+      '',
+      '## 收获与想法',
+      ''
+    ].join('\n');
+
+    const weeklyTpl: DemoNote = new DemoNote();
+    weeklyTpl.path = 'Templates/周报.md';
+    weeklyTpl.content = [
+      '---',
+      'tags: [周报]',
+      '---',
+      '',
+      '# {{title}} 周报',
+      '',
+      '## 本周完成',
+      '',
+      '- ',
+      '',
+      '## 下周计划',
+      '',
+      '- ',
+      '',
+      '## 问题与风险',
+      '',
+      '- {{cursor}}'
+    ].join('\n');
+
+    const meetingTpl: DemoNote = new DemoNote();
+    meetingTpl.path = 'Templates/会议纪要.md';
+    meetingTpl.content = [
+      '---',
+      'tags: [会议纪要]',
+      '---',
+      '',
+      '# 会议纪要',
+      '',
+      '- 日期：{{date}} {{time}}',
+      '',
+      '## 参会人',
+      '',
+      '- ',
+      '',
+      '## 议题',
+      '',
+      '1. ',
+      '',
+      '## 讨论与结论',
+      '',
+      '- ',
+      '',
+      '## 待办事项',
+      '',
+      '- [ ] {{cursor}} #task'
+    ].join('\n');
+
+    const readingTpl: DemoNote = new DemoNote();
+    readingTpl.path = 'Templates/读书笔记.md';
+    readingTpl.content = [
+      '---',
+      'tags: [读书笔记]',
+      '---',
+      '',
+      '# 《{{cursor}}》读书笔记',
+      '',
+      '- 阅读日期：{{date}}',
+      '',
+      '## 一句话总结',
+      '',
+      '## 关键要点',
+      '',
+      '- ',
+      '',
+      '## 摘录与想法',
+      '',
+      '> ',
+      '',
+      '## 后续行动',
+      '',
+      '- [ ] '
+    ].join('\n');
+
+    const projectTpl: DemoNote = new DemoNote();
+    projectTpl.path = 'Templates/项目计划.md';
+    projectTpl.content = [
+      '---',
+      'tags: [项目]',
+      '---',
+      '',
+      '# 项目计划',
+      '',
+      '- 创建日期：{{date}}',
+      '',
+      '## 目标',
+      '',
+      '## 里程碑',
+      '',
+      '| 阶段 | 内容 | 截止日期 | 状态 |',
+      '| --- | --- | --- | --- |',
+      '| M1 |  |  | 进行中 |',
+      '',
+      '## 任务分解',
+      '',
+      '- [ ] {{cursor}}',
+      '',
+      '## 风险与应对',
+      '',
+      '- '
+    ].join('\n');
+
+    const todoTpl: DemoNote = new DemoNote();
+    todoTpl.path = 'Templates/待办清单.md';
+    todoTpl.content = [
+      '---',
+      'tags: [待办]',
+      '---',
+      '',
+      '# 待办清单（{{date}}）',
+      '',
+      '## 今日必做',
+      '',
+      '- [ ] {{cursor}} #task',
+      '',
+      '## 一般待办',
+      '',
+      '- [ ]  #task',
+      '',
+      '## 备注',
+      ''
+    ].join('\n');
+
+    return [welcome, syntax, tasks, dailyTpl, weeklyTpl, meetingTpl, readingTpl, projectTpl, todoTpl];
   }
 }
