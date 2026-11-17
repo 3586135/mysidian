@@ -1,11 +1,19 @@
 /**
- * 同步文件过滤规则：仅 Markdown 笔记与图片附件参与同步，
- * 避免把仓库中的任意文件（zip、临时文件等）推送到远端。
+ * 同步文件过滤规则：Markdown 笔记与常用知识库附件（图片/PDF/Office 文档/音视频/白板）参与同步，
+ * 避免把仓库中的任意归档/临时/数据库文件（zip、tmp、sqlite 等）推送到远端。
  */
 export class SyncFileFilter {
-  /** 参与同步的图片扩展名（小写）。 */
+  /** 图片扩展名（小写，用于在 UI 走图片内联预览与全屏缩放）。 */
   private static readonly IMAGE_EXTENSIONS: string[] =
-    ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'svg'];
+    ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'svg', 'ico', 'heic', 'avif'];
+
+  /** 参与二进制双向同步的全部附件扩展名（小写）。 */
+  private static readonly ATTACHMENT_EXTENSIONS: string[] = [
+    'png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'svg', 'ico', 'heic', 'avif',
+    'pdf', 'docx', 'doc', 'xlsx', 'xls', 'pptx', 'ppt', 'txt', 'csv', 'tsv', 'rtf', 'odt', 'epub',
+    'mp3', 'm4a', 'wav', 'ogg', 'aac', 'flac', 'mp4', 'mov', 'webm',
+    'excalidraw', 'canvas'
+  ];
 
   /** 是否为 Markdown 笔记文件。 */
   public static isMarkdown(fileName: string): boolean {
@@ -13,7 +21,17 @@ export class SyncFileFilter {
     return lower.endsWith('.md') || lower.endsWith('.markdown');
   }
 
-  /** 是否为参与同步的文件（Markdown 笔记或图片附件）。 */
+  /** 是否为支持内联预览的图片附件。 */
+  public static isImage(fileName: string): boolean {
+    const lower: string = fileName.toLowerCase();
+    const index: number = lower.lastIndexOf('.');
+    if (index <= 0) {
+      return false;
+    }
+    return SyncFileFilter.IMAGE_EXTENSIONS.includes(lower.substring(index + 1));
+  }
+
+  /** 是否为参与同步的文件（Markdown 笔记或受支持的知识库附件）。 */
   public static isSyncable(fileName: string): boolean {
     if (SyncFileFilter.isMarkdown(fileName)) {
       return true;
@@ -23,10 +41,10 @@ export class SyncFileFilter {
     if (index <= 0) {
       return false;
     }
-    return SyncFileFilter.IMAGE_EXTENSIONS.includes(lower.substring(index + 1));
+    return SyncFileFilter.ATTACHMENT_EXTENSIONS.includes(lower.substring(index + 1));
   }
 
-  /** 是否为二进制附件（图片，走二进制同步通道）。 */
+  /** 是否为二进制附件（图片/PDF/DOCX 等非 Markdown 附件，走二进制同步通道）。 */
   public static isBinary(fileName: string): boolean {
     return !SyncFileFilter.isMarkdown(fileName) && SyncFileFilter.isSyncable(fileName);
   }

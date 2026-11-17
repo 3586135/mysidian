@@ -13,6 +13,7 @@ export class WysiwygEditorBridge {
   public getSourceCaretOffset: () => number = (): number => 0;
   public applyToolbarAction: (action: string) => void = (_action: string): void => {};
   public insertImageTarget: (target: string) => void = (_target: string): void => {};
+  public insertWikiLinkTarget: (target: string) => void = (_target: string): void => {};
   public applyCompletionCandidate: (replaceFrom: number, replaceTo: number, title: string,
     insertText: string, kind: 'wiki' | 'tag') => void =
     (_f: number, _t: number, _title: string, _ins: string, _k: 'wiki' | 'tag'): void => {};
@@ -138,6 +139,9 @@ export struct WysiwygEditor {
     };
     this.bridge.insertImageTarget = (target: string): void => {
       this.engine.insertImageTarget(target);
+    };
+    this.bridge.insertWikiLinkTarget = (target: string): void => {
+      this.engine.insertWikiLinkTarget(target);
     };
     this.bridge.applyCompletionCandidate = (replaceFrom: number, replaceTo: number,
       title: string, insertText: string, kind: 'wiki' | 'tag'): void => {

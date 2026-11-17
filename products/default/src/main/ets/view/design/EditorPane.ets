@@ -1,8 +1,10 @@
 import { SymbolGlyphModifier } from '@kit.ArkUI';
+import { picker } from '@kit.CoreFileKit';
 import { photoAccessHelper } from '@kit.MediaLibraryKit';
 import { BusinessError } from '@kit.BasicServicesKit';
-import { DataViewResult, DataViewTask } from '@ohos/domain';
+import { DataViewResult, DataViewTask, SyncFileFilter } from '@ohos/domain';
 import { EmptyState, Logger } from '@ohos/common';
+import { VaultManager } from '@ohos/vault';
 import { MdDocumentView, MdDocumentViewController, MdInlineFlattener, WysiwygCodec } from '@ohos/markdown';
 import { CompletionCandidate, EditorTextUtils, ListContinuation } from '../../viewmodel/EditorTextUtils';
 import { VaultViewModel } from '../../viewmodel/VaultViewModel';
@@ -360,6 +362,9 @@ export struct EditorPane {
               },
               onPickImage: (): void => {
                 this.pickAndInsertImage();
+              },
+              onPickAttachment: (): void => {
+                this.pickAndInsertAttachment();
               }
             })
           }
@@ -1199,15 +1204,53 @@ export struct EditorPane {
     }
   }
 
+  /** 选择文档/音视频等附件并导入当前仓库附件目录，在光标处插入链接。 */
+  private async pickAndInsertAttachment(): Promise<void> {
+    try {
+      const hostContext = this.getUIContext().getHostContext();
+      const documentPicker = hostContext !== undefined ?
+        new picker.DocumentViewPicker(hostContext) : new picker.DocumentViewPicker();
+      const options = new picker.DocumentSelectOptions();
+      options.maxSelectNumber = 1;
+      const uris: string[] = await documentPicker.select(options);
+      if (uris.length === 0) {
+        return;
+      }
+      const uri: string = uris[0];
+      const origName: string = VaultManager.extractUriFileName(uri);
+      const extension: string = this.extensionOfUri(origName.length > 0 ? origName : uri, '');
+      const relative: string = await this.vm.importAttachment(uri, extension, origName);
+      if (relative.length === 0) {
+        this.toast($r('app.string.msg_attachment_failed'));
+        return;
+      }
+      const name: string = relative.substring(relative.lastIndexOf('/') + 1);
+      const isImageFile: boolean = SyncFileFilter.isImage(name);
+      if (!this.sourceMode) {
+        if (isImageFile) {
+          this.wysiwygBridge.insertImageTarget(name);
+        } else {
+          this.wysiwygBridge.insertWikiLinkTarget(name);
+        }
+      } else {
+        this.insertFormat(isImageFile ? `![[${name}]]` : `[[${name}]]`);
+      }
+      this.toast($r('app.string.msg_attachment_done'));
+    } catch (error) {
+      const err = error as BusinessError;
+      LOG.error(`pick attachment failed, code=${err.code}, message=${err.message}`);
+    }
+  }
+
   /** 从 URI 中提取扩展名（不含点）。 */
-  private extensionOfUri(uri: string): string {
+  private extensionOfUri(uri: string, fallback: string = 'png'): string {
     const clean: string = uri.split('?')[0];
     const index: number = clean.lastIndexOf('.');
     if (index < 0) {
-      return 'png';
+      return fallback;
     }
     const ext: string = clean.substring(index + 1).toLowerCase();
-    return ext.length > 0 ? ext : 'png';
+    return ext.length > 0 ? ext : fallback;
   }
 
   /** 轻提示（使用 UIContext 的 PromptAction，避免全局 promptAction 的弃用告警）。 */

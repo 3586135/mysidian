@@ -1,11 +1,12 @@
-import { common, ConfigurationConstant, Want } from '@kit.AbilityKit';
+import { common, ConfigurationConstant, Want, wantConstant } from '@kit.AbilityKit';
 import { UIContext } from '@kit.ArkUI';
 import { preferences } from '@kit.ArkData';
 import { BusinessError } from '@kit.BasicServicesKit';
+import { fileUri } from '@kit.CoreFileKit';
 import { BacklinkItem, CalendarDay, DataViewEntry, DataViewResult, DataViewTask, FileNode,
   FlatFileNode, GraphData, GraphEdge, GraphNode, LinkRef, MdBlock, MdBlockType, MdDocument,
-  MdFrontmatter, MdListItem, MdPropType, MdProperty, NoteRow, OutlineEntry, TagRef,
-  UnlinkedMention, VaultInfo } from '@ohos/domain';
+  MdFrontmatter, MdListItem, MdPropType, MdProperty, NoteRow, OutlineEntry, SyncFileFilter,
+  TagRef, UnlinkedMention, VaultInfo } from '@ohos/domain';
 import { Logger } from '@ohos/common';
 import { DataViewQuery, FrontmatterSerializer, MarkdownParser, TaskMetadata } from '@ohos/markdown';
 import { AttachmentResolver, BlockDao, DbHelper, DiffLine, FileHistory, FileStatInfo, HistorySnapshot,
@@ -39,13 +40,22 @@ export class RootFolderSummary {
   noteCount: number = 0;
 }
 
-/** 左侧抽屉目录树平铺条目（支持多级展开与笔记计数）。 */
+/** 左侧抽屉目录树平铺条目（支持多级展开与笔记/附件计数）。 */
 export class DrawerFolderItem {
   name: string = '';
   path: string = '';
   depth: number = 0;
   noteCount: number = 0;
+  attachmentCount: number = 0;
   hasChildren: boolean = false;
+}
+
+/** 仓库内的非 Markdown 附件展示条目（图片/PDF/DOCX 等）。 */
+export class VaultAttachmentItem {
+  name: string = '';
+  path: string = '';
+  ext: string = '';
+  isImage: boolean = false;
 }
 
 /**
@@ -1290,6 +1300,11 @@ export class VaultViewModel {
     }
     const note = await NoteResolver.resolve(context, this.currentVault.id, noteTarget);
     if (note === null) {
+      const attachRel: string = AttachmentResolver.resolve(noteTarget, this.selectedPath, this.vaultFiles);
+      if (attachRel.length > 0 && !SyncFileFilter.isMarkdown(attachRel)) {
+        this.openAttachmentFile(attachRel);
+        return;
+      }
       // 双链工作流：目标笔记不存在时自动创建同名笔记并打开（先写链接，后填内容）。
       const created: string = await this.createNoteByTitle(noteTarget);
       if (created.length === 0) {
@@ -1563,17 +1578,89 @@ export class VaultViewModel {
     return true;
   }
 
-  /** 导入图片附件到仓库 attachments 目录，返回附件相对路径。 */
-  public async importAttachment(uri: string, extension: string): Promise<string> {
+  /** 附件链接图片点击预览回调（由工作区 / 首页宿主挂载）。 */
+  public onPreviewAttachment: (uri: string) => void = (_uri: string): void => {};
+
+  /** 导入附件（图片 / PDF / DOCX 等）到仓库附件目录，返回附件相对路径。 */
+  public async importAttachment(uri: string, extension: string,
+    preferredName: string = ''): Promise<string> {
     const manager: VaultManager | null = this.manager;
     if (manager === null) {
       return '';
     }
-    const relative: string = await manager.importAttachment(this.currentVault, uri, extension);
+    const relative: string = await manager.importAttachment(
+      this.currentVault, uri, extension, preferredName);
     if (relative.length > 0) {
       await this.refreshTree();
     }
     return relative;
+  }
+
+  /** 按当前文件夹路径列出非 Markdown 附件（图片 / PDF / DOCX 等）。 */
+  public listAttachmentsInFolder(folderPath: string): VaultAttachmentItem[] {
+    const clean: string = VaultPath.normalize(folderPath).replace(/\/+$/, '');
+    if (clean.length === 0) {
+      return [];
+    }
+    const prefix: string = `${clean}/`;
+    const items: VaultAttachmentItem[] = [];
+    for (const file of this.vaultFiles) {
+      if (!file.startsWith(prefix) || SyncFileFilter.isMarkdown(file)) {
+        continue;
+      }
+      const item: VaultAttachmentItem = new VaultAttachmentItem();
+      item.path = file;
+      item.name = VaultPath.basename(file);
+      item.ext = VaultPath.extension(file).toUpperCase();
+      item.isImage = SyncFileFilter.isImage(file);
+      items.push(item);
+    }
+    items.sort((a: VaultAttachmentItem, b: VaultAttachmentItem): number =>
+      a.name.localeCompare(b.name));
+    return items;
+  }
+
+  /** 计算仓库内附件的可加载 file:// URI；无效返回空串。 */
+  public attachmentFileUri(relativePath: string): string {
+    if (relativePath.length === 0 || this.currentVault.rootPath.length === 0) {
+      return '';
+    }
+    const absPath: string = VaultPath.absolute(this.currentVault.rootPath, relativePath);
+    return absPath.length > 0 ? `file://${absPath}` : '';
+  }
+
+  /** 打开或预览仓库内附件：图片走全屏缩放预览，PDF/DOCX 等调用系统默认应用查看。 */
+  public openAttachmentFile(relativePath: string): boolean {
+    if (relativePath.length === 0 || this.currentVault.rootPath.length === 0) {
+      return false;
+    }
+    const absPath: string = VaultPath.absolute(this.currentVault.rootPath, relativePath);
+    if (SyncFileFilter.isImage(relativePath)) {
+      this.onPreviewAttachment(`file://${absPath}`);
+      return true;
+    }
+    const abilityContext: common.UIAbilityContext | undefined = AbilityContextHolder.context;
+    if (abilityContext === undefined) {
+      LOG.error('ability context unavailable for attachment open');
+      return false;
+    }
+    try {
+      const shareUri: string = fileUri.getUriFromPath(absPath);
+      const want: Want = {
+        action: 'ohos.want.action.viewData',
+        uri: shareUri,
+        flags: wantConstant.Flags.FLAG_AUTH_READ_URI_PERMISSION |
+          wantConstant.Flags.FLAG_AUTH_WRITE_URI_PERMISSION
+      };
+      abilityContext.startAbility(want).catch((error: BusinessError): void => {
+        LOG.warn(`open attachment viewer failed, code=${error.code}, message=${error.message}`);
+      });
+      return true;
+    } catch (error) {
+      const err = error as BusinessError;
+      LOG.error(`prepare attachment uri failed, code=${err.code}, message=${err.message}`);
+      return false;
+    }
   }
 
   /** 解析图片目标为可加载的 file URI；未命中返回空串。 */
@@ -1965,6 +2052,7 @@ export class VaultViewModel {
       item.path = node.path;
       item.depth = depth;
       item.noteCount = this.countMarkdownFilesUnder(`${node.path}/`);
+      item.attachmentCount = this.countAttachmentsUnder(`${node.path}/`);
       item.hasChildren = this.nodeHasChildDir(node);
       output.push(item);
       if (item.hasChildren && expandedPaths.includes(node.path)) {
@@ -2012,7 +2100,17 @@ export class VaultViewModel {
   private countMarkdownFilesUnder(prefix: string): number {
     let count: number = 0;
     for (const file of this.vaultFiles) {
-      if (file.startsWith(prefix) && file.toLowerCase().endsWith('.md')) {
+      if (file.startsWith(prefix) && SyncFileFilter.isMarkdown(file)) {
+        count++;
+      }
+    }
+    return count;
+  }
+
+  private countAttachmentsUnder(prefix: string): number {
+    let count: number = 0;
+    for (const file of this.vaultFiles) {
+      if (file.startsWith(prefix) && !SyncFileFilter.isMarkdown(file)) {
         count++;
       }
     }

@@ -265,5 +265,27 @@ export default function wysiwygCodecTest() {
       expect(outMd.includes('a\\|b')).assertTrue();
       expect(outMd.includes('`c|d`')).assertTrue();
     });
+
+    it('parsesOrderedListTriggersAndIncrementingSequences', 0, () => {
+      const t1: BlockTriggerResult | null = WysiwygTriggers.matchBlockPrefix('1. ');
+      expect(t1 !== null).assertTrue();
+      expect(t1?.kind).assertEqual(WysiwygBlockKind.ORDERED);
+      expect(t1?.ordinal).assertEqual(1);
+      expect(t1?.orderedDelimiter).assertEqual('.');
+
+      const t3: BlockTriggerResult | null = WysiwygTriggers.matchBlockPrefix('3) ');
+      expect(t3 !== null).assertTrue();
+      expect(t3?.kind).assertEqual(WysiwygBlockKind.ORDERED);
+      expect(t3?.ordinal).assertEqual(3);
+      expect(t3?.orderedDelimiter).assertEqual(')');
+
+      const orderedMd: string = '1. First\n2. Second\n3. Third';
+      const orderedDoc: WysiwygDocument = WysiwygCodec.parse(orderedMd);
+      expect(orderedDoc.paragraphs.length).assertEqual(3);
+      expect(orderedDoc.paragraphs[0].ordinal).assertEqual(1);
+      expect(orderedDoc.paragraphs[1].ordinal).assertEqual(2);
+      expect(orderedDoc.paragraphs[2].ordinal).assertEqual(3);
+      expect(WysiwygCodec.serialize(orderedDoc)).assertEqual(orderedMd);
+    });
   });
 }

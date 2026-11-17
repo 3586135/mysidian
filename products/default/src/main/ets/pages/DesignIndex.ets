@@ -9,6 +9,7 @@ import { SyncSettingsSheet } from '../view/design/SyncSettingsSheet';
 import { TrashSheet } from '../view/design/TrashSheet';
 import { VaultManagerSheet } from '../view/design/VaultManagerSheet';
 import { TreeItemMenuSheet } from '../view/design/TreeItemMenuSheet';
+import { ImagePreviewOverlay } from '../view/design/ImagePreviewOverlay';
 import {
   confirmTrashFolderAction,
   confirmTrashNoteAction,
@@ -22,7 +23,7 @@ import { GraphLayout, GraphLayoutStats } from '../viewmodel/GraphLayout';
 import { DesignPalette } from '../viewmodel/DesignPalette';
 import { SearchViewModel, TagSortMode } from '../viewmodel/SearchViewModel';
 import { SyncViewModel } from '../viewmodel/SyncViewModel';
-import { DrawerFolderItem, RecentNoteItem, VaultViewModel } from '../viewmodel/VaultViewModel';
+import { DrawerFolderItem, RecentNoteItem, VaultAttachmentItem, VaultViewModel } from '../viewmodel/VaultViewModel';
 import { AbilityContextHolder } from '../defaultability/AbilityContextHolder';
 
 const LOG: Logger = new Logger('DesignIndex');
@@ -280,6 +281,7 @@ struct DesignIndex {
   @Local homeMenuIsDir: boolean = false;   // 首页操作菜单目标是否目录
   @Local homeDialogKind: string = DesignDialogKind.NONE; // 首页重命名/新建子目录/移动对话框
   @Local homeDialogTargetPath: string = ''; // 首页对话框目标笔记路径
+  @Local homePreviewImageUri: string = ''; // 首页/抽屉点击图片附件时的全屏预览 URI
   @Local viewMode: number = DesignViewMode.HOME; // 页面状态机：0 首页 / 1 工作台
   @Local showCreateVaultDialog: boolean = false; // 新建仓库对话框
   private pendingExternalImport: boolean = false; // 建库完成后自动导入外部预览文件
@@ -477,6 +479,12 @@ struct DesignIndex {
 
   /** 系统返回键：工作台 → 信号下发工作台返回链；首页 → 依次关闭浮层/抽屉 → 清目录筛选 → 默认退出。 */
   onBackPress(): boolean {
+    if (this.homePreviewImageUri.length > 0) {
+      this.getUIContext().animateTo({ duration: 220, curve: Curve.Friction }, () => {
+        this.homePreviewImageUri = '';
+      });
+      return true;
+    }
     if (this.homeDialogKind !== DesignDialogKind.NONE) {
       this.getUIContext().animateTo({ duration: 220, curve: Curve.Friction }, () => {
         this.homeDialogKind = DesignDialogKind.NONE;
@@ -746,6 +754,17 @@ struct DesignIndex {
           }
         })
       }
+
+      if (this.homePreviewImageUri.length > 0) {
+        ImagePreviewOverlay({
+          uri: this.homePreviewImageUri,
+          onClose: (): void => {
+            this.getUIContext().animateTo({ duration: 220, curve: Curve.Friction }, () => {
+              this.homePreviewImageUri = '';
+            });
+          }
+        })
+      }
     }
     .width('100%')
     .height('100%')
@@ -935,7 +954,7 @@ struct DesignIndex {
                 ForEach(this.drawerFolders, (folder: DrawerFolderItem) => {
                   this.drawerFolderRow(folder)
                 }, (folder: DrawerFolderItem) =>
-                  `${folder.path}_${folder.noteCount}_${this.isDrawerDirExpanded(folder.path)}_${this.filesSegment === 0 && this.currentFolderPath === folder.path}`)
+                  `${folder.path}_${folder.noteCount}_${folder.attachmentCount}_${this.isDrawerDirExpanded(folder.path)}_${this.filesSegment === 0 && this.currentFolderPath === folder.path}`)
               }
             }
             .width('100%')
@@ -1128,7 +1147,7 @@ struct DesignIndex {
         .maxLines(1)
         .textOverflow({ overflow: TextOverflow.Ellipsis })
 
-      Text(`${folder.noteCount}`)
+      Text(`${folder.noteCount + folder.attachmentCount}`)
         .fontSize(12)
         .fontColor(this.filesSegment === 0 && this.currentFolderPath === folder.path ?
           this.tintFgOf(folder.path) : $r('app.color.design_text_secondary'))
@@ -1712,11 +1731,11 @@ struct DesignIndex {
     })
   }
 
-  /** 分段 0：纯笔记视图。列表/时间线走 List+Repeat 虚拟滚动，书架宫格走 Grid+Repeat，均懒加载。 */
+  /** 分段 0：笔记与目录附件视图。列表/时间线走 List+Repeat 虚拟滚动，书架宫格走 Grid+Repeat，均懒加载。 */
   @Builder
   notesSegmentContent() {
     Column() {
-      if (this.scopedNotes.length === 0) {
+      if (this.scopedNotes.length === 0 && this.scopedAttachments.length === 0) {
         if (this.currentFolderPath.length > 0) {
           this.filesToolbarRow()
         }
@@ -1743,8 +1762,38 @@ struct DesignIndex {
         .align(Alignment.Top)
         .scrollBar(BarState.Off)
         .edgeEffect(EdgeEffect.Spring)
+      } else if (this.scopedNotes.length === 0) {
+        this.filesToolbarRow()
+        List({ space: 10, scroller: this.filesScroller }) {
+          ForEach(this.scopedAttachments, (att: VaultAttachmentItem) => {
+            ListItem() {
+              this.attachmentItemCard(att)
+            }
+          }, (att: VaultAttachmentItem): string => `att_only_${att.path}`)
+        }
+        .cachedCount(6)
+        .width('100%')
+        .layoutWeight(1)
+        .scrollBar(BarState.Off)
+        .edgeEffect(EdgeEffect.Spring)
+        .contentEndOffset(CAPSULE_HEIGHT_VP + BAR_BOTTOM_VP + this.bottomInset + 24)
+        .padding({ left: BAR_SIDE_VP, right: BAR_SIDE_VP })
       } else if (this.filesViewMode === 2) {
         this.filesToolbarRow()
+        if (this.scopedAttachments.length > 0) {
+          List({ space: 8 }) {
+            ForEach(this.scopedAttachments, (att: VaultAttachmentItem) => {
+              ListItem() {
+                this.attachmentChipCard(att)
+              }
+            }, (att: VaultAttachmentItem): string => `g_att_${att.path}`)
+          }
+          .listDirection(Axis.Horizontal)
+          .scrollBar(BarState.Off)
+          .width('100%')
+          .height(42)
+          .padding({ left: BAR_SIDE_VP, right: BAR_SIDE_VP, bottom: 6 })
+        }
         this.bookshelfGridView(this.currentFolderPath.length === 0, false)
       } else {
         this.filesToolbarRow()
@@ -1763,6 +1812,20 @@ struct DesignIndex {
                 }
               }
             })
+          if (this.scopedAttachments.length > 0) {
+            ListItem() {
+              Text($r('app.string.files_attachments_heading'))
+                .fontSize(12)
+                .fontWeight(FontWeight.Medium)
+                .fontColor($r('app.color.design_text_secondary'))
+                .padding({ left: 4, top: 8, bottom: 2 })
+            }
+            ForEach(this.scopedAttachments, (att: VaultAttachmentItem) => {
+              ListItem() {
+                this.attachmentItemCard(att)
+              }
+            }, (att: VaultAttachmentItem): string => `att_${att.path}`)
+          }
         }
         .cachedCount(6)
         .width('100%')
@@ -2303,6 +2366,15 @@ struct DesignIndex {
     return this.sortNoteList(result);
   }
 
+  /** 当前选中文件夹内的非 Markdown 附件列表（图片、PDF、DOCX 等）。 */
+  @Computed
+  get scopedAttachments(): VaultAttachmentItem[] {
+    if (this.currentFolderPath.length === 0) {
+      return [];
+    }
+    return this.vm.listAttachmentsInFolder(this.currentFolderPath);
+  }
+
   /** 左侧抽屉文件夹目录树平铺列表（随文件树与展开状态实时响应）。 */
   @Computed
   get drawerFolders(): DrawerFolderItem[] {
@@ -2683,6 +2755,120 @@ struct DesignIndex {
     .onClick(() => {
       this.handleCardTap(() => {
         this.openWorkspace({ 'openPath': item.path });
+      });
+    })
+  }
+
+  /** 在首页打开或预览选中文件夹下的附件（图片弹出缩放预览，PDF/DOCX 调用系统查看）。 */
+  private openHomeAttachment(item: VaultAttachmentItem): void {
+    this.vm.onPreviewAttachment = (uri: string): void => {
+      this.getUIContext().animateTo({ duration: 220, curve: Curve.Friction }, () => {
+        this.homePreviewImageUri = uri;
+      });
+    };
+    const opened: boolean = this.vm.openAttachmentFile(item.path);
+    if (!opened) {
+      this.toast($r('app.string.msg_attachment_failed'));
+    }
+  }
+
+  /** 文件页书架宫格模式顶部横向附件胶囊。 */
+  @Builder
+  attachmentChipCard(item: VaultAttachmentItem) {
+    Row({ space: 6 }) {
+      SymbolGlyph($r('sys.symbol.doc_text'))
+        .fontSize(13)
+        .fontColor([this.tintFgOf(item.path)])
+      Text(item.name)
+        .fontSize(12)
+        .fontWeight(FontWeight.Medium)
+        .fontColor($r('app.color.design_text_primary'))
+        .maxLines(1)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
+        .constraintSize({ maxWidth: 160 })
+      if (item.ext.length > 0) {
+        Text(item.ext)
+          .fontSize(10)
+          .fontWeight(FontWeight.Bold)
+          .fontColor(this.tintFgOf(item.path))
+          .padding({ left: 5, right: 5, top: 1, bottom: 1 })
+          .borderRadius(6)
+          .backgroundColor(this.tintPillOf(item.path))
+      }
+    }
+    .padding({ left: 10, right: 10, top: 6, bottom: 6 })
+    .borderRadius(12)
+    .backgroundColor(this.tintBgOf(item.path))
+    .border({ width: 0.8, color: this.tintPillOf(item.path) })
+    .onClick(() => {
+      this.handleCardTap(() => {
+        this.openHomeAttachment(item);
+      });
+    })
+  }
+
+  /** 文件页目录视图中的附件卡片（图片直接显示缩略图并点击全屏预览，PDF/DOCX 显示类型徽标并调系统查看）。 */
+  @Builder
+  attachmentItemCard(item: VaultAttachmentItem) {
+    Row({ space: 12 }) {
+      Stack() {
+        if (item.isImage && this.vm.attachmentFileUri(item.path).length > 0) {
+          Image(this.vm.attachmentFileUri(item.path))
+            .width(38)
+            .height(42)
+            .objectFit(ImageFit.Cover)
+            .borderRadius(11)
+        } else {
+          SymbolGlyph($r('sys.symbol.doc_text'))
+            .fontSize(18)
+            .fontColor([this.tintFgOf(item.path)])
+        }
+      }
+      .width(38)
+      .height(42)
+      .borderRadius(11)
+      .backgroundColor(this.tintPillOf(item.path))
+
+      Column({ space: 5 }) {
+        Text(item.name)
+          .fontSize(15.5)
+          .fontWeight(FontWeight.Medium)
+          .fontColor($r('app.color.design_text_primary'))
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+
+        Row({ space: 6 }) {
+          if (item.ext.length > 0) {
+            Text(item.ext)
+              .fontSize(11)
+              .fontWeight(FontWeight.Medium)
+              .fontColor(this.tintFgOf(item.path))
+              .padding({ left: 7, right: 7, top: 2, bottom: 2 })
+              .borderRadius(7)
+              .backgroundColor(this.tintPillOf(item.path))
+              .maxLines(1)
+          }
+          Text(item.path)
+            .fontSize(11.5)
+            .fontColor($r('app.color.design_text_secondary'))
+            .opacity(0.85)
+            .layoutWeight(1)
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+        }
+        .width('100%')
+      }
+      .alignItems(HorizontalAlign.Start)
+      .layoutWeight(1)
+    }
+    .width('100%')
+    .padding({ left: 12, right: 12, top: 12, bottom: 12 })
+    .borderRadius(16)
+    .backgroundColor(this.tintBgOf(item.path))
+    .border({ width: 0.8, color: this.tintPillOf(item.path) })
+    .onClick(() => {
+      this.handleCardTap(() => {
+        this.openHomeAttachment(item);
       });
     })
   }

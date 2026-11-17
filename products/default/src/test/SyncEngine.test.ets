@@ -1,5 +1,5 @@
 import { describe, it, expect } from '@ohos/hypium';
-import { RemoteEntry, SyncPathGuard, SyncSafetyReason } from '@ohos/domain';
+import { RemoteEntry, SyncFileFilter, SyncPathGuard, SyncSafetyReason } from '@ohos/domain';
 import { SyncBaseline } from '@ohos/vault';
 import { SyncDecision, SyncEngine } from '@ohos/sync';
 
@@ -174,8 +174,23 @@ export default function syncEngineTest() {
       expect(SyncPathGuard.isSafeSyncPath('.mysidian/manifest.json')).assertFalse();
       expect(SyncPathGuard.isSafeSyncPath('.git/HEAD')).assertFalse();
       expect(SyncPathGuard.isSafeSyncPath('conflicts/2026_note.md')).assertFalse();
-      expect(SyncPathGuard.isSafeSyncPath('docs/board.canvas')).assertFalse();
-      expect(SyncPathGuard.isSafeSyncPath('docs/paper.pdf')).assertFalse();
+      expect(SyncPathGuard.isSafeSyncPath('docs/board.canvas')).assertTrue();
+      expect(SyncPathGuard.isSafeSyncPath('docs/paper.pdf')).assertTrue();
+      expect(SyncPathGuard.isSafeSyncPath('attachments/report.docx')).assertTrue();
+      expect(SyncPathGuard.isSafeSyncPath('attachments/sheet.xlsx')).assertTrue();
+      expect(SyncPathGuard.isSafeSyncPath('attachments/deck.pptx')).assertTrue();
+      expect(SyncPathGuard.isSafeSyncPath('attachments/sketch.excalidraw')).assertTrue();
+      expect(SyncPathGuard.isSafeSyncPath('attachments/audio.mp3')).assertTrue();
+      expect(SyncPathGuard.isSafeSyncPath('attachments/video.mp4')).assertTrue();
+      expect(SyncPathGuard.isSafeSyncPath('backup.zip')).assertFalse();
+      expect(SyncPathGuard.isSafeSyncPath('draft.tmp')).assertFalse();
+      expect(SyncPathGuard.isSafeSyncPath('vault.db')).assertFalse();
+      expect(SyncFileFilter.isSyncable('attachment/spec.pdf')).assertTrue();
+      expect(SyncFileFilter.isBinary('attachment/spec.pdf')).assertTrue();
+      expect(SyncFileFilter.isImage('attachment/spec.pdf')).assertFalse();
+      expect(SyncFileFilter.isImage('attachments/pic.png')).assertTrue();
+      expect(SyncFileFilter.isSyncable('docs/report.docx')).assertTrue();
+      expect(SyncFileFilter.isSyncable('backup.zip')).assertFalse();
     });
 
     it('parses and matches .mysidianignore rules cleanly', 0, () => {

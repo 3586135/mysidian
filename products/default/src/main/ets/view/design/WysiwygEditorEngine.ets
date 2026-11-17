@@ -541,6 +541,8 @@ export class WysiwygEditorEngine {
 
     let forcedWikiCaret: number = -1;
     if (oldSpanLines === 1 && newSpanLines === 1) {
+      const prevLineRange: [number, number] = WysiwygTriggers.lineRange(oldText, startLine);
+      const wasEmptyLine: boolean = prevLineRange[0] === prevLineRange[1];
       this.prevPlainText = newText;
       if (startLine < this.metas.length && this.metas[startLine].kind === WysiwygBlockKind.TABLE) {
         forcedWikiCaret = this.handleMutationOnTableLine(startLine, raStart, raEnd, insertedSlice, newText);
@@ -548,6 +550,13 @@ export class WysiwygEditorEngine {
         this.applyTypingOverrideIfMatching(startLine, rbStart, raStart, raEnd);
         forcedWikiCaret = this.tryLiveAutoPairWiki(startLine, raStart, raEnd, newText);
         this.tryLiveMarkdownTriggers(startLine, raStart, raEnd, this.prevPlainText);
+        if (wasEmptyLine && startLine < this.metas.length &&
+          this.metas[startLine].kind !== WysiwygBlockKind.PARAGRAPH) {
+          const curRange: [number, number] = WysiwygTriggers.lineRange(this.prevPlainText, startLine);
+          if (curRange[1] > curRange[0]) {
+            this.applyParagraphVisualStyle(startLine, this.prevPlainText);
+          }
+        }
       }
     } else if (oldSpanLines === 1 && newSpanLines === 2) {
       this.typingOverrideActive = false;
@@ -827,6 +836,61 @@ export class WysiwygEditorEngine {
       this.richController.addTextSpan('\n', { offset: insertAt + 2, style: bodyStyle, paragraphStyle: bodyPStyle });
       this.prevPlainText = expected;
       this.richController.setCaretOffset(insertAt + 3);
+    }
+    this.emitActiveKind();
+    this.emitImmediateChange();
+  }
+
+  /** 在当前光标处插入可点击的 Wiki/附件双链 `[[target]]`。 */
+  public insertWikiLinkTarget(target: string): void {
+    if (!this.ready || target.length === 0) {
+      return;
+    }
+    this.pushUndoNow();
+    const curText: string = this.prevPlainText;
+    this.syncMetaCountToPlainText(curText);
+    const caret: number = this.safeCaret();
+    const pIdx: number = WysiwygTriggers.countNewlines(curText, 0, caret);
+    const meta: WysiwygParagraph = pIdx >= 0 && pIdx < this.metas.length
+      ? this.metas[pIdx] : new WysiwygParagraph();
+    const colors: WysiwygThemeColors = WysiwygStyleHelper.resolveThemeColors(this.resMgr);
+    const inline: WysiwygInline = new WysiwygInline();
+    inline.kind = WysiwygSpanKind.WIKI_LINK;
+    inline.target = target;
+    inline.originalDisplay = target;
+    inline.text = target;
+    const addSpace: boolean = caret >= curText.length || curText.charAt(caret) !== ' ';
+    const inserted: string = addSpace ? `${target} ` : target;
+    const nextText: string = `${curText.substring(0, caret)}${inserted}${curText.substring(caret)}`;
+    const linkStyle: RichEditorTextStyle = WysiwygStyleHelper.buildInlineTextStyle(
+      meta, inline, this.fontSize, colors);
+    const defStyle: RichEditorTextStyle = WysiwygStyleHelper.buildDefaultTextStyle(
+      meta, this.fontSize, colors);
+    const pStyle: RichEditorParagraphStyle = this.paragraphStyleForIndex(this.metas, pIdx);
+    this.isLoadingDocument = true;
+    try {
+      this.expectedProgrammaticText = nextText;
+      this.richController.addTextSpan(target, {
+        offset: caret,
+        style: linkStyle,
+        paragraphStyle: pStyle,
+        urlStyle: WysiwygStyleHelper.encodeSpanUrl(WysiwygSpanKind.WIKI_LINK, target, target)
+      });
+      if (addSpace) {
+        this.richController.addTextSpan(' ', {
+          offset: caret + target.length,
+          style: defStyle,
+          paragraphStyle: pStyle
+        });
+      }
+      this.prevPlainText = nextText;
+      this.expectedProgrammaticText = nextText;
+      const nextCaret: number = caret + inserted.length;
+      this.lastCaretOffset = nextCaret;
+      this.richController.setCaretOffset(nextCaret);
+      this.richController.setTypingStyle(defStyle);
+    } finally {
+      this.isLoadingDocument = false;
     }
     this.emitActiveKind();
     this.emitImmediateChange();
@@ -1823,6 +1887,8 @@ export class WysiwygEditorEngine {
       if (nextItem.kind === WysiwygBlockKind.ORDERED) {
         this.renumberOrderedFrom(lineIdx + 1, newText);
       }
+      const nextCaret: number = this.safeCaret();
+      this.applyTypingStyleForCaret(lineIdx + 1, nextCaret, newText);
       return;
     }
 
@@ -2638,6 +2704,8 @@ export class WysiwygEditorEngine {
         end: spanEnd,
         style: pStyle
       });
+    } else if (pIdx === WysiwygTriggers.countNewlines(fullText, 0, this.safeCaret())) {
+      this.richController.setTypingParagraphStyle(pStyle);
     }
     if (range[1] > range[0]) {
       if (meta.kind === WysiwygBlockKind.CODE) {
@@ -2725,14 +2793,13 @@ export class WysiwygEditorEngine {
       this.metas[i - 1].indent === this.metas[anchorIdx].indent) {
       i--;
     }
-    let ord: number = 1;
+    let ord: number = Math.max(1, this.metas[i].ordinal);
+    const caretLine: number = WysiwygTriggers.countNewlines(fullText, 0, this.safeCaret());
     while (i < this.metas.length && this.metas[i].kind === WysiwygBlockKind.ORDERED) {
       if (this.metas[i].indent === this.metas[anchorIdx].indent) {
-        if (i === anchorIdx && ord === 1 && this.metas[i].ordinal > 1) {
-          ord = this.metas[i].ordinal;
-        }
-        if (this.metas[i].ordinal !== ord) {
-          this.metas[i].ordinal = ord;
+        const changed: boolean = this.metas[i].ordinal !== ord;
+        this.metas[i].ordinal = ord;
+        if (changed || i === anchorIdx || i === caretLine) {
           this.applyParagraphVisualStyle(i, fullText);
         }
         ord++;

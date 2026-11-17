@@ -135,6 +135,11 @@ export struct WorkspaceView {
     this.vm.onNoteCreated = (path: string): void => {
       this.toast($r('app.string.msg_wiki_created'));
     };
+    this.vm.onPreviewAttachment = (uri: string): void => {
+      this.animAssign((): void => {
+        this.previewImageUri = uri;
+      });
+    };
     this.commands = this.buildCommands();
     // 外部启动动作：templates → 直接打开模板选择浮层。
     if (this.launchAction === 'templates') {
@@ -145,6 +150,7 @@ export struct WorkspaceView {
   aboutToDisappear(): void {
     this.vm.onScrollToHeading = (heading: string): void => {};
     this.vm.onNoteCreated = (path: string): void => {};
+    this.vm.onPreviewAttachment = (_uri: string): void => {};
   }
 
   /** @Entry onBackPress 经信号对象触发的返回链。 */

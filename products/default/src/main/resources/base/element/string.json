@@ -785,6 +785,18 @@
       "value": "图片导入失败"
     },
     {
+      "name": "msg_attachment_done",
+      "value": "附件已插入"
+    },
+    {
+      "name": "msg_attachment_failed",
+      "value": "附件导入失败"
+    },
+    {
+      "name": "files_attachments_heading",
+      "value": "附件"
+    },
+    {
       "name": "tab_graph",
       "value": "图谱"
     },

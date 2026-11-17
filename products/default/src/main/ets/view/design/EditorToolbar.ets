@@ -49,6 +49,7 @@ export struct EditorToolbar {
   @Event onUndo: () => void = (): void => {};
   @Event onRedo: () => void = (): void => {};
   @Event onPickImage: () => void = (): void => {};
+  @Event onPickAttachment: () => void = (): void => {};
 
   build() {
     Scroll() {
@@ -116,6 +117,10 @@ export struct EditorToolbar {
         ToolbarChip({
           label: 'IMG', fontSize: 11, hPad: 9, btnOpacity: 1, active: false,
           onTap: (): void => { this.onPickImage(); }
+        })
+        ToolbarChip({
+          label: '附件', fontSize: 12, hPad: 10, btnOpacity: 1, active: false,
+          onTap: (): void => { this.onPickAttachment(); }
         })
         ToolbarChip({
           label: '表格', fontSize: 12, hPad: 10, btnOpacity: 1, active: false,

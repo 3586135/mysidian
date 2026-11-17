@@ -431,10 +431,24 @@ export class VaultManager {
     return this.relocateNote(vault, relativePath, newRelativePath);
   }
 
+  /** 解析仓库附件存储目录：优先使用已存在的 attachments / attachment，否则新建 attachments。 */
+  public static resolveAttachmentDir(vaultRoot: string): string {
+    const pluralAbs: string = VaultPath.absolute(vaultRoot, VaultManager.ATTACHMENT_DIR);
+    if (fileIo.accessSync(pluralAbs)) {
+      return VaultManager.ATTACHMENT_DIR;
+    }
+    const singularAbs: string = VaultPath.absolute(vaultRoot, 'attachment');
+    if (fileIo.accessSync(singularAbs)) {
+      return 'attachment';
+    }
+    return VaultManager.ATTACHMENT_DIR;
+  }
+
   /** 把图片二进制写入仓库附件目录，返回相对路径。 */
   public async importImageBuffer(vault: VaultInfo, data: ArrayBuffer,
     extension: string): Promise<string> {
-    const dir: string = VaultPath.absolute(vault.rootPath, VaultManager.ATTACHMENT_DIR);
+    const attachDir: string = VaultManager.resolveAttachmentDir(vault.rootPath);
+    const dir: string = VaultPath.absolute(vault.rootPath, attachDir);
     if (!fileIo.accessSync(dir)) {
       fileIo.mkdirSync(dir, true);
     }
@@ -454,13 +468,14 @@ export class VaultManager {
       fileIo.closeSync(file);
     }
     await VaultDao.touch(this.context, vault.id);
-    return `${VaultManager.ATTACHMENT_DIR}/${name}`;
+    return `${attachDir}/${name}`;
   }
 
-  /** 导入附件（图片）到 attachments 目录，返回仓库相对路径。 */
+  /** 导入附件（图片 / PDF / DOCX 等）到附件目录，返回仓库相对路径。 */
   public async importAttachment(vault: VaultInfo, sourceUri: string,
-    extension: string): Promise<string> {
-    const dir: string = VaultPath.absolute(vault.rootPath, VaultManager.ATTACHMENT_DIR);
+    extension: string, preferredName: string = ''): Promise<string> {
+    const attachDir: string = VaultManager.resolveAttachmentDir(vault.rootPath);
+    const dir: string = VaultPath.absolute(vault.rootPath, attachDir);
     if (!fileIo.accessSync(dir)) {
       fileIo.mkdirSync(dir, true);
     }
@@ -469,8 +484,13 @@ export class VaultManager {
       ext = ext.substring(1);
     }
     const suffix: string = ext.length > 0 ? `.${ext}` : '';
-    const name: string = `${Date.now()}_${Math.floor(Math.random() * 100000)}${suffix}`;
-    const target: string = `${dir}/${name}`;
+    const cleanedPref: string = preferredName.trim().replace(/[/\\:*?"<>|]/g, '_');
+    let relTarget: string = `${attachDir}/${Date.now()}_${Math.floor(Math.random() * 100000)}${suffix}`;
+    if (cleanedPref.length > 0 && cleanedPref !== '.' && cleanedPref !== '..') {
+      const candidateName: string = cleanedPref.includes('.') ? cleanedPref : `${cleanedPref}${suffix}`;
+      relTarget = VaultManager.uniqueRestoredName(vault.rootPath, `${attachDir}/${candidateName}`);
+    }
+    const target: string = VaultPath.absolute(vault.rootPath, relTarget);
     try {
       ZipTransfer.copyUriToFile(sourceUri, target);
     } catch (error) {
@@ -479,7 +499,7 @@ export class VaultManager {
       return '';
     }
     await VaultDao.touch(this.context, vault.id);
-    return `${VaultManager.ATTACHMENT_DIR}/${name}`;
+    return relTarget;
   }
 
   /** 列出仓库内全部文件的相对路径（附件解析用）。 */
