@@ -4,7 +4,7 @@ import { BusinessError } from '@kit.BasicServicesKit';
 import { RemoteEntry, RemoteTrashStatus, SyncConfig, SyncConflict, SyncFileFilter, SyncPathGuard,
   SyncPlanSummary, SyncProvider, SyncSafetyReason, SyncState, SyncStatus, VaultInfo } from '@ohos/domain';
 import { Logger } from '@ohos/common';
-import { FileHistory, SyncBaseline, SyncBaselineRow, SyncStateDao } from '@ohos/vault';
+import { FileHistory, SyncBaseline, SyncBaselineRow, SyncStateDao, VaultManager } from '@ohos/vault';
 import { ConflictResolver } from './ConflictResolver';
 import { WebDavProvider } from '../provider/WebDavProvider';
 
@@ -28,6 +28,7 @@ export enum SyncDecision {
   PULL_CHANGED = 'pullChanged',
   PULL_EXTERNAL = 'pullExternal',
   TRASH_REMOTE = 'trashRemote',
+  TRASH_LOCAL = 'trashLocal',
   SKIP_DELETED_LOCAL = 'skipDeletedLocal',
   CONFLICT = 'conflict',
   CHECK_CONTENT = 'checkContent'
@@ -71,6 +72,7 @@ class SyncExecutionPlan {
   pulls: RemoteEntry[] = [];
   conflicts: PlannedConflictItem[] = [];
   trashes: RemoteEntry[] = [];
+  localTrashes: RemoteEntry[] = [];
   keptLocalDeleted: RemoteEntry[] = [];
   verifiedEqualEntries: RemoteEntry[] = [];
   serverTagMap: Map<string, string> = new Map<string, string>();
@@ -146,6 +148,9 @@ export class SyncEngine {
       }
       if (progress.fatalError.length === 0) {
         await this.executeRemoteTrashes(provider, plan.trashes, plan.keptLocalDeleted, progress);
+      }
+      if (progress.fatalError.length === 0) {
+        await this.executeLocalTrashes(provider, vault, context, plan.localTrashes, progress);
       }
       if (progress.fatalError.length === 0) {
         await this.executePulls(provider, vault, plan.pulls, context, progress);
@@ -301,6 +306,10 @@ export class SyncEngine {
         plan.pulls.push(remote);
         continue;
       }
+      if (decision === SyncDecision.TRASH_LOCAL) {
+        plan.localTrashes.push(local);
+        continue;
+      }
       if (decision === SyncDecision.CHECK_CONTENT && remote !== undefined) {
         try {
           const remoteText: string = await provider.readRemote(local.path);
@@ -373,19 +382,21 @@ export class SyncEngine {
       }
     });
 
+    // 远端软删与本地回收站传播统一计入批量删除闸门：任一侧超额都要求用户确认。
+    const pendingTrashTotal: number = plan.trashes.length + plan.localTrashes.length;
     const plannedChanges: number = plan.uploads.length + plan.pulls.length +
-      plan.trashes.length + plan.conflicts.length;
+      plan.trashes.length + plan.conflicts.length + plan.localTrashes.length;
     const plannedRiskyChanges: number = plan.uploads.length + plan.trashes.length +
-      plan.conflicts.length;
+      plan.conflicts.length + plan.localTrashes.length;
     const reason: SyncSafetyReason = SyncEngine.evaluateSafetyGate(
       localEntries.length, remoteMap.size, plan.baselines.size,
-      plan.trashes.length, syncedBaselineCount, plan.targetChanged,
+      pendingTrashTotal, syncedBaselineCount, plan.targetChanged,
       plannedChanges, plannedRiskyChanges);
     const summary: SyncPlanSummary = new SyncPlanSummary();
     summary.uploads = plan.uploads.length;
     summary.downloads = plan.pulls.length;
     summary.conflicts = plan.conflicts.length;
-    summary.trashes = plan.trashes.length;
+    summary.trashes = pendingTrashTotal;
     summary.reason = reason;
     summary.requiresConfirmation = reason !== SyncSafetyReason.NONE && !confirmed;
     summary.samplePaths = SyncEngine.collectSamplePaths(plan);
@@ -397,6 +408,12 @@ export class SyncEngine {
     const out: string[] = [];
     const limit: number = 5;
     for (const item of plan.trashes) {
+      if (out.length >= limit) {
+        return out;
+      }
+      out.push(item.path);
+    }
+    for (const item of plan.localTrashes) {
       if (out.length >= limit) {
         return out;
       }
@@ -502,6 +519,48 @@ export class SyncEngine {
           return;
         }
         progress.itemErrors.push(`${deleted.path}: ${msg}`);
+      }
+    }
+  }
+
+  /**
+   * 传播远端删除到本地：远端文件已被其他端删除（本地基线 synced 且内容未变）时，
+   * 把本地文件移入仓库回收站并清理索引记录，避免下一轮把已删除的文件推回远端。
+   * 执行前用独立 HEAD 探测二次确认远端确实已不存在，防止部分列举或竞态误删本地。
+   */
+  private async executeLocalTrashes(provider: SyncProvider, vault: VaultInfo,
+    context: common.Context, localTrashes: RemoteEntry[],
+    progress: SyncExecutionProgress): Promise<void> {
+    if (localTrashes.length === 0) {
+      return;
+    }
+    const manager: VaultManager = await VaultManager.create(context);
+    for (const entry of localTrashes) {
+      if (progress.fatalError.length > 0) {
+        return;
+      }
+      try {
+        const remoteStat: RemoteEntry | null = await provider.stat(entry.path);
+        if (remoteStat !== null) {
+          LOG.warn(`sync local trash skip (remote still exists): ${entry.path}`);
+          continue;
+        }
+        LOG.info(`sync trash local: ${entry.path}`);
+        const trashRel: string = await manager.trashNote(vault, entry.path);
+        if (trashRel.length === 0) {
+          LOG.warn(`sync local trash missing file: ${entry.path}`);
+          continue;
+        }
+        this.status.pendingTrashed++;
+        progress.succeededTrashes.add(entry.path);
+      } catch (error) {
+        const msg: string = SyncEngine.errorMessageOf(error);
+        LOG.warn(`sync local trash failed (${entry.path}): ${msg}`);
+        if (SyncEngine.isFatalSyncError(msg)) {
+          progress.fatalError = msg;
+          return;
+        }
+        progress.itemErrors.push(`${entry.path}: ${msg}`);
       }
     }
   }
@@ -871,6 +930,12 @@ export class SyncEngine {
   public static decideLocalEntry(local: RemoteEntry, remote: RemoteEntry | undefined,
     baseline: SyncBaseline | undefined, isMarkdown: boolean = true): SyncDecision {
     if (remote === undefined) {
+      // 远端已消失而本地仍是上次同步后的原样（基线 synced 且内容未变）：
+      // 判定为其他端删除，传播到本地回收站，避免把删除的文件推回远端造成“删除后复活”。
+      if (baseline !== undefined && baseline.state === 'synced' &&
+        baseline.fileHash === local.etag) {
+        return SyncDecision.TRASH_LOCAL;
+      }
       return SyncDecision.PUSH_NEW;
     }
     if (remote.etag === local.etag) {

@@ -1,6 +1,6 @@
 # 开发状态与设计决策
 
-> 最后更新：2026-11-15。本文档记录各里程碑的功能实现、关键设计决策、验证状态与已知问题，供后续开发（含 AI 协作）快速接续。
+> 最后更新：2026-11-17。本文档记录各里程碑的功能实现、关键设计决策、验证状态与已知问题，供后续开发（含 AI 协作）快速接续。
 
 ## 里程碑历史（git 提交）
 
@@ -17,6 +17,23 @@
 | v0.5.0 | **安全、性能与生产力增强**：Asset Store 密码硬件级加密、DB v4 同步哈希缓存、冲突处理中心、FTS5 自愈 + BM25 排序、未链接提及 RDB 化、页内查找替换、文件树节点操作菜单、图片全屏缩放预览、应用内主题切换 |
 | v0.6.0 | **查询引擎 RDB 化、代码高亮、书签、本地快照备份与多端生态**：Dataview/日历 RDB 批量加速、列表项文本与标签入库、原生代码块语法着色、置顶书签、本地定时/一键快照备份恢复、2in1 键盘快捷键与桌面长按快捷方式 |
 | v1.0.0 | **全端质感打磨、同步安全无感化、系统打开方式与 1.0 正式发布**：首页默认素雅 5 色莫兰迪纸感列表与原地目录穿透面包屑、透明毛玻璃三页签底栏、按年月分卷日记（`日记/YYYY-MM/YYYY-MM-DD.md`）、自适应大纲浮层与多行编辑工具栏、WebDAV 干跑安全闸门/断点落盘/`.trash/` 软删与新建仓库自签名开关、系统 `.md`「打开方式」只读预览与一键导入、Ceramic Washi 分层应用图标、`md_*` 资源解耦与全模块单测通过 |
+
+## 近期变更（未提交，2026-11-17）
+
+### 1. 修复跨设备删除后笔记"自动恢复"（同步引擎核心缺陷）
+- **根因**（模拟器持久 hilog 实锤）：`decideLocalEntry` 对"本地存在 + 远端消失"一律返回 `PUSH_NEW`，即使本地基线 synced 且内容未变。多设备同库时，A 端删除笔记（远端 MOVE 至 `.trash/`）后，B 端下一轮同步把该文件**重新推回远端**，A 端再按 serverTag 变化 `PULL_NEW` 拉回——删除在 10 分钟被动同步周期内"自动恢复"（实测日志：2026-11-16 22:13 `real 731→729` 后模拟器 `sync push` 重传手机端刚删的 2 篇笔记）。
+- **修复**：`decideLocalEntry` 在 `remote === undefined` 且基线 `synced`、`baseline.fileHash === local.etag`（本地未改）时返回新增决策 `TRASH_LOCAL`；新增 `executeLocalTrashes` 经 `VaultManager.trashNote` 把本地文件移入仓库回收站并清理索引，执行前用 `WebDavProvider.stat()` 独立 HEAD 探测二次确认远端确实已不存在（防部分列举/竞态误删），远端仍存在则跳过等待下轮自愈。本地已改（哈希与基线不符）仍走 `PUSH_NEW` 保留用户修改。
+- 远端软删与本地传播统一计入 `evaluateSafetyGate` 批量删除闸门（≥10 个或 ≥30% 需确认），`SyncPlanSummary.trashes` 合并两侧计数，确认卡片与样例路径（`collectSamplePaths`）覆盖 `localTrashes`。
+- 单测：`SyncEngine.test.ets` 新增 synced/已改/conflict/local_deleted/无基线 五分支决策断言。
+
+### 2. 修复空笔记推送失败被误判为认证故障（WebDAV 空请求体缺陷）
+- `sendOnce` 对空字符串 body 也设置 `options.extraData = ''`，OH http 模块抛 BusinessError 401 "Parameter error"（本地参数校验错误，非 HTTP 401），经 3 次重试后进入 `isAuthOrConfigError` 的 `(401)` 匹配 → `sync partial failure` → **300s 认证冷却**，期间一切自动同步静默停摆（新建笔记 1 秒后的首次推送即触发）。空字符串 body 现直接省略 `extraData`（0 字节 PUT 正常发送）。
+- `WebDavProvider.stat()` 由全量 `list('')` 重查改为单路径 HEAD 探测（原实现与列举同源，无法防部分列举误判；该方法此前无调用方，语义安全变更）。
+
+### 3. 验证（Mate 90 Pro 模拟器 + 真实 fnOS WebDAV 实测）
+- 工作台 FAB 新建空笔记 → 2 秒后自动同步推送 0 字节文件一次成功（旧版必报 `Parameter error (401)` 并进入冷却；远端 HEAD 确认 `200 len=0`）。
+- PowerShell 模拟另一设备将远端文件 MOVE 至 `.trash/` → 模拟器下轮 `sync trash local`（无 `sync push`），本地文件入 `1794886649221_未命名-*.md` 回收站、DB 行清理；再下一轮 737/737/737 全一致无复活。
+- 三台模拟器（Mate 90 Pro / Mate X7 / MatePad Pro 13）安装启动无异常。
 
 ## 近期变更（v1.0.0，2026-11-15）
 

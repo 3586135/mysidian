@@ -361,13 +361,30 @@ export class WebDavProvider implements SyncProvider {
   }
 
   public async stat(path: string): Promise<RemoteEntry | null> {
-    const entries: RemoteEntry[] = await this.list('');
-    for (const entry of entries) {
-      if (entry.path === path) {
-        return entry;
-      }
+    WebDavProvider.assertSafeSyncPath(path);
+    const url: string = `${this.baseUrl}/${WebDavProvider.encodePath(path)}`;
+    const response: http.HttpResponse = await this.request(url, http.RequestMethod.HEAD,
+      http.HttpDataType.STRING);
+    if (response.responseCode === 404) {
+      return null;
     }
-    return null;
+    const entry: RemoteEntry = new RemoteEntry();
+    entry.path = path;
+    entry.isDir = false;
+    if (response.responseCode >= 200 && response.responseCode < 300) {
+      entry.serverTag = WebDavProvider.headerValueOf(response,
+        ['getetag', 'GetETag', 'GETETAG']);
+      const sizeText: string = WebDavProvider.headerValueOf(response,
+        ['content-length', 'Content-Length', 'CONTENT-LENGTH']).trim();
+      const size: number = Number(sizeText);
+      if (!Number.isNaN(size) && size > 0) {
+        entry.size = size;
+      }
+      return entry;
+    }
+    // 服务器不支持 HEAD 或其他异常状态：保守视为远端仍存在，交由调用方跳过本地删除。
+    LOG.warn(`webdav stat unexpected code (${response.responseCode}): ${path}`);
+    return entry;
   }
 
   public async putManifest(entries: RemoteEntry[]): Promise<void> {
@@ -954,7 +971,9 @@ export class WebDavProvider implements SyncProvider {
       } else if (this.config.caCertPath.length > 0) {
         options.caPath = this.config.caCertPath;
       }
-      if (body !== undefined) {
+      // 空字符串 body 不能赋给 extraData：OH http 模块会抛 401 Parameter error
+      // （推送 0 字节笔记曾被误判为认证失败触发 300s 冷却）；空 body 直接省略。
+      if (body !== undefined && (typeof body !== 'string' || body.length > 0)) {
         options.extraData = body;
       }
       const response: http.HttpResponse = await request.request(url, options);

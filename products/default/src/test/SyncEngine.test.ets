@@ -77,6 +77,29 @@ export default function syncEngineTest() {
       expect(SyncEngine.decideLocalEntry(local, remoteNewTag, baseline, false)).assertEqual(SyncDecision.CONFLICT);
     });
 
+    it('propagates remote deletion to local trash only with synced unchanged baseline', 0, () => {
+      const local: RemoteEntry = makeEntry('note.md', 'hash-a');
+      const syncedBaseline: SyncBaseline = makeBaseline('hash-a', 'etag-1');
+      const locallyModifiedBaseline: SyncBaseline = makeBaseline('hash-b', 'etag-1');
+      const conflictBaseline: SyncBaseline = makeBaseline('hash-a', 'etag-1',
+        1000, 128, 1010000, 'conflict');
+      const tombstoneBaseline: SyncBaseline = makeBaseline('hash-a', 'etag-1',
+        1000, 128, 1010000, 'local_deleted');
+      // 远端消失 + 本地仍是上次同步原样：传播删除到本地回收站，绝不推回远端
+      expect(SyncEngine.decideLocalEntry(local, undefined, syncedBaseline))
+        .assertEqual(SyncDecision.TRASH_LOCAL);
+      // 远端消失但本地已改 / 基线非 synced：保留本地并重新推送
+      expect(SyncEngine.decideLocalEntry(local, undefined, locallyModifiedBaseline))
+        .assertEqual(SyncDecision.PUSH_NEW);
+      expect(SyncEngine.decideLocalEntry(local, undefined, conflictBaseline))
+        .assertEqual(SyncDecision.PUSH_NEW);
+      expect(SyncEngine.decideLocalEntry(local, undefined, tombstoneBaseline))
+        .assertEqual(SyncDecision.PUSH_NEW);
+      // 无基线（新增文件）：照常推送
+      expect(SyncEngine.decideLocalEntry(local, undefined, undefined))
+        .assertEqual(SyncDecision.PUSH_NEW);
+    });
+
     it('soft-trashes remote only when targetKey matches synced baseline, never otherwise', 0, () => {
       const key: string = 'https://dav.example.com/dav|vault';
       const remote: RemoteEntry = makeEntry('note.md', 'hash-a', 'etag-1');
