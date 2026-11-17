@@ -6,7 +6,7 @@
 
 **HarmonyOS NEXT 原生 · 本地优先 · 双链 Markdown 知识库应用**
 
-[![Version](https://img.shields.io/badge/version-v1.2.0-6F5BD6?style=flat-square)](AppScope/app.json5)
+[![Version](https://img.shields.io/badge/version-v1.4.0-6F5BD6?style=flat-square)](AppScope/app.json5)
 [![Platform](https://img.shields.io/badge/HarmonyOS-API%2024%2B%20(%E5%85%BC%E5%AE%B9%2026.0.0)-262321?style=flat-square)](#构建与运行)
 [![ArkTS](https://img.shields.io/badge/ArkTS-ComponentV2%20%2B%20Trace-556F5A?style=flat-square)](#技术架构与模块结构)
 [![Local-First](https://img.shields.io/badge/Storage-Local--First%20%2B%20WebDAV-7A6842?style=flat-square)](#五webdav-安全同步与本地快照备份)
@@ -24,7 +24,7 @@
 
 | 项目 | 说明 |
 |---|---|
-| **发布版本** | `v1.2.0`（`versionCode: 1000400`） |
+| **发布版本** | `v1.4.0`（`versionCode: 1000600`） |
 | **应用包名** | `com.mrs.mysidian` |
 | **入口与扩展能力** | `DefaultAbility`、桌面服务卡片（`FormExtensionAbility`）、系统文本分享与「打开方式」（`ShareExtensionAbility` / `skills`）、备份恢复（`DefaultBackupAbility`） |
 | **适配设备形态** | 手机（Phone）、折叠屏 / 阔直屏（Foldable）、平板（Tablet）与 PC / 2in1 键盘操作 |
@@ -141,23 +141,28 @@
   - 纯 ArkTS 原生绘制（零 WebView 开销），支持多级标题、任务列表（勾选直接回写源文件）、可折叠 Callout（`> [!NOTE]-`）、宽表格横向滚动、`==高亮==`、带宽度图片（`![[pic.png|300]]`）、笔记章节嵌入（`![[笔记#章节]]`）、Unicode 数学公式（`MathRenderer`）与原生 Canvas 流程图（`MermaidFlow`）；复杂 HTML 由 `MdWebFallback` 安全兜底。
   - `CodeHighlighter` 支持 ArkTS / TypeScript / JavaScript / Python / Java / Go / Rust / C / SQL 等词法着色与一键复制；`ImagePreviewOverlay` 支持全屏 1x–5x 双指捏合缩放、平移与双击复位。
 
-### 三、标准分卷日记、高效写作与全链路文件管理
+### 三、纯原生所见即所得写作、可视化表格与全链路文件管理
+- **零 WebView 原生 ArkUI 所见即所得（WYSIWYG）与双模式无缝切换**：
+  - 基于单面 `RichEditor` 打造原生所写即所得体验（120Hz 原生顺滑滚动与系统中文 IME / 长按选择菜单），同时保留**「所见 ↔ 源码」**与**纯阅读模式**；切换「所见 ↔ 源码」时由 `WysiwygCodec` 自动映射并保持光标停留在同一词/段落附近。
+  - 实时渲染分级标题、粗体/斜体/删除线/`==高亮==`/行内代码、代码块语法着色与语言标签条、左槽列表符号/复选框/引用竖线（`WysiwygMarginCache`）及可编辑 YAML Frontmatter 属性卡（`WysiwygPropertiesCard`）。
+- **原生 `OffscreenCanvas` 表格渲染与弹窗网格编辑**：
+  - 所见模式下 Markdown 表格直接渲染为适配深浅主题与屏幕宽度的圆角表格卡片（保留对齐方式与行内格式）；点击表格即可唤起 **`WysiwygTableSheet`**，直接修改表头/单元格、增删行列、逐列切换左/中/右对齐或切换「源码微调」双工编辑；输入 `| 表头 |\n| --- |` 回车自动生成表格，全程纳入 `↶ / ↷` 50 步防抖撤销重做。
 - **新建直达编辑与分卷日记**：
-  - 点击 FAB「新建笔记」、菜单或 `Ctrl+N` 创建笔记后直接进入编辑器无缝落笔。
-  - 点击「今日日记」、FAB「日记」、日历弹窗（`CalendarSheet`）或桌面快捷方式时，自动在 **`日记/YYYY-MM/YYYY-MM-DD.md`** 创建/打开日记并套用模板定位 `{{cursor}}`（兼容根目录历史日记文件）。
+  - 首页 FAB 短按直接新建并进入编辑态；工作台 FAB 语义统一为进入当前笔记编辑态（`Ctrl+E`）。
+  - 点击「今日日记」、日历弹窗（`CalendarSheet`）或桌面快捷方式时，自动在 **`日记/YYYY-MM/YYYY-MM-DD.md`** 创建/打开日记并套用模板定位 `{{cursor}}`（兼容根目录历史日记文件）。
 - **内置 6 个常用模板与三维度排序**：
   - 内置**日记、周报、会议纪要、读书笔记、项目计划、待办清单**模板并在新建示例仓库时自动播种，支持 `{{title}}`、`{{date}}`、`{{date:FMT}}`、`{{time}}`、`{{week}}`、`{{cursor}}` 占位符。
-  - 首页「笔记」与「收藏」统一支持 **默认 / 最近修改 / 文件名** 胶囊排序切换。
+  - 首页「笔记」与「收藏」统一支持 **默认 / 最近修改 / 文件名** 胶囊排序切换；「更多」页精简为工具与设置两层并新增「关于」页展示开源与版本信息。
 - **移动端与物理键盘写作文流**：
-  - 17 项常用 Markdown 快捷格式工具栏，输入 `[[` 触发全库双链补全（缺失标题自动建档），输入 `#` 触发标签补全；列表/待办自动续行；50 步防抖撤销与重做；内置 `FindReplaceBar` 支持页内查找、计数跳转与逐项/全部替换。
+  - 底部横向格式化快捷工具栏即时高亮当前选区/光标格式（含粗体/斜体/标题/列表/待办/表格/图片/双链/标签/撤销重做）；输入 `[[` 自动补全 `]]` 并触发全库双链补全面板（支持 `Tab` / 空白点击自动收尾），输入 `#` 触发标签补全；列表/待办自动续行；内置 `FindReplaceBar` 支持页内查找、计数跳转与逐项/全部替换。
   - 重命名或移动笔记时由 `LinkRewriter` 自动重写全库 `[[旧名]]` / `|别名` / `#锚点`；删除进入 `.trash` 回收站；重要修改留存 `.history` 快照并支持 LCS 行级 Diff 回滚；支持 `★ 书签` 全链路置顶。
 
 ### 四、RDB v7 索引、Obsidian 规范标签与全文检索
 - **Obsidian 规范标签体系（`TagRules` + RDB v7）**：
   - 单源统一标签校验：支持 ASCII 字母数字、`_-/`（含 `#to_do` 下划线与 `#项目/进行中` 多级嵌套）与 CJK 文字，自动拒绝纯数字（`#2026`）、十六进制色值（`#1A1A2E`）与全角标点误报。
   - 索引统一小写归一与大小写不敏感匹配；搜索输入支持 **`tag:#x`** 包含、**`-tag:#x`** 排除与 **`OR`** 逻辑组合检索（`SearchTextParser`）。
-- **数量降序标签浏览**：
-  - 搜索页 `#标签` 列表默认按**关联笔记数量从多到少**排列（同数按字母序），右上角支持 `[ 数量↓ | 名称 ]` 一键切换，点按标签即时过滤对应笔记。
+- **固定五行横向懒加载标签广场**：
+  - 搜索页 `#标签` 列表采用固定 5 行高度（`212vp`）横向滑动 `Grid` + `Repeat virtualScroll` 懒加载，默认按**关联笔记数量从多到少**排列（同数按字母序），右上角支持 `[ 数量↓ | 名称 ]` 一键切换，选中标签后下方筛选结果立即可见。
 - **FTS5 中文分词与 Live Dataview**：
   - 基于 `Tokenizer` 中文 bigram 分词与 `bm25` 标题加权排序，支持启动索引自愈与命中摘要高亮；内置 `SearchOverlay` 与 `QuickSwitcher`（`Ctrl+O`）。
   - Live Dataview 原生支持 `TASK` / `TABLE` / `LIST`（`FROM #tag`、`WHERE`、`SORT`、`LIMIT`）实时求值与勾选写回。
@@ -206,7 +211,7 @@ products/default (UI · ViewModel · 能力扩展)
 <summary><b>展开查看完整工程目录树</b></summary>
 
 ```text
-AppScope/                         应用级配置与版本信息（v1.2.0, versionCode: 1000400）
+AppScope/                         应用级配置与版本信息（v1.4.0, versionCode: 1000600）
 common/                           HAR：通用基础组件与系统能力封装
   constants/                      公共常量（CommonConstants）
   ui/                             EmptyState、FileTreeView、FileTreeDataSource
@@ -216,6 +221,7 @@ features/
     model/                        MdModel、VaultModel、SyncModel
     service/                      SyncProvider、SyncFileFilter
   markdown/                       HAR：自研原生 Markdown 引擎
+    editor/                       WysiwygModel / WysiwygCodec / WysiwygTableCodec / WysiwygTriggers
     parser/                       BlockParser / InlineParser / FrontmatterParser /
                                   FrontmatterSerializer / MarkdownParser / SearchTextParser /
                                   TagRules / TaskMetadata / DataViewQuery
@@ -236,7 +242,9 @@ products/default/                 主工程入口（entry）
   pages/DesignIndex.ets           唯一 @Entry：左抽屉文件夹导航、嵌套联动 Swiper、毛玻璃底栏与全屏工作台
   form/                           桌面服务卡片 FormExtensionAbility & FormCard
   share/                          系统分享接收 ShareExtensionAbility
-  view/design/                    WorkspaceView、EditorPane、EditorToolbar、FindReplaceBar、
+  view/design/                    WorkspaceView、EditorPane、WysiwygEditor、WysiwygEditorEngine、
+                                  WysiwygTableSheet、WysiwygTableRenderer、WysiwygPropertiesCard、
+                                  WysiwygStyleHelper、WysiwygMarginCache、EditorToolbar、FindReplaceBar、
                                   NoteInfoSheet、TreeItemMenuSheet、ImagePreviewOverlay、CalendarSheet、
                                   TemplateSheet、HistorySheet、TrashSheet、HandwriteSheet、QuickNoteSheet、
                                   CommandPalette、QuickSwitcher、SearchOverlay、SettingsSheet、
@@ -276,7 +284,7 @@ hdc install -r products/default/build/default/outputs/default/default-default-si
 hdc shell aa start -a DefaultAbility -b com.mrs.mysidian
 ```
 
-> Release 分发仅提供未签名包 `mysidian-1.2.0-unsigned.hap`（不分发开发者调试签名证书产物）；如需自行安装，请在 DevEco Studio 中配置个人签名证书重签安装，或直接从源码构建运行。
+> Release 分发仅提供未签名包 `mysidian-1.4.0-unsigned.hap`（不分发开发者调试签名证书产物）；如需自行安装，请在 DevEco Studio 中配置个人签名证书重签安装，或直接从源码构建运行。
 
 ---
 
@@ -284,6 +292,8 @@ hdc shell aa start -a DefaultAbility -b com.mrs.mysidian
 
 | 版本 | 核心里程碑 |
 |---|---|
+| **`v1.4.0`** | **纯原生所见即所得编辑器、可视化表格与搜索标签横滑重构**：零 WebView 基于 ArkUI `RichEditor` 打造原生所写即所得 Markdown 编辑体验（保留纯阅读与源码模式），实现 `WysiwygCodec` 无损双向互转与跨模式光标映射、工具栏高亮与中文输入法样式联动、`[[]]` 自动配对补全、可编辑 Frontmatter 属性卡及 50 步差分撤销重做；新增 `OffscreenCanvas` 深浅自适应表格卡片与 `WysiwygTableSheet` 网格/源码双模编辑器；搜索页标签面板重构为固定五行横向懒加载网格。 |
+| **`v1.3.0`** | **大仓库懒加载性能优化、交互收敛与「关于」页**：首页列表重构为 `List/Grid + Repeat virtualScroll` 懒加载，735 篇仓库冷启动内存大幅下降；精简「更多」页结构并新增「关于」页；统一工作台与首页新建直达编辑器的 FAB 交互语义。 |
 | **`v1.2.0`** | **左抽屉文件夹交互、阅读态选词复制与交互顺滑升级**：非编辑阅读态支持正文/代码块/属性卡长按选择并弹出系统 `复制 / 全选` 菜单（选区期间屏蔽侧滑冲突）；首页重构为左侧可拉出文件夹抽屉（聚合全部笔记/收藏/最近删除/多级目录树与新建文件夹）+ 极简 `笔记 \| 收藏` 双子页签；实现底部主标签与顶部子页签的逐级嵌套联动横滑；搜索页 `#标签` 默认按关联笔记数降序排列并支持 `数量↓ / 名称` 一键切换；顶栏三视图按钮响应同步刷新。 |
 | **`v1.1.1`** | **Obsidian 标签规范对齐、属性卡与跨端删除同步修复**：新增 `TagRules` 单源校验（大小写归一/下划线/嵌套层级/剔除色值与纯数字误报）、`tag:/-tag:/OR` 搜索语法与 RDB v7 全量自愈迁移；新增阅读态 YAML Frontmatter 属性胶囊卡、新建笔记直达编辑，以及跨设备删除 `TRASH_LOCAL` 与 0 字节空笔记推送修复。 |
 | **`v1.1.0`** | **列表多维排序与内置常用模板**：收藏与文件夹视图支持默认/最近修改/文件名排序切换；内置日记、周报、会议纪要、读书笔记、项目计划、待办清单 6 套模板；优化 WebDAV MOVE 降级与认证冷却机制。 |
