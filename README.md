@@ -6,7 +6,7 @@
 
 **HarmonyOS NEXT 原生 · 本地优先 · 双链 Markdown 知识库应用**
 
-[![Version](https://img.shields.io/badge/version-v1.4.0-6F5BD6?style=flat-square)](AppScope/app.json5)
+[![Version](https://img.shields.io/badge/version-v1.4.1-6F5BD6?style=flat-square)](AppScope/app.json5)
 [![Platform](https://img.shields.io/badge/HarmonyOS-API%2024%2B%20(%E5%85%BC%E5%AE%B9%2026.0.0)-262321?style=flat-square)](#构建与运行)
 [![ArkTS](https://img.shields.io/badge/ArkTS-ComponentV2%20%2B%20Trace-556F5A?style=flat-square)](#技术架构与模块结构)
 [![Local-First](https://img.shields.io/badge/Storage-Local--First%20%2B%20WebDAV-7A6842?style=flat-square)](#五webdav-安全同步与本地快照备份)
@@ -24,7 +24,7 @@
 
 | 项目 | 说明 |
 |---|---|
-| **发布版本** | `v1.4.0`（`versionCode: 1000600`） |
+| **发布版本** | `v1.4.1`（`versionCode: 1000601`） |
 | **应用包名** | `com.mrs.mysidian` |
 | **入口与扩展能力** | `DefaultAbility`、桌面服务卡片（`FormExtensionAbility`）、系统文本分享与「打开方式」（`ShareExtensionAbility` / `skills`）、备份恢复（`DefaultBackupAbility`） |
 | **适配设备形态** | 手机（Phone）、折叠屏 / 阔直屏（Foldable）、平板（Tablet）与 PC / 2in1 键盘操作 |
@@ -153,8 +153,11 @@
 - **内置 6 个常用模板与三维度排序**：
   - 内置**日记、周报、会议纪要、读书笔记、项目计划、待办清单**模板并在新建示例仓库时自动播种，支持 `{{title}}`、`{{date}}`、`{{date:FMT}}`、`{{time}}`、`{{week}}`、`{{cursor}}` 占位符。
   - 首页「笔记」与「收藏」统一支持 **默认 / 最近修改 / 文件名** 胶囊排序切换；「更多」页精简为工具与设置两层并新增「关于」页展示开源与版本信息。
+- **全类型附件管理、目录可视化与快捷插入**：
+  - `VaultManager` 自动识别并优先复用仓库中已有的 `attachments` / `attachment` 目录；工具栏除 `IMG`（相册图片）外新增 **`附件`** 选择器，可一键导入 PDF、DOCX/XLSX/PPTX、音视频等文件并保留原文件名自动插入 `[[文件名]]`（图片插入 `![[文件名]]`）。
+  - 左侧抽屉目录角标同步统计非 Markdown 附件数量；点进目录可直接看到图片缩略图（点选 `ImagePreviewOverlay` 全屏缩放预览）及 PDF/DOCX 卡片；在笔记正文中点击附件双链可直接预览或调用系统默认应用查看，不再误建 `.md`。
 - **移动端与物理键盘写作文流**：
-  - 底部横向格式化快捷工具栏即时高亮当前选区/光标格式（含粗体/斜体/标题/列表/待办/表格/图片/双链/标签/撤销重做）；输入 `[[` 自动补全 `]]` 并触发全库双链补全面板（支持 `Tab` / 空白点击自动收尾），输入 `#` 触发标签补全；列表/待办自动续行；内置 `FindReplaceBar` 支持页内查找、计数跳转与逐项/全部替换。
+  - 底部横向格式化快捷工具栏即时高亮当前选区/光标格式（含粗体/斜体/标题/列表/待办/表格/图片/附件/双链/标签/撤销重做）；输入 `[[` 自动补全 `]]` 并触发全库双链补全面板（支持 `Tab` / 空白点击自动收尾），输入 `#` 触发标签补全；无序、有序列表（`1. → 2. → 3.`）与待办回车自动续行递增；内置 `FindReplaceBar` 支持页内查找、计数跳转与逐项/全部替换。
   - 重命名或移动笔记时由 `LinkRewriter` 自动重写全库 `[[旧名]]` / `|别名` / `#锚点`；删除进入 `.trash` 回收站；重要修改留存 `.history` 快照并支持 LCS 行级 Diff 回滚；支持 `★ 书签` 全链路置顶。
 
 ### 四、RDB v7 索引、Obsidian 规范标签与全文检索
@@ -172,7 +175,8 @@
 ### 五、WebDAV 安全同步与本地快照备份
 - **硬件级凭据加密与证书开关**：
   - 基于 HarmonyOS `@kit.AssetStoreKit`（`SecretStore`）加密存储 WebDAV 凭据，支持自定义 CA 证书导入及在「新建仓库」/「同步设置」独立开启自签名 HTTPS 跳过证书校验开关。
-- **无感增量同步与防误删保护**：
+- **全类型知识库附件双向同步与防误删保护**：
+  - 通过 `SyncFileFilter` 统一管理双向同步范围：除 Markdown 笔记与图片外，全面支持 **PDF、Office 文档（`docx/doc/xlsx/xls/pptx/ppt`）、文本数据（`txt/csv/tsv/rtf/odt/epub`）、音视频（`mp3/m4a/wav/ogg/aac/flac/mp4/mov/webm`）与白板文件（`excalidraw/canvas`）** 经 WebDAV 二进制通道双向同步，同时严密拦截 `.zip`/`.tmp`/`.db` 与 `.obsidian/`/`.trash/`/`.mysidian/`/`.git/`。
   - 采用干跑安全闸门、逐文件断点基线落盘、`mtime + size` 哈希缓存、`WebDAV MOVE` 至 `.trash/` 软删（兼容异常 502 自动降级处理），以及 `HEAD` 二次探测与本地 `TRASH_LOCAL` 决策，防止跨设备删除后同步自动恢复；0 字节空笔记不误判 401 冷却；双端冲突提供 LCS 行级 Diff 审阅。
 - **定时与手动 zip 快照备份**：
   - 打开仓库每 24 小时自动留存沙箱 zip 快照（保留最近 5 份），支持在设置中一键备份、恢复或导出完整桌面 Obsidian 兼容 zip。
@@ -211,7 +215,7 @@ products/default (UI · ViewModel · 能力扩展)
 <summary><b>展开查看完整工程目录树</b></summary>
 
 ```text
-AppScope/                         应用级配置与版本信息（v1.4.0, versionCode: 1000600）
+AppScope/                         应用级配置与版本信息（v1.4.1, versionCode: 1000601）
 common/                           HAR：通用基础组件与系统能力封装
   constants/                      公共常量（CommonConstants）
   ui/                             EmptyState、FileTreeView、FileTreeDataSource
@@ -284,7 +288,7 @@ hdc install -r products/default/build/default/outputs/default/default-default-si
 hdc shell aa start -a DefaultAbility -b com.mrs.mysidian
 ```
 
-> Release 分发仅提供未签名包 `mysidian-1.4.0-unsigned.hap`（不分发开发者调试签名证书产物）；如需自行安装，请在 DevEco Studio 中配置个人签名证书重签安装，或直接从源码构建运行。
+> Release 分发仅提供未签名包 `mysidian-1.4.1-unsigned.hap`（不分发开发者调试签名证书产物）；如需自行安装，请在 DevEco Studio 中配置个人签名证书重签安装，或直接从源码构建运行。
 
 ---
 
@@ -292,6 +296,7 @@ hdc shell aa start -a DefaultAbility -b com.mrs.mysidian
 
 | 版本 | 核心里程碑 |
 |---|---|
+| **`v1.4.1`** | **所见有序列表递增修复与 PDF/DOCX 全类型附件同步预览**：修复所见模式输入 `1. ` 后连续回车编号固定停留在 `1.` 的问题，确保 `1. → 2. → 3.` 递增渲染与准确序列化；`SyncFileFilter` 扩展支持 PDF、DOCX/XLSX/PPTX、音视频与 Canvas/Excalidraw 二进制 WebDAV 双向同步；工具栏新增「附件」选择器并兼容复用 `attachments`/`attachment` 目录，抽屉角标与首页目录视图直接呈现图片缩略图及附件卡片，点击 `[[附件]]` 双链可预览图片或调用系统应用打开文档（不再误建 `.md`）。 |
 | **`v1.4.0`** | **纯原生所见即所得编辑器、可视化表格与搜索标签横滑重构**：零 WebView 基于 ArkUI `RichEditor` 打造原生所写即所得 Markdown 编辑体验（保留纯阅读与源码模式），实现 `WysiwygCodec` 无损双向互转与跨模式光标映射、工具栏高亮与中文输入法样式联动、`[[]]` 自动配对补全、可编辑 Frontmatter 属性卡及 50 步差分撤销重做；新增 `OffscreenCanvas` 深浅自适应表格卡片与 `WysiwygTableSheet` 网格/源码双模编辑器；搜索页标签面板重构为固定五行横向懒加载网格。 |
 | **`v1.3.0`** | **大仓库懒加载性能优化、交互收敛与「关于」页**：首页列表重构为 `List/Grid + Repeat virtualScroll` 懒加载，735 篇仓库冷启动内存大幅下降；精简「更多」页结构并新增「关于」页；统一工作台与首页新建直达编辑器的 FAB 交互语义。 |
 | **`v1.2.0`** | **左抽屉文件夹交互、阅读态选词复制与交互顺滑升级**：非编辑阅读态支持正文/代码块/属性卡长按选择并弹出系统 `复制 / 全选` 菜单（选区期间屏蔽侧滑冲突）；首页重构为左侧可拉出文件夹抽屉（聚合全部笔记/收藏/最近删除/多级目录树与新建文件夹）+ 极简 `笔记 \| 收藏` 双子页签；实现底部主标签与顶部子页签的逐级嵌套联动横滑；搜索页 `#标签` 默认按关联笔记数降序排列并支持 `数量↓ / 名称` 一键切换；顶栏三视图按钮响应同步刷新。 |
