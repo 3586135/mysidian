@@ -2858,41 +2858,52 @@ struct DesignIndex {
                   .width('100%')
                   .alignItems(VerticalAlign.Center)
 
-                  Flex({ wrap: FlexWrap.Wrap }) {
-                    ForEach(this.searchVm.tagChips, (chip: TagRef) => {
-                      Row({ space: 6 }) {
-                        Text(`#${chip.tag}`)
-                          .fontSize(13)
-                          .fontWeight(chip.tag === this.searchVm.activeTag ? FontWeight.Bold : FontWeight.Medium)
-                          .fontColor(chip.tag === this.searchVm.activeTag ?
-                            $r('app.color.design_on_accent') : $r('app.color.design_text_primary'))
-                        Text(`${chip.count}`)
-                          .fontSize(11)
-                          .fontWeight(FontWeight.Medium)
-                          .fontColor(chip.tag === this.searchVm.activeTag ?
-                            $r('app.color.design_on_accent') : $r('app.color.design_accent'))
-                          .padding({ left: 6, right: 6, top: 1, bottom: 1 })
-                          .borderRadius(8)
-                          .backgroundColor(chip.tag === this.searchVm.activeTag ?
-                            $r('app.color.design_glass_pill') : $r('app.color.design_accent_weak'))
-                      }
-                      .padding({ left: 12, right: 10, top: 7, bottom: 7 })
-                      .borderRadius(16)
-                      .backgroundColor(chip.tag === this.searchVm.activeTag ?
-                        $r('app.color.design_accent') : $r('app.color.design_elevated'))
-                      .border({
-                        width: 1,
-                        color: chip.tag === this.searchVm.activeTag ?
-                          $r('app.color.design_accent') : $r('app.color.design_stroke')
+                  // 固定 5 行、左右滑动的懒加载标签网格（几百个标签不再撑高页面，筛选结果紧跟其后）
+                  Grid() {
+                    Repeat<TagRef>(this.searchVm.tagChips)
+                      .virtualScroll({ totalCount: this.searchVm.tagChips.length })
+                      .key((chip: TagRef) =>
+                        `${this.searchVm.tagSortMode}_${chip.tag}_${chip.count}_${chip.tag === this.searchVm.activeTag}`)
+                      .each((ri: RepeatItem<TagRef>) => {
+                        GridItem() {
+                          Row({ space: 6 }) {
+                            Text(`#${ri.item.tag}`)
+                              .fontSize(13)
+                              .fontWeight(ri.item.tag === this.searchVm.activeTag ? FontWeight.Bold : FontWeight.Medium)
+                              .fontColor(ri.item.tag === this.searchVm.activeTag ?
+                                $r('app.color.design_on_accent') : $r('app.color.design_text_primary'))
+                            Text(`${ri.item.count}`)
+                              .fontSize(11)
+                              .fontWeight(FontWeight.Medium)
+                              .fontColor(ri.item.tag === this.searchVm.activeTag ?
+                                $r('app.color.design_on_accent') : $r('app.color.design_accent'))
+                              .padding({ left: 6, right: 6, top: 1, bottom: 1 })
+                              .borderRadius(8)
+                              .backgroundColor(ri.item.tag === this.searchVm.activeTag ?
+                                $r('app.color.design_glass_pill') : $r('app.color.design_accent_weak'))
+                          }
+                          .padding({ left: 12, right: 10, top: 6, bottom: 6 })
+                          .borderRadius(16)
+                          .backgroundColor(ri.item.tag === this.searchVm.activeTag ?
+                            $r('app.color.design_accent') : $r('app.color.design_elevated'))
+                          .border({
+                            width: 1,
+                            color: ri.item.tag === this.searchVm.activeTag ?
+                              $r('app.color.design_accent') : $r('app.color.design_stroke')
+                          })
+                          .onClick(() => {
+                            this.selectTagChip(ri.item.tag);
+                          })
+                        }
                       })
-                      .margin({ right: 8, bottom: 8 })
-                      .onClick(() => {
-                        this.selectTagChip(chip.tag);
-                      })
-                    }, (chip: TagRef) =>
-                      `${this.searchVm.tagSortMode}_${chip.tag}_${chip.count}_${chip.tag === this.searchVm.activeTag}`)
                   }
+                  .rowsTemplate('1fr 1fr 1fr 1fr 1fr')
+                  .rowsGap(8)
+                  .columnsGap(8)
                   .width('100%')
+                  .height(212)
+                  .scrollBar(BarState.Auto)
+                  .edgeEffect(EdgeEffect.Spring)
                 }
                 .width('100%')
                 .padding({ left: 16, right: 16, top: 14, bottom: 8 })
