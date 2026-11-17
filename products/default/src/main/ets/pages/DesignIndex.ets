@@ -11,9 +11,19 @@ import { VaultManagerSheet } from '../view/design/VaultManagerSheet';
 import { TreeItemMenuSheet } from '../view/design/TreeItemMenuSheet';
 import { ImagePreviewOverlay } from '../view/design/ImagePreviewOverlay';
 import {
+  HomeBookCoverCard,
+  HomeBookmarkNoteCard,
+  HomeFeaturedSpreadCard,
+  HomeRecentNoteCard,
+  HomeTimelineNoteRow
+} from '../view/design/HomeNoteCards';
+import {
   confirmTrashFolderAction,
   confirmTrashNoteAction,
   ItemLongPressModifier,
+  noteTintBg,
+  noteTintFg,
+  noteTintPill,
   noteTitleFromPath as resolveNoteTitle,
   ThreeDotsIcon
 } from '../view/design/NoteActionHelper';
@@ -43,27 +53,6 @@ const GRAPH_ZOOM_STEP: number = 1.3;          // 缩放按钮单步倍率
 const GRAPH_PINCH_COOLDOWN_MS: number = 300;  // 捏合结束后抑制误触点击的窗口期
 const DOUBLE_PI: number = Math.PI * 2;
 const SEARCH_DEBOUNCE_MS: number = 250;       // 搜索防抖时长
-const TINT_BG_PALETTE: Resource[] = [
-  $r('app.color.design_tint_sage_bg'),
-  $r('app.color.design_tint_ochre_bg'),
-  $r('app.color.design_tint_rose_bg'),
-  $r('app.color.design_tint_violet_bg'),
-  $r('app.color.design_tint_sky_bg')
-];
-const TINT_PILL_PALETTE: Resource[] = [
-  $r('app.color.design_tint_sage_pill'),
-  $r('app.color.design_tint_ochre_pill'),
-  $r('app.color.design_tint_rose_pill'),
-  $r('app.color.design_tint_violet_pill'),
-  $r('app.color.design_tint_sky_pill')
-];
-const TINT_FG_PALETTE: Resource[] = [
-  $r('app.color.design_tint_sage_fg'),
-  $r('app.color.design_tint_ochre_fg'),
-  $r('app.color.design_tint_rose_fg'),
-  $r('app.color.design_tint_violet_fg'),
-  $r('app.color.design_tint_sky_fg')
-];
 
 // ===== 页签定义 =====
 class DesignTabDef {
@@ -194,32 +183,6 @@ function splitHighlight(source: string, keyword: string): string[] {
   parts[1] = source.substring(index, index + kw.length);
   parts[2] = source.substring(index + kw.length);
   return parts;
-}
-
-/** 最近访问的相对时间文案。 */
-function formatRelativeTime(openedAt: number): ResourceStr {
-  if (openedAt <= 0) {
-    return '';
-  }
-  const diffMs: number = Date.now() - openedAt;
-  const minuteMs: number = 60 * 1000;
-  const hourMs: number = 60 * minuteMs;
-  const dayMs: number = 24 * hourMs;
-  if (diffMs < minuteMs) {
-    return $r('app.string.design_time_now');
-  }
-  if (diffMs < hourMs) {
-    return $r('app.string.design_time_min', Math.floor(diffMs / minuteMs));
-  }
-  if (diffMs < dayMs) {
-    return $r('app.string.design_time_hour', Math.floor(diffMs / hourMs));
-  }
-  if (diffMs < 2 * dayMs) {
-    return $r('app.string.design_time_yesterday');
-  }
-  const date: Date = new Date(openedAt);
-  const pad = (value: number): string => value < 10 ? `0${value}` : `${value}`;
-  return `${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
 }
 
 /**
@@ -1800,16 +1763,35 @@ struct DesignIndex {
         List({ space: 10, scroller: this.filesScroller }) {
           Repeat<RecentNoteItem>(this.scopedNotes)
             .virtualScroll({ totalCount: this.scopedNotes.length })
-            .key((item: RecentNoteItem, index: number) => this.filesViewMode === 1 ?
+            .key((item: RecentNoteItem, _index: number) => this.filesViewMode === 1 ?
               `tl_${this.currentFolderPath}_${this.filesSortMode}_${item.path}` :
               `note_${this.currentFolderPath}_${this.filesSortMode}_${item.path}`)
+            .templateId((_item: RecentNoteItem, _index: number): string =>
+              this.filesViewMode === 1 ? 'timeline' : 'list')
             .each((ri: RepeatItem<RecentNoteItem>) => {
               ListItem() {
-                if (this.filesViewMode === 1) {
-                  this.timelineNoteRow(ri.item, ri.index)
-                } else {
-                  this.recentNoteCard(ri.item)
-                }
+                HomeRecentNoteCard({
+                  item: ri.item,
+                  bookmarked: this.vm.isBookmarked(ri.item.path),
+                  onOpen: (p: string): void => { this.openHomeNoteCard(p); },
+                  onMore: (p: string): void => { this.openHomeNoteMore(p); },
+                  onLongPress: (p: string, d: boolean): void => { this.triggerCardLongPress(p, d); },
+                  onLongPressEnd: (): void => { this.scheduleClearLongPressConsumed(); }
+                })
+              }
+            })
+            .template('timeline', (ri: RepeatItem<RecentNoteItem>) => {
+              ListItem() {
+                HomeTimelineNoteRow({
+                  item: ri.item,
+                  index: ri.index,
+                  bookmarked: this.vm.isBookmarked(ri.item.path),
+                  onOpen: (p: string): void => { this.openHomeNoteCard(p); },
+                  onToggleBookmark: (p: string): void => { this.toggleHomeBookmarkCard(p); },
+                  onMore: (p: string): void => { this.openHomeNoteMore(p); },
+                  onLongPress: (p: string, d: boolean): void => { this.triggerCardLongPress(p, d); },
+                  onLongPressEnd: (): void => { this.scheduleClearLongPressConsumed(); }
+                })
               }
             })
           if (this.scopedAttachments.length > 0) {
@@ -1892,15 +1874,34 @@ struct DesignIndex {
         List({ space: 10, scroller: this.bookmarksScroller }) {
           Repeat<RecentNoteItem>(this.bookmarkNotes)
             .virtualScroll({ totalCount: this.bookmarkNotes.length })
-            .key((item: RecentNoteItem, index: number) => this.filesViewMode === 1 ?
+            .key((item: RecentNoteItem, _index: number) => this.filesViewMode === 1 ?
               `bmtl_${this.filesSortMode}_${item.path}` : `bm_${this.filesSortMode}_${item.path}`)
+            .templateId((_item: RecentNoteItem, _index: number): string =>
+              this.filesViewMode === 1 ? 'timeline' : 'bookmark')
             .each((ri: RepeatItem<RecentNoteItem>) => {
               ListItem() {
-                if (this.filesViewMode === 1) {
-                  this.timelineNoteRow(ri.item, ri.index)
-                } else {
-                  this.bookmarkNoteCard(ri.item.path)
-                }
+                HomeBookmarkNoteCard({
+                  item: ri.item,
+                  onOpen: (p: string): void => { this.openHomeNoteCard(p); },
+                  onToggleBookmark: (p: string): void => { this.toggleHomeBookmarkCard(p); },
+                  onMore: (p: string): void => { this.openHomeNoteMore(p); },
+                  onLongPress: (p: string, d: boolean): void => { this.triggerCardLongPress(p, d); },
+                  onLongPressEnd: (): void => { this.scheduleClearLongPressConsumed(); }
+                })
+              }
+            })
+            .template('timeline', (ri: RepeatItem<RecentNoteItem>) => {
+              ListItem() {
+                HomeTimelineNoteRow({
+                  item: ri.item,
+                  index: ri.index,
+                  bookmarked: this.vm.isBookmarked(ri.item.path),
+                  onOpen: (p: string): void => { this.openHomeNoteCard(p); },
+                  onToggleBookmark: (p: string): void => { this.toggleHomeBookmarkCard(p); },
+                  onMore: (p: string): void => { this.openHomeNoteMore(p); },
+                  onLongPress: (p: string, d: boolean): void => { this.triggerCardLongPress(p, d); },
+                  onLongPressEnd: (): void => { this.scheduleClearLongPressConsumed(); }
+                })
               }
             })
         }
@@ -1937,12 +1938,29 @@ struct DesignIndex {
           (showFeatured && index === 0) ? 'featured' : 'cover')
         .each((ri: RepeatItem<RecentNoteItem>) => {
           GridItem() {
-            this.bookCoverCard(ri.item, 130)
+            HomeBookCoverCard({
+              item: ri.item,
+              coverHeight: 130,
+              bookmarked: this.vm.isBookmarked(ri.item.path),
+              onOpen: (p: string): void => { this.openHomeNoteCard(p); },
+              onToggleBookmark: (p: string): void => { this.toggleHomeBookmarkCard(p); },
+              onMore: (p: string): void => { this.openHomeNoteMore(p); },
+              onLongPress: (p: string, d: boolean): void => { this.triggerCardLongPress(p, d); },
+              onLongPressEnd: (): void => { this.scheduleClearLongPressConsumed(); }
+            })
           }
         })
         .template('featured', (ri: RepeatItem<RecentNoteItem>) => {
           GridItem() {
-            this.featuredSpreadCard(ri.item)
+            HomeFeaturedSpreadCard({
+              item: ri.item,
+              bookmarked: this.vm.isBookmarked(ri.item.path),
+              onOpen: (p: string): void => { this.openHomeNoteCard(p); },
+              onToggleBookmark: (p: string): void => { this.toggleHomeBookmarkCard(p); },
+              onMore: (p: string): void => { this.openHomeNoteMore(p); },
+              onLongPress: (p: string, d: boolean): void => { this.triggerCardLongPress(p, d); },
+              onLongPressEnd: (): void => { this.scheduleClearLongPressConsumed(); }
+            })
           }
         }, { cachedCount: 1 })
     }
@@ -1956,325 +1974,6 @@ struct DesignIndex {
     .edgeEffect(EdgeEffect.Spring)
     .contentEndOffset(CAPSULE_HEIGHT_VP + BAR_BOTTOM_VP + this.bottomInset + 24)
     .padding({ left: BAR_SIDE_VP, right: BAR_SIDE_VP })
-  }
-
-  /** 首行左侧：最近编辑笔记精选大卡（支持一键星标收藏与直接点按续写）。 */
-  @Builder
-  featuredSpreadCard(item: RecentNoteItem) {
-    Column({ space: 6 }) {
-      Stack({ alignContent: Alignment.TopEnd }) {
-        Column({ space: 6 }) {
-          Row({ space: 6 }) {
-            Text($r('app.string.files_featured_badge'))
-              .fontSize(10)
-              .fontWeight(FontWeight.Bold)
-              .fontColor($r('app.color.design_accent'))
-              .padding({ left: 7, right: 7, top: 2, bottom: 2 })
-              .borderRadius(6)
-              .backgroundColor($r('app.color.design_accent_weak'))
-            Text(this.folderBadgeOf(item.path))
-              .fontSize(10)
-              .fontColor($r('app.color.design_cover_text'))
-              .opacity(0.65)
-              .maxLines(1)
-          }
-          .width('100%')
-          .alignItems(VerticalAlign.Center)
-
-          Text(item.title)
-            .fontSize(15)
-            .fontWeight(FontWeight.Bold)
-            .fontColor($r('app.color.design_cover_text'))
-            .maxLines(2)
-            .textOverflow({ overflow: TextOverflow.Ellipsis })
-            .lineHeight(20)
-            .width('100%')
-
-          Blank()
-
-          Row({ space: 6 }) {
-            SymbolGlyph($r('sys.symbol.doc_plaintext'))
-              .fontSize(11)
-              .fontColor([$r('app.color.design_cover_text')])
-              .opacity(0.7)
-            Text(item.path)
-              .fontSize(10)
-              .fontColor($r('app.color.design_cover_text'))
-              .opacity(0.7)
-              .maxLines(1)
-              .textOverflow({ overflow: TextOverflow.Ellipsis })
-              .layoutWeight(1)
-          }
-          .width('100%')
-          .alignItems(VerticalAlign.Center)
-        }
-        .width('100%')
-        .height('100%')
-        .padding({ left: 12, right: 12, top: 12, bottom: 10 })
-        .alignItems(HorizontalAlign.Start)
-
-        // 右上角可交互星标按钮（点按直接收藏/取消收藏该笔记）
-        Stack() {
-          SymbolGlyph(this.vm.isBookmarked(item.path) ? $r('sys.symbol.star_fill') : $r('sys.symbol.star'))
-            .fontSize(14)
-            .fontColor([this.vm.isBookmarked(item.path) ?
-              $r('app.color.design_accent') : $r('app.color.design_cover_text')])
-        }
-        .width(28)
-        .height(28)
-        .margin({ top: 4, right: 4 })
-        .onClick(() => {
-          this.handleCardTap(() => {
-            this.vm.toggleBookmark(item.path);
-          });
-        })
-      }
-      .width('100%')
-      .height(124)
-      .borderRadius(12)
-      .backgroundColor($r('app.color.design_cover_ink'))
-      .border({ width: 1, color: $r('app.color.design_stroke') })
-      .shadow({ radius: 12, color: $r('app.color.design_shadow'), offsetY: 4 })
-
-      Text(item.title)
-        .fontSize(13)
-        .fontWeight(FontWeight.Medium)
-        .fontColor($r('app.color.design_text_primary'))
-        .maxLines(1)
-        .textOverflow({ overflow: TextOverflow.Ellipsis })
-        .width('100%')
-
-      Row({ space: 4 }) {
-        Text(item.openedAt > 0 ? formatRelativeTime(item.openedAt) : this.folderBadgeOf(item.path))
-          .fontSize(11)
-          .fontColor($r('app.color.design_text_secondary'))
-          .maxLines(1)
-          .textOverflow({ overflow: TextOverflow.Ellipsis })
-          .layoutWeight(1)
-        this.itemMoreButton(item.path, false, $r('app.color.design_text_secondary'), true)
-      }
-      .width('100%')
-      .height(24)
-      .alignItems(VerticalAlign.Center)
-    }
-    .width('100%')
-    .alignItems(HorizontalAlign.Start)
-    .gestureModifier(this.longPressFor(item.path, false))
-    .onClick(() => {
-      this.handleCardTap(() => {
-        this.openWorkspace({ 'openPath': item.path });
-      });
-    })
-  }
-
-  /** 莫兰迪便签笔记宫格卡（内框标题 + 底部所属文件夹 + 右上角可点击星标按钮）。 */
-  @Builder
-  bookCoverCard(item: RecentNoteItem, coverHeight: number) {
-    Column({ space: 6 }) {
-      Column() {
-        Column() {
-          Row() {
-            Blank()
-            Stack() {
-              SymbolGlyph(this.vm.isBookmarked(item.path) ? $r('sys.symbol.star_fill') : $r('sys.symbol.star'))
-                .fontSize(12)
-                .fontColor([$r('app.color.design_cover_text')])
-                .opacity(this.vm.isBookmarked(item.path) ? 1.0 : 0.72)
-            }
-            .width(22)
-            .height(22)
-            .alignContent(Alignment.Center)
-            .onClick(() => {
-              this.handleCardTap(() => {
-                this.vm.toggleBookmark(item.path);
-              });
-            })
-          }
-          .width('100%')
-
-          Text(item.title)
-            .fontSize(12)
-            .fontWeight(FontWeight.Medium)
-            .fontColor($r('app.color.design_cover_text'))
-            .textAlign(TextAlign.Center)
-            .maxLines(2)
-            .textOverflow({ overflow: TextOverflow.Ellipsis })
-            .lineHeight(16)
-            .width('100%')
-            .margin({ top: 4 })
-
-          Row()
-            .width(18)
-            .height(1)
-            .backgroundColor($r('app.color.design_cover_text'))
-            .opacity(0.65)
-            .margin({ top: 6 })
-
-          Blank()
-
-          Text(this.folderBadgeOf(item.path))
-            .fontSize(9)
-            .fontColor($r('app.color.design_cover_text'))
-            .opacity(0.85)
-            .maxLines(1)
-        }
-        .width('100%')
-        .height('100%')
-        .padding({ left: 7, right: 7, top: 5, bottom: 7 })
-        .borderRadius(6)
-        .border({ width: 1, color: $r('app.color.design_cover_text') })
-        .alignItems(HorizontalAlign.Center)
-      }
-      .width('100%')
-      .height(coverHeight)
-      .padding(6)
-      .borderRadius(10)
-      .backgroundColor(this.coverColorOf(item.path))
-      .border({ width: 1, color: $r('app.color.design_stroke') })
-      .shadow({ radius: 10, color: $r('app.color.design_shadow'), offsetY: 3 })
-
-      Text(item.title)
-        .fontSize(13)
-        .fontWeight(FontWeight.Medium)
-        .fontColor($r('app.color.design_text_primary'))
-        .maxLines(1)
-        .textOverflow({ overflow: TextOverflow.Ellipsis })
-        .width('100%')
-
-      Row({ space: 4 }) {
-        Text(item.openedAt > 0 ? formatRelativeTime(item.openedAt) : item.path)
-          .fontSize(11)
-          .fontColor($r('app.color.design_text_secondary'))
-          .maxLines(1)
-          .textOverflow({ overflow: TextOverflow.Ellipsis })
-          .layoutWeight(1)
-        this.itemMoreButton(item.path, false, $r('app.color.design_text_secondary'), true)
-      }
-      .width('100%')
-      .height(24)
-      .alignItems(VerticalAlign.Center)
-    }
-    .width('100%')
-    .alignItems(HorizontalAlign.Start)
-    .gestureModifier(this.longPressFor(item.path, false))
-    .onClick(() => {
-      this.handleCardTap(() => {
-        this.openWorkspace({ 'openPath': item.path });
-      });
-    })
-  }
-
-  /** 时间线笔记行（左大字真实日期/序号字牌 + 右白底笔记卡片，支持一键收藏）。 */
-  @Builder
-  timelineNoteRow(item: RecentNoteItem, index: number) {
-    Row({ space: 12 }) {
-      Column({ space: 2 }) {
-        Text(this.timelinePrimaryBadge(item, index))
-          .fontSize(22)
-          .fontWeight(FontWeight.Bold)
-          .fontColor($r('app.color.design_text_primary'))
-        Text(this.timelineSecondaryBadge(item))
-          .fontSize(11)
-          .fontColor($r('app.color.design_text_secondary'))
-      }
-      .width(44)
-      .alignItems(HorizontalAlign.Start)
-      .padding({ top: 4 })
-
-      Column({ space: 10 }) {
-        Row({ space: 10 }) {
-          this.miniBookCover(item.path, item.title)
-
-          Column({ space: 4 }) {
-            Text(item.title)
-              .fontSize(16)
-              .fontWeight(FontWeight.Bold)
-              .fontColor($r('app.color.design_text_primary'))
-              .maxLines(1)
-              .textOverflow({ overflow: TextOverflow.Ellipsis })
-            Text(this.folderBadgeOf(item.path))
-              .fontSize(11)
-              .fontWeight(FontWeight.Medium)
-              .fontColor(this.tintFgOf(item.path))
-              .padding({ left: 8, right: 8, top: 2, bottom: 2 })
-              .borderRadius(8)
-              .backgroundColor(this.tintPillOf(item.path))
-              .maxLines(1)
-          }
-          .alignItems(HorizontalAlign.Start)
-          .layoutWeight(1)
-
-          Row({ space: 2 }) {
-            Stack() {
-              SymbolGlyph(this.vm.isBookmarked(item.path) ? $r('sys.symbol.star_fill') : $r('sys.symbol.star'))
-                .fontSize(16)
-                .fontColor([this.vm.isBookmarked(item.path) ?
-                  $r('app.color.design_accent') : this.tintFgOf(item.path)])
-            }
-            .width(32)
-            .height(32)
-            .onClick(() => {
-              this.handleCardTap(() => {
-                this.vm.toggleBookmark(item.path);
-              });
-            })
-
-            this.itemMoreButton(item.path, false, this.tintFgOf(item.path), false)
-          }
-        }
-        .width('100%')
-
-        Row({ space: 6 }) {
-          SymbolGlyph($r('sys.symbol.doc_plaintext'))
-            .fontSize(13)
-            .fontColor([this.tintFgOf(item.path)])
-          Text(item.path)
-            .fontSize(12)
-            .fontColor($r('app.color.design_text_secondary'))
-            .maxLines(1)
-            .textOverflow({ overflow: TextOverflow.Ellipsis })
-            .layoutWeight(1)
-          if (item.openedAt > 0) {
-            Text(formatRelativeTime(item.openedAt))
-              .fontSize(11)
-              .fontColor(this.tintFgOf(item.path))
-          }
-        }
-        .width('100%')
-      }
-      .layoutWeight(1)
-      .padding(14)
-      .borderRadius(18)
-      .backgroundColor(this.tintBgOf(item.path))
-      .border({ width: 0.8, color: this.tintPillOf(item.path) })
-      .gestureModifier(this.longPressFor(item.path, false))
-      .onClick(() => {
-        this.handleCardTap(() => {
-          this.openWorkspace({ 'openPath': item.path });
-        });
-      })
-    }
-    .width('100%')
-    .alignItems(VerticalAlign.Top)
-  }
-
-  /** 微缩便签图标（用于时间线卡片与「更多-最近笔记」卡片）。 */
-  @Builder
-  miniBookCover(path: string, title: string) {
-    Column() {
-      Text(title.length > 0 ? title.substring(0, Math.min(2, title.length)) : 'MD')
-        .fontSize(11)
-        .fontWeight(FontWeight.Bold)
-        .fontColor($r('app.color.design_cover_text'))
-        .maxLines(1)
-    }
-    .width(36)
-    .height(42)
-    .borderRadius(8)
-    .justifyContent(FlexAlign.Center)
-    .alignItems(HorizontalAlign.Center)
-    .backgroundColor(this.coverColorOf(path))
-    .border({ width: 1, color: $r('app.color.design_stroke') })
   }
 
   /** 汇总展示笔记列表（供「更多 → 最近笔记」卡片使用）。 */
@@ -2538,89 +2237,16 @@ struct DesignIndex {
     return slash >= 0 ? folderPath.substring(slash + 1) : folderPath;
   }
 
-  /** 按路径哈希稳定选取 5 款素雅低饱和纸色索引。 */
-  private tintIndexOf(path: string): number {
-    let hash: number = 0;
-    for (let i: number = 0; i < path.length; i++) {
-      hash = (hash * 31 + path.charCodeAt(i)) & 0x7fffffff;
-    }
-    return hash % TINT_BG_PALETTE.length;
-  }
-
   private tintBgOf(path: string): Resource {
-    return TINT_BG_PALETTE[this.tintIndexOf(path)];
+    return noteTintBg(path);
   }
 
   private tintPillOf(path: string): Resource {
-    return TINT_PILL_PALETTE[this.tintIndexOf(path)];
+    return noteTintPill(path);
   }
 
   private tintFgOf(path: string): Resource {
-    return TINT_FG_PALETTE[this.tintIndexOf(path)];
-  }
-
-  private isDailyNotePath(path: string): boolean {
-    const title: string = this.noteTitleFromPath(path);
-    return path.startsWith('日记/') ||
-      (title.length >= 10 && title.charAt(4) === '-' && title.charAt(7) === '-');
-  }
-
-  /** 按路径哈希稳定选取 4 款莫兰迪便签色。 */
-  private coverColorOf(path: string): Resource {
-    let hash: number = 0;
-    for (let i: number = 0; i < path.length; i++) {
-      hash = (hash * 31 + path.charCodeAt(i)) & 0x7fffffff;
-    }
-    const idx: number = hash % 4;
-    if (idx === 0) {
-      return $r('app.color.design_cover_rose');
-    }
-    if (idx === 1) {
-      return $r('app.color.design_cover_sage');
-    }
-    if (idx === 2) {
-      return $r('app.color.design_cover_ochre');
-    }
-    return $r('app.color.design_cover_violet');
-  }
-
-  /** 提取笔记所属目录名称（保留嵌套日记如 `日记 · 2026-11`）。 */
-  private folderBadgeOf(path: string): string {
-    const lastSlash: number = path.lastIndexOf('/');
-    return lastSlash > 0 ? path.substring(0, lastSlash).replace(/\//g, ' · ') : '根目录';
-  }
-
-  /** 时间线左侧主数字（优先解析 YYYY-MM-DD 日期，其次 openedAt，再回退笔记序号）。 */
-  private timelinePrimaryBadge(item: RecentNoteItem, fallbackIdx: number): string {
-    if (item.title.length >= 10 && item.title.charAt(4) === '-' && item.title.charAt(7) === '-') {
-      return item.title.substring(8, 10);
-    }
-    if (item.openedAt > 0) {
-      const d: Date = new Date(item.openedAt);
-      const day: number = d.getDate();
-      return day < 10 ? `0${day}` : `${day}`;
-    }
-    if (item.title.length >= 2 && item.title.charAt(0) >= '0' && item.title.charAt(0) <= '9' &&
-      item.title.charAt(1) >= '0' && item.title.charAt(1) <= '9') {
-      return item.title.substring(0, 2);
-    }
-    const seq: number = fallbackIdx + 1;
-    return seq < 10 ? `0${seq}` : `${seq}`;
-  }
-
-  /** 时间线左侧副标签（月份或 #序号）。 */
-  private timelineSecondaryBadge(item: RecentNoteItem): ResourceStr {
-    if (item.title.length >= 10 && item.title.charAt(4) === '-' && item.title.charAt(7) === '-') {
-      const monthNum: number = Number.parseInt(item.title.substring(5, 7));
-      if (!Number.isNaN(monthNum) && monthNum >= 1 && monthNum <= 12) {
-        return $r('app.string.timeline_month_fmt', monthNum);
-      }
-    }
-    if (item.openedAt > 0) {
-      const d: Date = new Date(item.openedAt);
-      return $r('app.string.timeline_month_fmt', d.getMonth() + 1);
-    }
-    return $r('app.string.more_stat_notes');
+    return noteTintFg(path);
   }
 
   @Builder
@@ -2685,78 +2311,6 @@ struct DesignIndex {
           this.searchVm.setTagSortMode(mode);
         });
       })
-  }
-
-  @Builder
-  recentNoteCard(item: RecentNoteItem) {
-    Row({ space: 12 }) {
-      Stack() {
-        SymbolGlyph(this.isDailyNotePath(item.path) ? $r('sys.symbol.calendar') : $r('sys.symbol.doc_plaintext'))
-          .fontSize(18)
-          .fontColor([this.tintFgOf(item.path)])
-      }
-      .width(38)
-      .height(42)
-      .borderRadius(11)
-      .backgroundColor(this.tintPillOf(item.path))
-
-      Column({ space: 5 }) {
-        Row({ space: 6 }) {
-          Text(item.title)
-            .fontSize(15.5)
-            .fontWeight(FontWeight.Medium)
-            .fontColor($r('app.color.design_text_primary'))
-            .layoutWeight(1)
-            .maxLines(1)
-            .textOverflow({ overflow: TextOverflow.Ellipsis })
-          if (this.vm.isBookmarked(item.path)) {
-            SymbolGlyph($r('sys.symbol.star_fill'))
-              .fontSize(12)
-              .fontColor([$r('app.color.design_accent')])
-          }
-          if (item.openedAt > 0) {
-            Text(formatRelativeTime(item.openedAt))
-              .fontSize(11.5)
-              .fontColor(this.tintFgOf(item.path))
-          }
-        }
-        .width('100%')
-
-        Row({ space: 6 }) {
-          Text(this.folderBadgeOf(item.path))
-            .fontSize(11)
-            .fontWeight(FontWeight.Medium)
-            .fontColor(this.tintFgOf(item.path))
-            .padding({ left: 7, right: 7, top: 2, bottom: 2 })
-            .borderRadius(7)
-            .backgroundColor(this.tintPillOf(item.path))
-            .maxLines(1)
-          Text(item.path)
-            .fontSize(11.5)
-            .fontColor($r('app.color.design_text_secondary'))
-            .opacity(0.85)
-            .layoutWeight(1)
-            .maxLines(1)
-            .textOverflow({ overflow: TextOverflow.Ellipsis })
-        }
-        .width('100%')
-      }
-      .alignItems(HorizontalAlign.Start)
-      .layoutWeight(1)
-
-      this.itemMoreButton(item.path, false, this.tintFgOf(item.path), false)
-    }
-    .width('100%')
-    .padding({ left: 12, right: 10, top: 12, bottom: 12 })
-    .borderRadius(16)
-    .backgroundColor(this.tintBgOf(item.path))
-    .border({ width: 0.8, color: this.tintPillOf(item.path) })
-    .gestureModifier(this.longPressFor(item.path, false))
-    .onClick(() => {
-      this.handleCardTap(() => {
-        this.openWorkspace({ 'openPath': item.path });
-      });
-    })
   }
 
   /** 在首页打开或预览选中文件夹下的附件（图片弹出缩放预览，PDF/DOCX 调用系统查看）。 */
@@ -2869,66 +2423,6 @@ struct DesignIndex {
     .onClick(() => {
       this.handleCardTap(() => {
         this.openHomeAttachment(item);
-      });
-    })
-  }
-
-  @Builder
-  bookmarkNoteCard(path: string) {
-    Row({ space: 12 }) {
-      Stack() {
-        SymbolGlyph($r('sys.symbol.star_fill'))
-          .fontSize(16)
-          .fontColor([$r('app.color.design_accent')])
-      }
-      .width(36)
-      .height(36)
-      .borderRadius(10)
-      .backgroundColor(this.tintPillOf(path))
-      .onClick(() => {
-        this.handleCardTap(() => {
-          this.vm.toggleBookmark(path);
-        });
-      })
-      Column({ space: 4 }) {
-        Text(this.noteTitleFromPath(path))
-          .fontSize(15.5)
-          .fontWeight(FontWeight.Medium)
-          .fontColor($r('app.color.design_text_primary'))
-          .maxLines(1)
-          .textOverflow({ overflow: TextOverflow.Ellipsis })
-        Row({ space: 6 }) {
-          Text(this.folderBadgeOf(path))
-            .fontSize(11)
-            .fontWeight(FontWeight.Medium)
-            .fontColor(this.tintFgOf(path))
-            .padding({ left: 7, right: 7, top: 2, bottom: 2 })
-            .borderRadius(7)
-            .backgroundColor(this.tintPillOf(path))
-            .maxLines(1)
-          Text(path)
-            .fontSize(11.5)
-            .fontColor($r('app.color.design_text_secondary'))
-            .opacity(0.85)
-            .layoutWeight(1)
-            .maxLines(1)
-            .textOverflow({ overflow: TextOverflow.Ellipsis })
-        }
-        .width('100%')
-      }
-      .alignItems(HorizontalAlign.Start)
-      .layoutWeight(1)
-      this.itemMoreButton(path, false, this.tintFgOf(path), false)
-    }
-    .width('100%')
-    .padding({ left: 12, right: 10, top: 12, bottom: 12 })
-    .borderRadius(16)
-    .backgroundColor(this.tintBgOf(path))
-    .border({ width: 0.8, color: this.tintPillOf(path) })
-    .gestureModifier(this.longPressFor(path, false))
-    .onClick(() => {
-      this.handleCardTap(() => {
-        this.openWorkspace({ 'openPath': path });
       });
     })
   }
@@ -4308,18 +3802,41 @@ struct DesignIndex {
     }
   }
 
+  private openHomeNoteCard(path: string): void {
+    this.handleCardTap(() => {
+      this.openWorkspace({ 'openPath': path });
+    });
+  }
+
+  private openHomeNoteMore(path: string): void {
+    this.handleCardTap(() => {
+      this.openItemMenu(path, false);
+    });
+  }
+
+  private toggleHomeBookmarkCard(path: string): void {
+    this.handleCardTap(() => {
+      this.vm.toggleBookmark(path);
+    });
+  }
+
+  /** 触发长按操作面板并置防误触标记（供列表/宫格卡片与条目共用的唯一入口）。 */
+  private triggerCardLongPress(targetPath: string, targetIsDir: boolean): void {
+    if (this.itemLongPressTimer >= 0) {
+      clearTimeout(this.itemLongPressTimer);
+      this.itemLongPressTimer = -1;
+    }
+    this.itemLongPressConsumed = true;
+    this.openItemMenu(targetPath, targetIsDir);
+  }
+
   /** 为首页笔记或目录条目构造统一长按手势修饰器。 */
   private longPressFor(path: string, isDir: boolean): ItemLongPressModifier {
     return new ItemLongPressModifier(
       path,
       isDir,
       (targetPath: string, targetIsDir: boolean): void => {
-        if (this.itemLongPressTimer >= 0) {
-          clearTimeout(this.itemLongPressTimer);
-          this.itemLongPressTimer = -1;
-        }
-        this.itemLongPressConsumed = true;
-        this.openItemMenu(targetPath, targetIsDir);
+        this.triggerCardLongPress(targetPath, targetIsDir);
       },
       (): void => {
         this.scheduleClearLongPressConsumed();
