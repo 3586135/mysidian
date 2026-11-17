@@ -1,5 +1,6 @@
 import { DataViewResult, DataViewTask, MdBlock, MdDocument } from '@ohos/domain';
 import { MdBlockView } from './MdBlockView';
+import { MdPropertiesView } from './MdPropertiesView';
 
 /** 文档滚动控制器：由 MdDocumentView 注册实现，供外部滚动到指定块。 */
 export class MdDocumentViewController {
@@ -38,13 +39,26 @@ export struct MdDocumentView {
   aboutToAppear(): void {
     this.controller.scrollToBlock = (ordinal: number): void => {
       if (ordinal >= 0 && ordinal < this.document.blocks.length) {
-        this.scroller.scrollToIndex(ordinal, true);
+        // frontmatter 属性卡占首个 ListItem，块序号需偏移。
+        const offset: number = this.document.frontmatter.properties.length > 0 ? 1 : 0;
+        this.scroller.scrollToIndex(ordinal + offset, true);
       }
     };
   }
 
   build() {
     List({ scroller: this.scroller }) {
+      if (this.document.frontmatter.properties.length > 0) {
+        ListItem() {
+          MdPropertiesView({
+            frontmatter: this.document.frontmatter,
+            fontSize: this.fontSize,
+            onOpenTag: (tag: string): void => {
+              this.onOpenTag(tag);
+            }
+          })
+        }
+      }
       ForEach(this.document.blocks, (block: MdBlock, index: number) => {
         ListItem() {
           MdBlockView({

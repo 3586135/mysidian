@@ -2100,6 +2100,8 @@ export class VaultViewModel {
     await manager.refreshNote(this.currentVault, path);
     await this.refreshTree();
     await this.openNote(path);
+    // 新建笔记直接进入编辑态，省去再点一次编辑按钮。
+    this.startEdit();
   }
 
   /**

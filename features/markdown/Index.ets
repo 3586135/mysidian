@@ -14,4 +14,5 @@ export { CodeHighlighter, CodeToken, CodeTokenKind } from './src/main/ets/render
 export { MdInlineText } from './src/main/ets/render/MdInlineText';
 export { MdBlockView } from './src/main/ets/render/MdBlockView';
 export { MdDocumentView, MdDocumentViewController } from './src/main/ets/render/MdDocumentView';
+export { MdPropertiesView } from './src/main/ets/render/MdPropertiesView';
 export { MdWebFallback } from './src/main/ets/render/MdWebFallback';
