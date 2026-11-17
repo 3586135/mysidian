@@ -6,7 +6,7 @@
 
 **HarmonyOS NEXT 原生 · 本地优先 · 双链 Markdown 知识库应用**
 
-[![Version](https://img.shields.io/badge/version-v1.0.0-6F5BD6?style=flat-square)](AppScope/app.json5)
+[![Version](https://img.shields.io/badge/version-v1.2.0-6F5BD6?style=flat-square)](AppScope/app.json5)
 [![Platform](https://img.shields.io/badge/HarmonyOS-API%2024%2B%20(%E5%85%BC%E5%AE%B9%2026.0.0)-262321?style=flat-square)](#构建与运行)
 [![ArkTS](https://img.shields.io/badge/ArkTS-ComponentV2%20%2B%20Trace-556F5A?style=flat-square)](#技术架构与模块结构)
 [![Local-First](https://img.shields.io/badge/Storage-Local--First%20%2B%20WebDAV-7A6842?style=flat-square)](#五webdav-安全同步与本地快照备份)
@@ -24,9 +24,9 @@
 
 | 项目 | 说明 |
 |---|---|
-| **发布版本** | `v1.0.0`（`versionCode: 1000100`） |
+| **发布版本** | `v1.2.0`（`versionCode: 1000400`） |
 | **应用包名** | `com.mrs.mysidian` |
-| **入口与扩展能力** | `DefaultAbility`、桌面服务卡片（`FormExtensionAbility`）、系统文本分享（`ShareExtensionAbility`）、备份恢复（`DefaultBackupAbility`） |
+| **入口与扩展能力** | `DefaultAbility`、桌面服务卡片（`FormExtensionAbility`）、系统文本分享与「打开方式」（`ShareExtensionAbility` / `skills`）、备份恢复（`DefaultBackupAbility`） |
 | **适配设备形态** | 手机（Phone）、折叠屏 / 阔直屏（Foldable）、平板（Tablet）与 PC / 2in1 键盘操作 |
 | **系统与构建工具** | HarmonyOS API 24+（`targetSdkVersion 26.0.0` / `compatible 6.1.1`），`hvigor` / `devecocli` |
 | **状态与主题体系** | 严格模式 ArkTS，`@ComponentV2` + `@ObservedV2` / `@Trace` + `@Computed`；浅色 / 深色 / 跟随系统实时切换 |
@@ -35,119 +35,146 @@
 
 ## 界面预览
 
-### 1. 首页默认「素雅柔彩列表」与多元浏览视图（浅 / 深双主题）
+### 1. 极简首页、左滑出文件夹抽屉与多元浏览视图（浅 / 深双主题）
 
-> 打开应用默认呈现素雅低饱和莫兰迪纸色卡片列表（浅色温润纸底 / 深色炭灰护眼），搭配悬浮分离式毛玻璃胶囊底栏；可随时一键切换 **书架封面宫格** 与 **时间线流**。
-
-<table>
-  <tr>
-    <td align="center" width="25%">
-      <img src="doc/screenshots/phone-home-list.jpeg" width="210" alt="首页素雅柔彩列表（浅色）"/><br/>
-      <sub><b>默认列表视图（浅色）</b><br/>低饱和柔彩纸面 · 日记/文件夹区分</sub>
-    </td>
-    <td align="center" width="25%">
-      <img src="doc/screenshots/phone-home-dark.jpeg" width="210" alt="首页素雅柔彩列表（深色）"/><br/>
-      <sub><b>默认列表视图（深色）</b><br/>护眼炭灰底色 · 莫兰迪暗调适配</sub>
-    </td>
-    <td align="center" width="25%">
-      <img src="doc/screenshots/phone-home-grid.jpeg" width="210" alt="书架封面宫格视图"/><br/>
-      <sub><b>书架封面宫格</b><br/>2:1 精选大卡 + 莫兰迪三列便签</sub>
-    </td>
-    <td align="center" width="25%">
-      <img src="doc/screenshots/phone-home-timeline.jpeg" width="210" alt="时间线视图"/><br/>
-      <sub><b>时间线流</b><br/>真实日期字牌 · 底部实时毛玻璃模糊</sub>
-    </td>
-  </tr>
-</table>
-
-### 2. 原生 Markdown 渲染、代码高亮与 Live Dataview 看板
-
-> 常用 Markdown 语法均由纯 ArkTS 渲染引擎直接绘制（零 WebView 开销），支持双向链接跳转、可交互任务清单、多语言代码块着色与 RDB 加速的实时 Dataview 查询。
-
-<p align="center">
-  <img src="doc/screenshots/phone-markdown-render.jpeg" width="240" alt="原生 Markdown 阅读渲染"/>
-  &nbsp;&nbsp;
-  <img src="doc/screenshots/phone-code-table.jpeg" width="240" alt="原生代码块词法高亮"/>
-  &nbsp;&nbsp;
-  <img src="doc/screenshots/phone-dataview-tasks.jpeg" width="240" alt="Live Dataview 查询与任务看板"/>
-</p>
-<p align="center">
-  <sub>左：原生引用、列表与 <code>[[双链]]</code> 渲染 &nbsp;|&nbsp; 中：ArkTS / PowerShell 等多语言语法高亮与复制 &nbsp;|&nbsp; 右：<code>TASK / LIST / TABLE</code> 实时查询与勾选写回</sub>
-</p>
-
-### 3. 全场景多端自适应 & 按年月分卷日记目录
-
-> 根据窗口宽度与宽高比智能切换阅读编辑空间：手机与阔直屏专注正文不误弹大纲，平板展现经典三栏并排；日记默认自动组织为 <code>日记/YYYY-MM/YYYY-MM-DD.md</code>。
+> 首页精简为 **「笔记 | 收藏」** 双子页签与悬浮毛玻璃胶囊底栏；点按左上角 `≡` 或向右滑动手势可平滑推开主列表露出左侧文件夹抽屉，顶栏按钮可在 **列表 ↔ 时间线 ↔ 宫格** 三种视图间一键切换。
 
 <table>
   <tr>
     <td align="center" width="38%">
-      <img src="doc/screenshots/tablet-3pane-daily.jpeg" width="380" alt="平板三栏与日记年月分卷树"/><br/>
-      <sub><b>平板三栏工作台</b><br/>左侧嵌套目录树 <code>日记 &gt; 2026-11 &gt; 2026-11-15</code> + 中栏正文 + 右侧大纲</sub>
+      <img src="doc/screenshots/tablet-home-list.jpeg" width="380" alt="首页极简双子页签列表视图"/><br/>
+      <sub><b>极简首页（笔记 | 收藏）</b><br/>莫兰迪柔彩卡片 · <code>默认 / 最近修改 / 文件名</code> 排序</sub>
     </td>
-    <td align="center" width="34%">
-      <img src="doc/screenshots/tablet-home-list.jpeg" width="350" alt="平板首页列表"/><br/>
-      <sub><b>平板默认首页列表</b><br/>顶部目录卡片 + <code>日记 · 2026-11</code> 胶囊路径标签</sub>
+    <td align="center" width="32%">
+      <img src="doc/screenshots/foldable-folder-drawer.jpeg" width="260" alt="左侧滑出文件夹抽屉"/><br/>
+      <sub><b>左侧滑出文件夹抽屉</b><br/>全部笔记 / 收藏 / 最近删除 / 多级目录树</sub>
     </td>
-    <td align="center" width="28%">
-      <img src="doc/screenshots/foldable-2pane-editor.jpeg" width="250" alt="折叠屏双栏与多行编辑工具栏"/><br/>
-      <sub><b>折叠屏 / 阔直屏双栏编辑</b><br/>左树右编，多行工具栏一目了然</sub>
+    <td align="center" width="30%">
+      <img src="doc/screenshots/phone-home-dark.jpeg" width="200" alt="深色主题护眼列表"/><br/>
+      <sub><b>深色护眼主题</b><br/>莫兰迪暗调语义化令牌实时切换</sub>
     </td>
   </tr>
 </table>
 
-### 4. 多行标签瀑布流、原地目录穿透与单层「更多」中枢
+<table>
+  <tr>
+    <td align="center" width="33%">
+      <img src="doc/screenshots/phone-home-grid.jpeg" width="210" alt="书架封面宫格视图"/><br/>
+      <sub><b>书架封面宫格</b><br/>2:1 精选大卡 + 莫兰迪三列便签</sub>
+    </td>
+    <td align="center" width="33%">
+      <img src="doc/screenshots/phone-home-timeline.jpeg" width="210" alt="时间线流视图"/><br/>
+      <sub><b>时间线流</b><br/>按真实日期字牌流式回顾</sub>
+    </td>
+    <td align="center" width="34%">
+      <img src="doc/screenshots/phone-more-hub.jpeg" width="210" alt="更多功能中枢与数据统计"/><br/>
+      <sub><b>功能中枢与统计概览</b><br/>笔记 / 收藏 / 标签 / 快照与设置入口</sub>
+    </td>
+  </tr>
+</table>
 
-<p align="center">
-  <img src="doc/screenshots/phone-search-tags.jpeg" width="215" alt="搜索页多行标签瀑布流"/>
-  &nbsp;&nbsp;
-  <img src="doc/screenshots/foldable-folder-drilldown.jpeg" width="275" alt="首页文件夹原地逐级穿透与面包屑"/>
-  &nbsp;&nbsp;
-  <img src="doc/screenshots/phone-more-hub.jpeg" width="215" alt="更多功能中枢与数据统计"/>
-</p>
-<p align="center">
-  <sub>左：搜索页 <code>#标签</code> 自动换行瀑布平铺与数量徽章 &nbsp;|&nbsp; 中：首页原地目录穿透（<code>全部目录 › 日记 › 2016-12</code> 面包屑 · 列表/宫格切换） &nbsp;|&nbsp; 右：四联统计概览 + 单层「笔记工具 / 设置与数据管理」</sub>
-</p>
+### 2. 原生 Markdown 渲染、阅读态长按选中复制与 Frontmatter 属性卡
+
+> 纯 ArkTS 原生渲染引擎（零 WebView 开销），正文顶部支持 YAML Frontmatter 属性胶囊卡；**非编辑阅读态**下长按正文任意片段即可选中文字并唤起系统 `复制 / 全选` 菜单与可拖动手柄，同时不影响 `[[双链]]`、外链与 `#标签` 点击跳转。
+
+<table>
+  <tr>
+    <td align="center" width="36%">
+      <img src="doc/screenshots/foldable-reading-select.jpeg" width="280" alt="阅读态 Frontmatter 属性卡与长按选词复制菜单"/><br/>
+      <sub><b>阅读态属性卡 &amp; 长按选词复制</b><br/>YAML 属性胶囊 + 原生选择手柄与 <code>复制 / 全选</code></sub>
+    </td>
+    <td align="center" width="21%">
+      <img src="doc/screenshots/phone-markdown-render.jpeg" width="195" alt="原生 Markdown 阅读渲染"/><br/>
+      <sub><b>原生富文本排版</b><br/>引用 / 列表 / <code>[[双链]]</code></sub>
+    </td>
+    <td align="center" width="21%">
+      <img src="doc/screenshots/phone-code-table.jpeg" width="195" alt="原生代码块词法高亮"/><br/>
+      <sub><b>多语言代码块高亮</b><br/>一键复制 · 深浅自适应</sub>
+    </td>
+    <td align="center" width="22%">
+      <img src="doc/screenshots/phone-dataview-tasks.jpeg" width="195" alt="Live Dataview 查询与任务看板"/><br/>
+      <sub><b>Live Dataview 看板</b><br/><code>TASK / LIST / TABLE</code> 写回</sub>
+    </td>
+  </tr>
+</table>
+
+### 3. 全场景多端自适应、多行编辑工具栏 & 按数量排序的标签检视
+
+> 按窗口断点智能自适应排布（手机单栏沉浸、折叠屏双栏、平板三栏）；搜索页 `#标签` 默认按**关联笔记数量从多到少**排列，并可一键切换按名称检索。
+
+<table>
+  <tr>
+    <td align="center" width="36%">
+      <img src="doc/screenshots/tablet-3pane-daily.jpeg" width="360" alt="平板三栏与日记年月分卷树"/><br/>
+      <sub><b>平板三栏工作台</b><br/>左树（<code>日记/YYYY-MM</code>）+ 正文 + 右侧四维大纲</sub>
+    </td>
+    <td align="center" width="32%">
+      <img src="doc/screenshots/foldable-2pane-editor.jpeg" width="260" alt="折叠屏双栏编辑与工具栏"/><br/>
+      <sub><b>折叠屏 / 阔直屏双栏编辑</b><br/>左目录树 + 右侧专注编辑与格式工具栏</sub>
+    </td>
+    <td align="center" width="32%">
+      <img src="doc/screenshots/foldable-search-tags.jpeg" width="260" alt="搜索页标签按数量降序排列"/><br/>
+      <sub><b>按数量降序的标签广场</b><br/>支持 <code>数量↓ / 名称</code> 切换 · 点按标签直达筛选</sub>
+    </td>
+  </tr>
+</table>
 
 ---
 
 ## 核心特性
 
-### 一、Material 3 视觉与流畅单页架构
-- **素雅柔彩列表与原地目录穿透**：首页「笔记」默认展示文件夹与近期笔记的 5 色低饱和莫兰迪纸感卡片；点击任意文件夹直接在当前统一风格内**逐级穿透目录**，顶部呈现可点击祖先面包屑（`全部目录 › 父目录 › 当前目录`），列表/三列宫格自由切换，仅在明确点选笔记时进入正文工作台（系统返回键逐级回退）。
-- **全新分层品牌视觉与流畅单页架构**：采用 `Ceramic Washi & Prism Fold` 鸿蒙分层应用图标（`$media:layered_image`）及浅/深双主题冷启动页；`DesignIndex` 作为唯一 `@Entry`，在首页三页签（`笔记` / `搜索` / `更多`）与全屏工作台 `WorkspaceView` 之间以弹性动效无缝过渡；底部悬浮分离式毛玻璃胶囊底栏 + 右侧独立 FAB，支持一键呼出「今日日记 / 闪念速记 / 模板新建 / 新建笔记」。
-- **深浅双色语义化令牌**：全面基于 `design_*`、`design_tint_*` 与 `md_*` 资源颜色，支持应用内实时切换**跟随系统 / 浅色 / 深色**。
+### 一、Material 3 视觉、左抽屉与联动横滑体验
+- **左侧滑出文件夹抽屉与单层净简主页**：
+  - 首页「笔记」顶部精简为 **`笔记 | 收藏`** 双子页签，移除列表顶部的折叠目录与重复收藏堆叠，完整呈现库内笔记；卡片继续保留长按与右侧 `⋯` 高级操作菜单，顶栏视图按钮可在 **列表 / 时间线 / 宫格** 三视图间实时切换。
+  - 点击左上角 `≡` 按钮或使用右拉手势（避让系统侧滑返回区），即可带阻尼遮罩平滑推开主视图露出左侧文件夹抽屉，聚合 `全部笔记`、`收藏`、`最近删除`（直达回收站）、多级可展开/收起文件夹目录树与 `+ 新建文件夹`。
+- **顶栏子页签与底栏主标签联动横滑**：
+  - 采用嵌套 `Swiper`（`SELF_FIRST` 联动），在底部处于 `笔记` 时自右向左滑动会先依次划过 `笔记 → 收藏` 顶部子页签，抵达末项后再继续横滑平滑切换至底栏第二项 `搜索`（以及 `更多`），反向滑动同样逐级回溯。
+- **全新分层品牌视觉与主题令牌**：
+  - 采用 `Ceramic Washi & Prism Fold` 鸿蒙分层应用图标（`$media:layered_image`）与浅/深双主题冷启动页；全面基于 `design_*`、`design_tint_*` 与 `md_*` 资源色值，支持应用内实时切换**跟随系统 / 浅色 / 深色**。
 
-### 二、自研原生 ArkTS Markdown 引擎
-- **全语法原生渲染**：支持多级标题、有序/无序列表、任务列表（阅读态直接勾选并回写源文件）、引用与可折叠 Callout（`> [!NOTE]-`）、宽表格横向滚动、`==高亮==`、带宽度图片（`![[pic.png|300]]`）、笔记章节嵌入（`![[笔记#章节]]`）、Unicode 数学公式（`MathRenderer`）与原生 Canvas 流程图（`MermaidFlow`）；复杂 HTML 由 `MdWebFallback` 安全兜底。
-- **多语言代码块词法着色**：内置线性词法分析器 `CodeHighlighter`，支持 ArkTS / TypeScript / JavaScript / Python / Java / Go / Rust / C / SQL 等语言高亮，深浅色自适应并支持一键复制。
-- **全屏图片手势预览**：`ImagePreviewOverlay` 支持 1x–5x 双指捏合缩放、拖拽平移与双击复位。
+### 二、自研原生 ArkTS Markdown 引擎与阅读交互
+- **非编辑阅读态自由选词与复制**：
+  - 正文、标题、引用、Callout、列表、代码块、公式、图片说明与属性卡均启用 `CopyOptions.LocalDevice`，长按即可选择文本并弹出系统 `复制 / 全选` 菜单；存在选区期间自动抑制外层侧滑手势，与 `[[双链]]`、外链、`#标签` 独立点击互不干扰。
+- **阅读态 YAML Frontmatter 属性卡**：
+  - 在正文顶部以圆角卡片渲染 YAML frontmatter 属性，`tags` / `tag` 以可点击胶囊芯片展示并支持一键跳转标签检索，列表值与嵌套结构清晰呈现，大纲定位按属性卡占位自动校准滚动偏移。
+- **全语法原生渲染 & 多语言高亮**：
+  - 纯 ArkTS 原生绘制（零 WebView 开销），支持多级标题、任务列表（勾选直接回写源文件）、可折叠 Callout（`> [!NOTE]-`）、宽表格横向滚动、`==高亮==`、带宽度图片（`![[pic.png|300]]`）、笔记章节嵌入（`![[笔记#章节]]`）、Unicode 数学公式（`MathRenderer`）与原生 Canvas 流程图（`MermaidFlow`）；复杂 HTML 由 `MdWebFallback` 安全兜底。
+  - `CodeHighlighter` 支持 ArkTS / TypeScript / JavaScript / Python / Java / Go / Rust / C / SQL 等词法着色与一键复制；`ImagePreviewOverlay` 支持全屏 1x–5x 双指捏合缩放、平移与双击复位。
 
-### 三、标准分卷日记、高效编辑与文件树
-- **按年月分卷的日记工作流**：
-  - 点击顶部「今日日记」、FAB「日记」、日历弹窗（`CalendarSheet`）或桌面快捷方式时，默认创建并打开 **`日记/YYYY-MM/YYYY-MM-DD.md`**（例如 `日记/2026-11/2026-11-15.md`），自动匹配日记模板并定位 `{{cursor}}`。
-  - 兼容读取历史根目录 `YYYY-MM-DD.md` 日记，快速闪念追加（`appendQuickNote`）与桌面服务卡片均遵循相同路径优先级。
-- **面向移动端与物理键盘的写作体验**：
-  - 17 项常用语法（加粗、斜体、删除线、代码、H1–H3、引用、列表、待办、分割线、撤销、重做、图片、`[[`、`#` 等）采用多行自适应平铺工具栏，浅/深模式下高对比清晰显示。
-  - 输入 `[[` 触发全库双链模糊匹配补全（选择不存在的标题时自动建档），输入 `#` 触发标签补全；列表/待办回车自动续行；50 步防抖撤销与重做；内置 `FindReplaceBar` 支持页内大小写不敏感匹配计数、跳转与逐项/全部替换。
-- **全链路文件树与版本安全**：
-  - 支持多级目录创建、移动与重命名（`LinkRewriter` 自动重写全库 `[[旧名]]`、`[[旧名|别名]]`、`[[旧名#小节]]`）。
-  - 删除默认进入 `.trash` 回收站（可一键恢复或清空），重要修改自动留存 `.history` 快照支持 LCS 行级 Diff 对比与一键回滚。
-  - 支持 **`★ 书签` 置顶**，编辑器、侧栏文件树、首页列表与书签页签四处实时联动。
+### 三、标准分卷日记、高效写作与全链路文件管理
+- **新建直达编辑与分卷日记**：
+  - 点击 FAB「新建笔记」、菜单或 `Ctrl+N` 创建笔记后直接进入编辑器无缝落笔。
+  - 点击「今日日记」、FAB「日记」、日历弹窗（`CalendarSheet`）或桌面快捷方式时，自动在 **`日记/YYYY-MM/YYYY-MM-DD.md`** 创建/打开日记并套用模板定位 `{{cursor}}`（兼容根目录历史日记文件）。
+- **内置 6 个常用模板与三维度排序**：
+  - 内置**日记、周报、会议纪要、读书笔记、项目计划、待办清单**模板并在新建示例仓库时自动播种，支持 `{{title}}`、`{{date}}`、`{{date:FMT}}`、`{{time}}`、`{{week}}`、`{{cursor}}` 占位符。
+  - 首页「笔记」与「收藏」统一支持 **默认 / 最近修改 / 文件名** 胶囊排序切换。
+- **移动端与物理键盘写作文流**：
+  - 17 项常用 Markdown 快捷格式工具栏，输入 `[[` 触发全库双链补全（缺失标题自动建档），输入 `#` 触发标签补全；列表/待办自动续行；50 步防抖撤销与重做；内置 `FindReplaceBar` 支持页内查找、计数跳转与逐项/全部替换。
+  - 重命名或移动笔记时由 `LinkRewriter` 自动重写全库 `[[旧名]]` / `|别名` / `#锚点`；删除进入 `.trash` 回收站；重要修改留存 `.history` 快照并支持 LCS 行级 Diff 回滚；支持 `★ 书签` 全链路置顶。
 
-### 四、RDB v4 索引、Dataview 查询与全文检索
-- **Live Dataview 实时查询**：原生支持 `TASK`、`TABLE`、`LIST` 与 `FROM #tag`、`WHERE`（含日期比较）、`SORT`、`LIMIT` 子句，结合 `TagDao` / `PropDao` / `BlockDao` 在 RDB 层批量求值，看板勾选任务直接写回源笔记。
-- **FTS5 中文分词全文检索**：基于 `Tokenizer` 中文 bigram 分词与 `bm25(note_fts, 10.0, 1.0)` 标题加权排序，支持启动 FTS5 索引自愈与命中高亮三段式摘要；搜索提供**全文 / 标签（多行平铺）/ 属性**三模式，并内置页内 `SearchOverlay` 快速跳查与 `QuickSwitcher`（`Ctrl+O`）秒开笔记。
-- **四维文档信息面板（`NoteInfoPanel`）**：集成**大纲跳转**、**反向链接与未链接提及（支持一键转为 `[[双链]]`）**、**标签聚合**与**交互式 Frontmatter 属性表单**（文本 / 布尔开关 / 日期 / 列表直改写回；知识图谱 `GraphView` 模块已保留解耦以备按需启用，默认不在主界面占位）。
+### 四、RDB v7 索引、Obsidian 规范标签与全文检索
+- **Obsidian 规范标签体系（`TagRules` + RDB v7）**：
+  - 单源统一标签校验：支持 ASCII 字母数字、`_-/`（含 `#to_do` 下划线与 `#项目/进行中` 多级嵌套）与 CJK 文字，自动拒绝纯数字（`#2026`）、十六进制色值（`#1A1A2E`）与全角标点误报。
+  - 索引统一小写归一与大小写不敏感匹配；搜索输入支持 **`tag:#x`** 包含、**`-tag:#x`** 排除与 **`OR`** 逻辑组合检索（`SearchTextParser`）。
+- **数量降序标签浏览**：
+  - 搜索页 `#标签` 列表默认按**关联笔记数量从多到少**排列（同数按字母序），右上角支持 `[ 数量↓ | 名称 ]` 一键切换，点按标签即时过滤对应笔记。
+- **FTS5 中文分词与 Live Dataview**：
+  - 基于 `Tokenizer` 中文 bigram 分词与 `bm25` 标题加权排序，支持启动索引自愈与命中摘要高亮；内置 `SearchOverlay` 与 `QuickSwitcher`（`Ctrl+O`）。
+  - Live Dataview 原生支持 `TASK` / `TABLE` / `LIST`（`FROM #tag`、`WHERE`、`SORT`、`LIMIT`）实时求值与勾选写回。
+- **四维文档信息面板（`NoteInfoPanel`）**：
+  - 集成**大纲跳转**、**反向链接与未链接提及（支持一键转双链）**、**标签聚合**与**交互式 Frontmatter 属性表单**。
 
 ### 五、WebDAV 安全同步与本地快照备份
-- **硬件级凭据加密与证书开关**：基于 HarmonyOS `@kit.AssetStoreKit`（`SecretStore`）安全存取 WebDAV 账号密码，支持自定义 CA 证书导入，以及在「新建仓库」/「同步设置」独立开启自签名 HTTPS 跳过证书校验开关。
-- **干跑安全闸门与无感增量同步**：同步采用先干跑规划后执行、零差异/纯拉取静默放行、逐文件断点基线落盘与 `WebDAV MOVE` 至 `.trash/` 软删除策略，杜绝误删与中途失败重复全量扫描；`sync_state` 持久化 `mtime` 与 `size`，未修改文件免重算哈希；双端冲突可在冲突中心直接审阅 LCS 行级 Diff，自由选择「保留本地」或「采用远端」。
-- **自动与手动 zip 快照备份**：打开仓库每 24 小时自动在沙箱生成 zip 快照（轮转保留最近 5 份），并可在「更多 → 备份与维护」随时手动备份或一键恢复任意历史快照，也可导出整个仓库 zip 在桌面 Obsidian 直接打开。
+- **硬件级凭据加密与证书开关**：
+  - 基于 HarmonyOS `@kit.AssetStoreKit`（`SecretStore`）加密存储 WebDAV 凭据，支持自定义 CA 证书导入及在「新建仓库」/「同步设置」独立开启自签名 HTTPS 跳过证书校验开关。
+- **无感增量同步与防误删保护**：
+  - 采用干跑安全闸门、逐文件断点基线落盘、`mtime + size` 哈希缓存、`WebDAV MOVE` 至 `.trash/` 软删（兼容异常 502 自动降级处理），以及 `HEAD` 二次探测与本地 `TRASH_LOCAL` 决策，防止跨设备删除后同步自动恢复；0 字节空笔记不误判 401 冷却；双端冲突提供 LCS 行级 Diff 审阅。
+- **定时与手动 zip 快照备份**：
+  - 打开仓库每 24 小时自动留存沙箱 zip 快照（保留最近 5 份），支持在设置中一键备份、恢复或导出完整桌面 Obsidian 兼容 zip。
 
 ### 六、全场景多端生态融合
 - **物理键盘快捷键（平板 / 2in1）**：`Ctrl+S` 保存、`Ctrl+E` 切换编辑/阅读、`Ctrl+F` 页内查找替换、`Ctrl+N` 新建笔记、`Ctrl+P` 命令面板、`Ctrl+O` 快速切换笔记。
-- **系统「打开方式」预览与生态集成**：支持从系统文件管理器或第三方应用通过「打开方式」直接唤醒 MySidian（冷/热启动）只读浏览外部 `.md` / `.markdown` 文件、查看大纲与标签并一键导入当前库或新建仓库导入；内置 Canvas 手写画板自动转存 PNG 插入笔记，支持桌面长按快捷方式、桌面服务卡片以及系统分享面板 URI/文本导入。
+- **系统「打开方式」预览与生态集成**：支持从系统文件管理器或第三方应用通过「打开方式」直接唤醒 MySidian（冷/热启动）只读预览外部 `.md` / `.markdown` 文件并一键导入当前库或新建仓库；内置 Canvas 手写画板、桌面长按快捷方式、桌面服务卡片（`FormExtensionAbility`）与系统分享面板接收（`ShareExtensionAbility`）。
 
 ---
 
@@ -155,7 +182,7 @@
 
 | 设备形态 | 宽度断点 | 默认布局策略 | 信息面板（大纲/反链/标签/属性）行为 |
 |---|---|---|---|
-| **手机 Phone** | `< 600vp` | 单栏沉浸正文 + 左侧滑出文件树抽屉 | 默认收起，点击右上角 `(i)` 弹出浮层；切换笔记、右滑或点击遮罩自动关闭 |
+| **手机 Phone** | `< 600vp` | 单栏沉浸列表（左滑出抽屉）+ 单栏工作台 | 默认收起，点击右上角 `(i)` 弹出浮层；切换笔记、右滑或点击遮罩自动关闭 |
 | **折叠屏 / 阔直屏** | `600vp ~ 899vp` | 左侧可折叠目录树 + 右侧宽屏正文双栏并排 | **不自动弹出**，点击 `(i)` 以右侧浮层呼出，绝不挤压编辑与阅读视野 |
 | **平板 / 2in1 PC** | `>= 900vp` | 经典三栏并排（目录树 + 正文 + 信息面板） | 大屏常驻右侧三栏（可手动收起），支持物理键盘快捷键与对照阅读 |
 
@@ -168,7 +195,7 @@
 ```text
 products/default (UI · ViewModel · 能力扩展)
    ├──▶ features/markdown (原生解析 · 排版渲染 · 代码着色 · Math · Mermaid)
-   ├──▶ features/vault    (RDB v4 Schema · FTS5 · 文件存储 · 历史 · 模板 · 压缩备份)
+   ├──▶ features/vault    (RDB v7 Schema · FTS5 · 文件存储 · 历史 · 模板 · 压缩备份)
    ├──▶ features/sync     (WebDAV 协议 · 增量同步引擎 · 冲突决策)
    └──▶ features/domain · common (领域模型 · AssetStoreKit 凭据 · 响应式断点 · 工具)
 ```
@@ -179,7 +206,7 @@ products/default (UI · ViewModel · 能力扩展)
 <summary><b>展开查看完整工程目录树</b></summary>
 
 ```text
-AppScope/                         应用级配置与版本信息（v1.0.0, versionCode: 1000100）
+AppScope/                         应用级配置与版本信息（v1.2.0, versionCode: 1000400）
 common/                           HAR：通用基础组件与系统能力封装
   constants/                      公共常量（CommonConstants）
   ui/                             EmptyState、FileTreeView、FileTreeDataSource
@@ -190,11 +217,13 @@ features/
     service/                      SyncProvider、SyncFileFilter
   markdown/                       HAR：自研原生 Markdown 引擎
     parser/                       BlockParser / InlineParser / FrontmatterParser /
-                                  FrontmatterSerializer / MarkdownParser / TaskMetadata / DataViewQuery
-    render/                       MdDocumentView / MdBlockView / MdInlineText / MdInlineFlattener /
-                                  CodeHighlighter / MathRenderer / MermaidFlow / MdMermaidView / MdWebFallback
+                                  FrontmatterSerializer / MarkdownParser / SearchTextParser /
+                                  TagRules / TaskMetadata / DataViewQuery
+    render/                       MdDocumentView / MdBlockView / MdPropertiesView / MdInlineText /
+                                  MdInlineFlattener / CodeHighlighter / MathRenderer /
+                                  MermaidFlow / MdMermaidView / MdWebFallback
   vault/                          HAR：本地知识库存储与 RDB/FTS5 索引
-    db/                           DbHelper (Schema v4)、VaultDao、NoteDao、BlockDao、
+    db/                           DbHelper (Schema v7)、VaultDao、NoteDao、BlockDao、
                                   LinkDao、TagDao、PropDao、SearchDao (FTS5)、SyncStateDao
     manager/                      VaultManager、VaultPath (含日记年月路径解析)、TemplateEngine、
                                   LinkRewriter、AttachmentResolver、NoteResolver、FileHistory、
@@ -202,9 +231,9 @@ features/
     indexer/                      IndexPipeline、Tokenizer（中文 bigram + 前缀匹配）
   sync/                           HAR：WebDAV 同步引擎
     engine/                       SyncEngine（基线对比 + mtime/size 缓存）、ConflictResolver
-    provider/                     WebDavProvider（PROPFIND / GET / PUT / DELETE / MKCOL / CA 支持）
+    provider/                     WebDavProvider（PROPFIND / GET / PUT / MOVE / DELETE / MKCOL / CA 支持）
 products/default/                 主工程入口（entry）
-  pages/DesignIndex.ets           唯一 @Entry：三页签毛玻璃主页、FAB 气泡与全屏工作台切换
+  pages/DesignIndex.ets           唯一 @Entry：左抽屉文件夹导航、嵌套联动 Swiper、毛玻璃底栏与全屏工作台
   form/                           桌面服务卡片 FormExtensionAbility & FormCard
   share/                          系统分享接收 ShareExtensionAbility
   view/design/                    WorkspaceView、EditorPane、EditorToolbar、FindReplaceBar、
@@ -234,12 +263,12 @@ products/default/                 主工程入口（entry）
 devecocli build
 
 # 2. 运行全模块单元测试（common / markdown / vault / default）
-& "C:\Program Files\Huawei\DevEco Studio\tools\node\node.exe" `
-  "C:\Program Files\Huawei\DevEco Studio\tools\hvigor\bin\hvigorw.js" `
+& "<DevEco Studio 安装路径>\tools\node\node.exe" `
+  "<DevEco Studio 安装路径>\tools\hvigor\bin\hvigorw.js" `
   test --mode module -p "module=common@default,markdown@default,vault@default,default@default"
 
-# 3. 静态代码规范检查（Code Linter）与 Release 模式打包
-devecocli check lint
+# 3. 静态代码规范检查（ArkTS）与 Release 模式打包
+devecocli check arkts
 devecocli build --build-mode release
 
 # 4. 安装到真机或模拟器并启动
@@ -247,14 +276,19 @@ hdc install -r products/default/build/default/outputs/default/default-default-si
 hdc shell aa start -a DefaultAbility -b com.mrs.mysidian
 ```
 
+> Release 分发仅提供未签名包 `mysidian-1.2.0-unsigned.hap`（不分发开发者调试签名证书产物）；如需自行安装，请在 DevEco Studio 中配置个人签名证书重签安装，或直接从源码构建运行。
+
 ---
 
 ## 版本演进
 
 | 版本 | 核心里程碑 |
 |---|---|
-| **`v1.0.0`** | **全端质感打磨与 1.0 正式发布**：全新分层品牌图标与浅/深冷启动页、首页默认素雅莫兰迪纸色列表与双主题 5 色柔彩体系、文件夹原地逐级穿透与面包屑导航、悬浮毛玻璃三页签底栏与顶栏快捷入口、标准 `日记/YYYY-MM/YYYY-MM-DD.md` 按年月分卷目录、手机/折叠屏/平板大纲自适应、多行编辑工具栏与标签瀑布流、WebDAV 无感安全同步（断点落盘/安全闸门/自签名证书独立开关）、系统 `.md`「打开方式」只读预览与一键导入，以及全模块单测通过。 |
-| **`v0.6.0`** | 查询引擎（Dataview / 日历）RDB 批量加速、列表项入库、`CodeHighlighter` 原生多语言代码高亮、`★ 书签` 全链路置顶、定时与手动 zip 快照备份恢复、2in1 键盘快捷键与桌面长按快捷方式。 |
+| **`v1.2.0`** | **左抽屉文件夹交互、阅读态选词复制与交互顺滑升级**：非编辑阅读态支持正文/代码块/属性卡长按选择并弹出系统 `复制 / 全选` 菜单（选区期间屏蔽侧滑冲突）；首页重构为左侧可拉出文件夹抽屉（聚合全部笔记/收藏/最近删除/多级目录树与新建文件夹）+ 极简 `笔记 \| 收藏` 双子页签；实现底部主标签与顶部子页签的逐级嵌套联动横滑；搜索页 `#标签` 默认按关联笔记数降序排列并支持 `数量↓ / 名称` 一键切换；顶栏三视图按钮响应同步刷新。 |
+| **`v1.1.1`** | **Obsidian 标签规范对齐、属性卡与跨端删除同步修复**：新增 `TagRules` 单源校验（大小写归一/下划线/嵌套层级/剔除色值与纯数字误报）、`tag:/-tag:/OR` 搜索语法与 RDB v7 全量自愈迁移；新增阅读态 YAML Frontmatter 属性胶囊卡、新建笔记直达编辑，以及跨设备删除 `TRASH_LOCAL` 与 0 字节空笔记推送修复。 |
+| **`v1.1.0`** | **列表多维排序与内置常用模板**：收藏与文件夹视图支持默认/最近修改/文件名排序切换；内置日记、周报、会议纪要、读书笔记、项目计划、待办清单 6 套模板；优化 WebDAV MOVE 降级与认证冷却机制。 |
+| **`v1.0.0`** | **全端质感打磨与 1.0 正式发布**：全新分层品牌图标与浅/深冷启动页、首页素雅莫兰迪纸色列表与双主题 5 色柔彩体系、悬浮毛玻璃底栏、按年月分卷日记（`日记/YYYY-MM/YYYY-MM-DD.md`）、自适应大纲浮层、WebDAV 安全同步与系统 `.md`「打开方式」只读预览。 |
+| **`v0.6.0`** | 查询引擎（Dataview / 日历）RDB 批量加速、列表项入库、`CodeHighlighter` 原生多语言代码高亮、`★ 书签` 全链路置顶、定时与一键 zip 快照备份恢复、2in1 键盘快捷键与桌面长按快捷方式。 |
 | **`v0.5.0`** | `SecretStore` 硬件级凭据加密、DB v4 `sync_state` 哈希缓存与同步冲突中心、FTS5 + BM25 中文相关性搜索、RDB 未链接提及、编辑态页内查找替换与 1x–5x 图片缩放预览。 |
 | **`v0.4.0`** | 单页 Material 3 架构重构、自研 Markdown 解析与渲染引擎、WebDAV 增量同步、RDB 索引管线、`NoteInfoPanel` 与文件树全操作集成。 |
 
