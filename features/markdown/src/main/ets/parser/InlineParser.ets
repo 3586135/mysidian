@@ -1,4 +1,5 @@
 import { MdInline, MdInlineType } from '@ohos/domain';
+import { TagRules } from './TagRules';
 
 /** 行内解析结果（节点 + 解析结束位置）。 */
 export class InlineParseResult {
@@ -163,7 +164,7 @@ export class InlineParser {
 
       if (ch === '#' && this.isTagStart(text, index, end)) {
         const tagEnd: number = this.findTagEnd(text, index, end);
-        if (tagEnd > index + 1) {
+        if (tagEnd > index + 1 && this.isTagBody(text.substring(index + 1, tagEnd))) {
           this.flush(nodes, buffer);
           buffer = '';
           const node: MdInline = new MdInline();
@@ -423,14 +424,15 @@ export class InlineParser {
   }
 
   private isTagChar(ch: string): boolean {
-    if (ch.length === 0) {
-      return false;
-    }
-    const code: number = ch.charCodeAt(0);
-    if (code > 0x2E80) {
-      return true;
-    }
-    return this.isWordChar(ch) || ch === '-' || ch === '/';
+    return TagRules.isTagChar(ch);
+  }
+
+  /**
+   * 标签体合法性（TagRules 单源）：纯数字（#2026）与十六进制色值（#FFF、#1A1A2E、#FFFFFF80）
+   * 不是标签——设计文档令牌表里的颜色值是最常见的误报来源。
+   */
+  private isTagBody(body: string): boolean {
+    return TagRules.isTagBody(body);
   }
 
   private isWordChar(ch: string): boolean {

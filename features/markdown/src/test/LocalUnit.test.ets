@@ -2,6 +2,7 @@ import { describe, it, expect } from '@ohos/hypium';
 import { MdBlockType, MdInlineType, MdListItem } from '@ohos/domain';
 import { MarkdownParser } from '../main/ets/parser/MarkdownParser';
 import { DataViewQuery } from '../main/ets/parser/DataViewQuery';
+import { SearchTextParser } from '../main/ets/parser/SearchTextParser';
 import { TaskMetadata } from '../main/ets/parser/TaskMetadata';
 import { MdInlineFlattener } from '../main/ets/render/MdInlineFlattener';
 import { MermaidFlow } from '../main/ets/render/MermaidFlow';
@@ -101,6 +102,94 @@ export default function markdownParserTest() {
       const inlines = document.blocks[0].inlines;
       expect(inlines[1].type).assertEqual(MdInlineType.TAG);
       expect(inlines[1].text).assertEqual('project/alpha');
+    });
+
+    it('rejectsNumericAndHexColorAsTag', 0, () => {
+      // 设计令牌表常见误报：纯数字（#2026）与十六进制色值（#1A1A2E、#FFFFFF、#FFF）
+      // 不是标签；含非十六进制字母的（#0day）与中文标签仍是标签。
+      const document = MarkdownParser.parse('颜色 #1A1A2E 与 #FFFFFF 和 #FFF 及 #2026 不是标签，#0day 与 #开源情报 是标签');
+      const segments = MdInlineFlattener.flatten(document.blocks[0].inlines);
+      const tags: string[] = [];
+      for (const segment of segments) {
+        if (segment.tag.length > 0) {
+          tags.push(segment.tag);
+        }
+      }
+      expect(tags.length).assertEqual(2);
+      expect(tags.includes('0day')).assertTrue();
+      expect(tags.includes('开源情报')).assertTrue();
+    });
+
+    it('rejectsCjkPunctuationInTag', 0, () => {
+      // 标签体仅允许字母/数字/_-/与 CJK 文字：
+      // 全角标点（）、逗号，句号。不属于标签体，#10）与 #1a1a2e）导航 不是标签。
+      const document = MarkdownParser.parse('数据 #10）统计 与 #1a1a2e）导航 及 #9，deepseek 和 #7933）。');
+      const segments = MdInlineFlattener.flatten(document.blocks[0].inlines);
+      const tags: string[] = [];
+      for (const segment of segments) {
+        if (segment.tag.length > 0) {
+          tags.push(segment.tag);
+        }
+      }
+      expect(tags.length).assertEqual(0);
+    });
+
+    it('parsesUnderscoreTag', 0, () => {
+      // Obsidian 标签名允许下划线：#to_do 是一个完整标签，不被截断为 #to。
+      const document = MarkdownParser.parse('todo #to_do and #to-do done');
+      const inlines = document.blocks[0].inlines;
+      expect(inlines[1].type).assertEqual(MdInlineType.TAG);
+      expect(inlines[1].text).assertEqual('to_do');
+      expect(inlines[3].type).assertEqual(MdInlineType.TAG);
+      expect(inlines[3].text).assertEqual('to-do');
+    });
+
+    it('matchesNestedTagHierarchy', 0, () => {
+      // 嵌套标签：FROM #项目 命中 #项目 与 #项目/进行中，不命中 #项目2。
+      const query = DataViewQuery.parse('LIST FROM #项目');
+      expect(query.matchesPage('正文 #项目 说明', [], 'a.md', '')).assertTrue();
+      expect(query.matchesPage('正文 #项目/进行中 说明', [], 'a.md', '')).assertTrue();
+      expect(query.matchesPage('正文 #项目2 说明', [], 'a.md', '')).assertFalse();
+      expect(query.matchesPage('tags', ['项目/进行中'], 'a.md', '')).assertTrue();
+      expect(query.matchesPage('tags', ['别的'], 'a.md', '')).assertFalse();
+    });
+
+    it('matchesTagCaseInsensitive', 0, () => {
+      // 大小写不敏感：#Tag 与 #tag 视为同一标签。
+      const query = DataViewQuery.parse('LIST FROM #Tag');
+      expect(query.fromTag).assertEqual('tag');
+      expect(query.matchesPage('body #tag here', [], 'a.md', '')).assertTrue();
+      expect(query.matchesPage('tags', ['Tag'], 'a.md', '')).assertTrue();
+    });
+
+    it('parsesSearchTextTagClauses', 0, () => {
+      // tag:#a AND tag:#b → 两组分别要求。
+      const andParsed = SearchTextParser.parse('tag:#工作 AND tag:#重要');
+      expect(andParsed.keyword).assertEqual('');
+      expect(andParsed.tagGroups.length).assertEqual(2);
+      expect(andParsed.tagGroups[0][0]).assertEqual('工作');
+      expect(andParsed.tagGroups[1][0]).assertEqual('重要');
+      // tag:#a OR tag:#b → 同组备选。
+      const orParsed = SearchTextParser.parse('tag:#学习 OR tag:#研究');
+      expect(orParsed.tagGroups.length).assertEqual(1);
+      expect(orParsed.tagGroups[0].length).assertEqual(2);
+      expect(orParsed.tagGroups[0][0]).assertEqual('学习');
+      expect(orParsed.tagGroups[0][1]).assertEqual('研究');
+      // -tag:#x 排除。
+      const excludeParsed = SearchTextParser.parse('tag:#工作 -tag:#已完成');
+      expect(excludeParsed.tagGroups.length).assertEqual(1);
+      expect(excludeParsed.tagExcludes.length).assertEqual(1);
+      expect(excludeParsed.tagExcludes[0]).assertEqual('已完成');
+      // 裸 #标签 也按标签子句处理，剩余词保留为关键词；大小写归一。
+      const mixed = SearchTextParser.parse('#工作 周报 记录');
+      expect(mixed.keyword).assertEqual('周报 记录');
+      expect(mixed.tagGroups.length).assertEqual(1);
+      const upper = SearchTextParser.parse('tag:#Tag');
+      expect(upper.tagGroups.length).assertEqual(1);
+      expect(upper.tagGroups[0][0]).assertEqual('tag');
+      // 嵌套标签可作子句。
+      const nested = SearchTextParser.parse('tag:#项目/进行中');
+      expect(nested.tagGroups[0][0]).assertEqual('项目/进行中');
     });
 
     it('parsesListAndTask', 0, () => {

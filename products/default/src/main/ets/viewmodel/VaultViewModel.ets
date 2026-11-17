@@ -321,6 +321,13 @@ export class VaultViewModel {
   /** 为尚未建立索引的笔记补建索引。 */
   private async ensureIndexed(vault: VaultInfo): Promise<void> {
     await this.syncIndex(vault);
+    // v7 标签语义升级（大小写归一 / 下划线 / 纯数字与色值拒绝 / CJK 标点剔除）：
+    // 首次打开仓库时一次性全量重建，清除旧规则产生的误报标签。
+    if (DbHelper.consumePendingFullReindex()) {
+      this.rescanVault().catch((error: BusinessError): void => {
+        LOG.error(`rescan after tag upgrade failed: ${error.message}`);
+      });
+    }
   }
 
   /**
@@ -471,6 +478,18 @@ export class VaultViewModel {
     await this.refreshNoteInfo();
   }
 
+  /** 标签列表是否包含指定标签（大小写不敏感，含子标签：搜 #项目 命中 #项目/进行中）。 */
+  private static tagListMatches(tags: string[], tag: string): boolean {
+    const wanted: string = tag.toLowerCase();
+    for (const candidate of tags) {
+      const normalized: string = candidate.toLowerCase();
+      if (normalized === wanted || normalized.startsWith(`${wanted}/`)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   /** 按行号替换任务行；行号失配时回退首次精确匹配，避免重复任务行错改。 */
   private static replaceTaskLine(content: string, rawLine: string, nextLine: string,
     lineNumber: number): string {
@@ -571,12 +590,12 @@ export class VaultViewModel {
       if (useRdbOnly && (tagMap.has(row.id) || propMap.has(row.id) ||
         (query.fromTag.length === 0 && query.requiredTags.length === 0))) {
         const noteTags: string[] = tagMap.get(row.id) ?? [];
-        if (query.fromTag.length > 0 && !noteTags.includes(query.fromTag)) {
+        if (query.fromTag.length > 0 && !VaultViewModel.tagListMatches(noteTags, query.fromTag)) {
           continue;
         }
         let allTagsMatched: boolean = true;
         for (const reqTag of query.requiredTags) {
-          if (!noteTags.includes(reqTag)) {
+          if (!VaultViewModel.tagListMatches(noteTags, reqTag)) {
             allTagsMatched = false;
             break;
           }

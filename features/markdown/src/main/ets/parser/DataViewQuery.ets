@@ -1,4 +1,5 @@
 import { MdListItem } from '@ohos/domain';
+import { TagRules } from './TagRules';
 
 /**
  * Obsidian-Dataview 查询解析（MVP 子集）：
@@ -194,7 +195,7 @@ export class DataViewQuery {
     }
     query.live = true;
     if (trimmed.startsWith('#')) {
-      query.fromTag = trimmed.substring(1).trim();
+      query.fromTag = trimmed.substring(1).trim().toLowerCase();
       return;
     }
     let folder: string = trimmed;
@@ -258,7 +259,7 @@ export class DataViewQuery {
       const tagMatch: RegExpExecArray | null =
         /contains\s*\(\s*tags\s*,\s*["']#?([^"']+)["']\s*\)/i.exec(body);
       if (tagMatch !== null) {
-        query.requiredTags.push(tagMatch[1]);
+        query.requiredTags.push(tagMatch[1].toLowerCase());
         continue;
       }
       const textMatch: RegExpExecArray | null =
@@ -360,7 +361,7 @@ export class DataViewQuery {
       return false;
     }
     for (let index = 0; index < this.requiredTags.length; index++) {
-      if (!rawLine.includes(`#${this.requiredTags[index]}`)) {
+      if (!rawLine.toLowerCase().includes(`#${this.requiredTags[index]}`)) {
         return false;
       }
     }
@@ -408,11 +409,48 @@ export class DataViewQuery {
     return content.replace(/```[\s\S]*?```/g, '');
   }
 
-  /** 页面是否带指定标签：frontmatter 标签或正文 #标签。 */
+  /** 页面是否带指定标签（大小写不敏感，含子标签）：frontmatter 标签或正文 #标签。 */
   private static pageHasTag(content: string, frontTags: string[], tag: string): boolean {
-    if (frontTags.includes(tag)) {
-      return true;
+    const wanted: string = tag.toLowerCase();
+    for (const frontTag of frontTags) {
+      const candidate: string = frontTag.toLowerCase();
+      if (candidate === wanted || candidate.startsWith(`${wanted}/`)) {
+        return true;
+      }
     }
-    return content.includes(`#${tag}`);
+    return DataViewQuery.bodyHasTag(content, wanted);
+  }
+
+  /**
+   * 正文 #标签匹配（大小写不敏感，含子标签）：
+   * #项目 命中 #项目、#项目/进行中，不命中 #项目2（后继为标签字符且非 /）。
+   */
+  private static bodyHasTag(content: string, tag: string): boolean {
+    const lower: string = content.toLowerCase();
+    const needle: string = `#${tag}`;
+    let index: number = lower.indexOf(needle);
+    while (index >= 0) {
+      if (index === 0 || !DataViewQuery.isAsciiWordChar(lower.charAt(index - 1))) {
+        const after: number = index + needle.length;
+        if (after >= lower.length) {
+          return true;
+        }
+        const next: string = lower.charAt(after);
+        if (!DataViewQuery.isTagBodyChar(next) || next === '/') {
+          return true;
+        }
+      }
+      index = lower.indexOf(needle, index + 1);
+    }
+    return false;
+  }
+
+  private static isTagBodyChar(ch: string): boolean {
+    return TagRules.isTagChar(ch);
+  }
+
+  private static isAsciiWordChar(ch: string): boolean {
+    const code: number = ch.charCodeAt(0);
+    return (code >= 48 && code <= 57) || (code >= 65 && code <= 90) || (code >= 97 && code <= 122);
   }
 }

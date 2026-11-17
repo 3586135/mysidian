@@ -1,6 +1,7 @@
 import { relationalStore } from '@kit.ArkData';
 import { common } from '@kit.AbilityKit';
 import { SearchHit, SearchQuery } from '@ohos/domain';
+import { ParsedSearchText, SearchTextParser } from '@ohos/markdown';
 import { DbHelper } from './DbHelper';
 import { Tokenizer } from '../indexer/Tokenizer';
 
@@ -15,8 +16,14 @@ export class SearchDao {
   /** 执行检索。 */
   public static async search(context: common.Context, vaultId: number,
     query: SearchQuery): Promise<SearchHit[]> {
+    // 解析搜索框标签子句（tag:#x / -tag:#y / AND / OR），剩余文本作关键词。
+    const parsed: ParsedSearchText = SearchTextParser.parse(query.text);
+    query.text = parsed.keyword;
+    query.tagGroups = parsed.tagGroups;
+    query.tagExcludes = parsed.tagExcludes;
     const keyword: string = query.text.trim();
     if (keyword.length === 0 && query.tag.length === 0 &&
+      query.tagGroups.length === 0 && query.tagExcludes.length === 0 &&
       query.propKey.length === 0 && query.propValue.length === 0) {
       return [];
     }
@@ -60,10 +67,7 @@ export class SearchDao {
       sql += 'AND n.path LIKE ? ';
       args.push(`%${query.path}%`);
     }
-    if (query.tag.length > 0) {
-      sql += 'AND n.id IN (SELECT note_id FROM tag WHERE tag = ?) ';
-      args.push(query.tag);
-    }
+    sql = SearchDao.appendTagFilters(sql, args, query, 'n.id');
     sql = SearchDao.appendPropFilter(sql, args, query, 'n');
     // 有关键词时按 BM25 相关度排序（标题权重 10 倍于正文词），同分按最近修改；
     // 无关键词（仅标签/属性过滤）时按最近修改。
@@ -100,10 +104,7 @@ export class SearchDao {
       sql += 'AND path LIKE ? ';
       args.push(`%${query.path}%`);
     }
-    if (query.tag.length > 0) {
-      sql += 'AND id IN (SELECT note_id FROM tag WHERE tag = ?) ';
-      args.push(query.tag);
-    }
+    sql = SearchDao.appendTagFilters(sql, args, query, 'id');
     sql = SearchDao.appendPropFilter(sql, args, query, '');
     sql += 'ORDER BY mtime DESC LIMIT ?';
     args.push(query.limit);
@@ -121,6 +122,42 @@ export class SearchDao {
     }
     result.close();
     return hits;
+  }
+
+  /**
+   * 拼接标签过滤子句（大小写不敏感，含子标签：搜 #项目 命中 #项目/进行中）。
+   * query.tag 为单标签精确过滤；tagGroups 组内 OR、组间 AND；tagExcludes 全部排除。
+   * noteIdExpr 为笔记主键表达式（如 n.id / id）。
+   */
+  private static appendTagFilters(sql: string, args: Array<relationalStore.ValueType>,
+    query: SearchQuery, noteIdExpr: string): string {
+    let result: string = sql;
+    if (query.tag.length > 0) {
+      const tag: string = query.tag.toLowerCase();
+      result += `AND ${noteIdExpr} IN (SELECT note_id FROM tag ` +
+        `WHERE tag = ? COLLATE NOCASE OR tag LIKE ? ESCAPE '\\') `;
+      args.push(tag);
+      args.push(`${SearchDao.escapeLike(`${tag}/`)}%`);
+    }
+    for (const group of query.tagGroups) {
+      const conditions: string[] = [];
+      for (const tag of group) {
+        conditions.push('tag = ? COLLATE NOCASE');
+        conditions.push(`tag LIKE ? ESCAPE '\\'`);
+      }
+      result += `AND ${noteIdExpr} IN (SELECT note_id FROM tag WHERE ${conditions.join(' OR ')}) `;
+      for (const tag of group) {
+        args.push(tag);
+        args.push(`${SearchDao.escapeLike(`${tag}/`)}%`);
+      }
+    }
+    for (const tag of query.tagExcludes) {
+      result += `AND ${noteIdExpr} NOT IN (SELECT note_id FROM tag ` +
+        `WHERE tag = ? COLLATE NOCASE OR tag LIKE ? ESCAPE '\\') `;
+      args.push(tag);
+      args.push(`${SearchDao.escapeLike(`${tag}/`)}%`);
+    }
+    return result;
   }
 
   /** 拼接属性（frontmatter）过滤子句，返回新的 SQL。noteAlias 为笔记表别名或空串。 */

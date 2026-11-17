@@ -10,6 +10,7 @@ import { PropDao } from '../db/PropDao';
 import { TagDao } from '../db/TagDao';
 import { VaultPath } from '../manager/VaultPath';
 import { Tokenizer } from './Tokenizer';
+import { TagRules } from '@ohos/markdown';
 
 /**
  * 索引管线：把解析后的文档写入块 / 链接 / 标签 / 属性索引表。
@@ -215,8 +216,11 @@ export class IndexPipeline {
   }
 
   private static addTag(tags: string[], tag: string): void {
-    if (tag.length > 0 && !tags.includes(tag)) {
-      tags.push(tag);
+    // 大小写不敏感：#Tag 与 #tag 归一为同一标签（Obsidian 语义）；
+    // 非法标签体（纯数字 / 色值 / 含标点）不入索引（frontmatter 显式值同样校验）。
+    const normalized: string = tag.trim().toLowerCase();
+    if (TagRules.isTagBody(normalized) && !tags.includes(normalized)) {
+      tags.push(normalized);
     }
   }
 

@@ -55,14 +55,17 @@ export class TagDao {
     return tags;
   }
 
-  /** 查询使用指定标签的笔记路径。 */
+  /** 查询使用指定标签的笔记路径（大小写不敏感，含子标签：搜 #项目 命中 #项目/进行中）。 */
   public static async notesByTag(context: common.Context, vaultId: number,
     tag: string): Promise<string[]> {
     const store = await DbHelper.getStore();
-    const args: Array<relationalStore.ValueType> = [vaultId, tag];
+    const wanted: string = tag.toLowerCase();
+    const args: Array<relationalStore.ValueType> =
+      [vaultId, wanted, `${TagDao.escapeLike(`${wanted}/`)}%`];
     const result = await store.querySql(
       'SELECT n.path FROM tag t JOIN note n ON n.id = t.note_id ' +
-      'WHERE n.vault_id = ? AND t.tag = ? ORDER BY n.path ASC', args);
+      'WHERE n.vault_id = ? AND (t.tag = ? COLLATE NOCASE OR t.tag LIKE ? ESCAPE \'\\\') ' +
+      'ORDER BY n.path ASC', args);
     const paths: string[] = [];
     if (result.goToFirstRow()) {
       do {
@@ -96,5 +99,10 @@ export class TagDao {
     }
     result.close();
     return map;
+  }
+
+  /** 转义 LIKE 通配符，使标签中的 _ 按字面匹配。 */
+  private static escapeLike(text: string): string {
+    return text.replace(/\\/g, '\\\\').replace(/%/g, '\\%').replace(/_/g, '\\_');
   }
 }

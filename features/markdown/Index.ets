@@ -5,6 +5,8 @@ export { DataViewQuery } from './src/main/ets/parser/DataViewQuery';
 export { InlineParser, InlineParseResult } from './src/main/ets/parser/InlineParser';
 export { FrontmatterParser, FrontmatterResult } from './src/main/ets/parser/FrontmatterParser';
 export { FrontmatterSerializer } from './src/main/ets/parser/FrontmatterSerializer';
+export { SearchTextParser, ParsedSearchText } from './src/main/ets/parser/SearchTextParser';
+export { TagRules } from './src/main/ets/parser/TagRules';
 
 export { MdInlineFlattener } from './src/main/ets/render/MdInlineFlattener';
 export { MathRenderer } from './src/main/ets/render/MathRenderer';

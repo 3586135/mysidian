@@ -128,9 +128,10 @@ export class SearchViewModel {
     this.hits = hits;
   }
 
-  /** 选中或取消选中一个标签，展示使用该标签的笔记。 */
+  /** 选中或取消选中一个标签，展示使用该标签的笔记（统一小写，#Tag/#tag 同一标签）。 */
   public async selectTag(vaultId: number, tag: string): Promise<void> {
-    this.activeTag = this.activeTag === tag ? '' : tag;
+    const normalized: string = tag.toLowerCase();
+    this.activeTag = this.activeTag === normalized ? '' : normalized;
     await this.search(vaultId, this.keyword);
   }
 

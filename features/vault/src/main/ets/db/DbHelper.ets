@@ -12,7 +12,9 @@ export class DbHelper {
   private static store: relationalStore.RdbStore | null = null;
   /** 平台 SQLite 是否支持 FTS5（不支持时搜索退化为 LIKE 扫描） */
   private static ftsReady: boolean = false;
-  private static readonly CURRENT_VERSION: number = 5;
+  /** 标签语义升级（v7）后待执行的一次性全量重索引标记 */
+  private static pendingFullReindex: boolean = false;
+  private static readonly CURRENT_VERSION: number = 7;
 
   private static readonly SCHEMA_V1: string[] = [
     'CREATE TABLE IF NOT EXISTS vault (' +
@@ -72,6 +74,13 @@ export class DbHelper {
     return DbHelper.ftsReady;
   }
 
+  /** 消费一次性全量重索引标记（v6 标签语义升级）；读后即复位。 */
+  public static consumePendingFullReindex(): boolean {
+    const pending: boolean = DbHelper.pendingFullReindex;
+    DbHelper.pendingFullReindex = false;
+    return pending;
+  }
+
   private static async migrate(store: relationalStore.RdbStore): Promise<void> {
     const version: number = await DbHelper.readUserVersion(store);
     if (version < 1) {
@@ -111,6 +120,19 @@ export class DbHelper {
       } catch (error) {
         LOG.warn('sync_state target_key column already exists or alter failed');
       }
+    }
+    if (version >= 1 && version < 7) {
+      // v6/v7：标签语义升级（大小写归一 / 下划线 / 纯数字与色值拒绝 / 嵌套匹配 /
+      // CJK 标点剔除）。tag 行为派生缓存，标记一次性全量重索引，
+      // 由界面层在仓库打开后触发 rescanVault 清除旧规则误报；
+      // 同时清理已删笔记遗留的孤儿标签行（JOIN 不可见但占用空间）。
+      try {
+        await store.executeSql('DELETE FROM tag WHERE note_id NOT IN (SELECT id FROM note)');
+      } catch (error) {
+        LOG.warn('orphan tag cleanup failed');
+      }
+      DbHelper.pendingFullReindex = true;
+      LOG.info('tag semantics upgraded, full reindex pending (v7)');
     }
     // FTS 可用性探测必须每次启动执行：早于本修复的版本在 schema 已是最新时
     // 提前返回，导致 ftsReady 恒为 false，全文搜索静默退化为 LIKE（只查标题）。

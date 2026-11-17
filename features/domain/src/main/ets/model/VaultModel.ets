@@ -91,6 +91,10 @@ export class SearchQuery {
   path: string = '';
   /** tag: 标签过滤 */
   tag: string = '';
+  /** 搜索语法标签组：组内 OR 备选、组间 AND（已小写归一）。 */
+  tagGroups: string[][] = [];
+  /** 搜索语法排除标签（已小写归一）。 */
+  tagExcludes: string[] = [];
   /** 属性名过滤（LIKE，空串代表不过滤） */
   propKey: string = '';
   /** 属性值过滤（LIKE，空串代表不过滤） */

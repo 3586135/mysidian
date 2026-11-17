@@ -18,6 +18,28 @@
 | v0.6.0 | **查询引擎 RDB 化、代码高亮、书签、本地快照备份与多端生态**：Dataview/日历 RDB 批量加速、列表项文本与标签入库、原生代码块语法着色、置顶书签、本地定时/一键快照备份恢复、2in1 键盘快捷键与桌面长按快捷方式 |
 | v1.0.0 | **全端质感打磨、同步安全无感化、系统打开方式与 1.0 正式发布**：首页默认素雅 5 色莫兰迪纸感列表与原地目录穿透面包屑、透明毛玻璃三页签底栏、按年月分卷日记（`日记/YYYY-MM/YYYY-MM-DD.md`）、自适应大纲浮层与多行编辑工具栏、WebDAV 干跑安全闸门/断点落盘/`.trash/` 软删与新建仓库自签名开关、系统 `.md`「打开方式」只读预览与一键导入、Ceramic Washi 分层应用图标、`md_*` 资源解耦与全模块单测通过 |
 
+## 近期变更（2026-11-17，标签系统对齐 Obsidian 规范）
+
+### 1. 标签合法性单源收敛（TagRules）
+- 新建 `features/markdown/.../parser/TagRules.ets`，四处字符集重复实现（InlineParser/SearchTextParser/DataViewQuery/IndexPipeline）收敛为一份：标签体允许 ASCII 字母数字 + `_-/` + CJK 文字（汉字/假名/谚文/々〆〇 白名单区间），拒绝 CJK 标点（`）、`，`等全角字符）、纯数字（`#2026`）与 3/4/6/8 位十六进制色值（`#1A1A2E` 设计令牌误报源）；`#0day`、`#6g` 等含非 hex 字母的仍为合法标签。
+- frontmatter 显式 tags 同样走 `TagRules.isTagBody` 校验（`IndexPipeline.addTag`），非法值（如 `192.168.3.115`）不入索引，属性卡仍按原文展示。
+
+### 2. 大小写不敏感、下划线与嵌套标签
+- 标签允许 `_`（`#to_do` 完整解析）；索引时统一小写归一，查询侧 SQL `COLLATE NOCASE` + LIKE（过渡期旧混合大小写行无需等重索引即可命中）。
+- 嵌套标签层级匹配：搜 `#项目` 命中 `#项目/进行中`——TagDao/SearchDao 用 `tag = ? COLLATE NOCASE OR tag LIKE 'xx/%' ESCAPE '\'`；DataViewQuery 边界扫描（后继为非标签字符或 `/` 才命中，避免 `#项目2` 误报）。
+
+### 3. `tag:` 搜索语法
+- 新建 `SearchTextParser`（markdown/parser）：`tag:#x`/`#x` 包含、`-tag:#x`/`-#x` 排除、`OR` 同组备选、`AND`/相邻分别要求，剩余词保留为关键词；`SearchQuery` 新增 `tagGroups/tagExcludes`，`SearchDao.search` 解析并拼 SQL（含 LIKE `ESCAPE '\'` 转义）。
+
+### 4. DB 迁移 v7 + 全量重索引 + 孤儿行清理
+- `CURRENT_VERSION` 6→7（v6 仅为过渡版未发布）：迁移块 `version < 7` 设 `pendingFullReindex` 标记并 `DELETE FROM tag WHERE note_id NOT IN (SELECT id FROM note)` 清理已删笔记遗留的孤儿标签行（kk 库实测清出 40+ 行）；`VaultViewModel.ensureIndexed` 消费标记后 fire-and-forget `rescanVault()`，升级用户自动全量重索引清除旧规则误报。
+- 新增单测：`rejectsCjkPunctuationInTag`、`rejectsNumericAndHexColorAsTag`、`parsesUnderscoreTag`、`matchesNestedTagHierarchy`、`matchesTagCaseInsensitive`、`parsesSearchTextTagClauses`。
+
+### 5. 验证（三台模拟器实测）
+- Mate 90 Pro（kk 库 735 篇）：v7 迁移日志 + 全量重索引完成，标签 394→353，`#10）`/`#1a1a2e）导航`/`#9，deepseek`/`#192.168.3.115` 等残留全部清除（sqlite3 直查 DB 确认零残留），合法标签（`#/plan/26`/`#0day`/`#ai` 43/`#task`/`#开源情报`/嵌套 `#ai/*`）全保留且全部小写。
+- `tag:` 语法 SQL 语义在设备 DB 实测：`tag:#ai`=55（含 `ai/deepseek` 等子标签嵌套命中）、大写 `tag:#AI` 同为 55（NOCASE 生效）、`tag:#开源情报`=14、排除子句 NOT IN 正常；搜索框 UI 文本注入受已知模拟器环境问题限制未驱动，解析逻辑由单测覆盖。
+- Mate X7（示例仓库 12 标签）与 MatePad Pro 13（6 标签）均迁移 v7、标签列表干净无垃圾。
+
 ## 近期变更（2026-11-17）
 
 ### 1. 阅读态正文顶部渲染 frontmatter 属性卡（问题 1+2）
