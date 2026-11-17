@@ -361,6 +361,8 @@ export struct WorkspaceView {
           onNewNoteInFolder: (folder: string): void => {
             this.vm.createNote(folder).then((): void => {
               this.onNoteMutated();
+            }).catch((error: BusinessError): void => {
+              LOG.error(`create note in ${folder} failed, code=${error.code}, message=${error.message}`);
             });
           },
           onNewSubfolder: (folder: string): void => {
@@ -378,11 +380,15 @@ export struct WorkspaceView {
               this.showFixedPanel = false;
             }
             this.showInfo = false;
-            this.vm.openSecondary(path);
+            this.vm.openSecondary(path).catch((error: BusinessError): void => {
+              LOG.error(`open secondary note failed, code=${error.code}, message=${error.message}`);
+            });
           },
           onToggleBookmark: (path: string): void => {
             this.vm.toggleBookmark(path).then((added: boolean): void => {
               this.toast(added ? $r('app.string.msg_bookmark_added') : $r('app.string.msg_bookmark_removed'));
+            }).catch((error: BusinessError): void => {
+              LOG.error(`toggle bookmark failed, code=${error.code}, message=${error.message}`);
             });
           },
           onRenameNote: (path: string): void => {
@@ -832,6 +838,8 @@ export struct WorkspaceView {
             .onClick(() => {
               this.vm.toggleBookmark(path).then((): void => {
                 this.toast($r('app.string.msg_bookmark_removed'));
+              }).catch((error: BusinessError): void => {
+                LOG.error(`toggle bookmark failed, code=${error.code}, message=${error.message}`);
               });
             })
         }
@@ -873,6 +881,8 @@ export struct WorkspaceView {
         .onClick(() => {
           this.vm.createNote().then((): void => {
             this.onNoteMutated();
+          }).catch((error: BusinessError): void => {
+            LOG.error(`create note failed, code=${error.code}, message=${error.message}`);
           });
         })
       MenuItem({ content: $r('app.string.action_new_folder') })
@@ -1039,6 +1049,8 @@ export struct WorkspaceView {
     .onClick(() => {
       this.vm.createNote().then((): void => {
         this.onNoteMutated();
+      }).catch((error: BusinessError): void => {
+        LOG.error(`create note failed, code=${error.code}, message=${error.message}`);
       });
     })
   }
@@ -1205,12 +1217,16 @@ export struct WorkspaceView {
     this.vm.saveDraft().then((): void => {
       this.toast($r('app.string.msg_edit_autosaved'));
       this.onNoteMutated();
+    }).catch((error: BusinessError): void => {
+      LOG.error(`save draft failed, code=${error.code}, message=${error.message}`);
     });
   }
 
   /** 打开笔记并收起非三栏设备的浮动层（信息抽屉 / 窄屏文件侧栏）。 */
   private openNoteFrom(path: string): void {
-    this.vm.openNote(path);
+    this.vm.openNote(path).catch((error: BusinessError): void => {
+      LOG.error(`open note failed, code=${error.code}, message=${error.message}`);
+    });
     this.animAssign((): void => {
       this.showInfo = false;
       if (!this.isWide) {
@@ -1353,6 +1369,8 @@ export struct WorkspaceView {
       }
       this.toast($r('app.string.msg_move_done'));
       this.onNoteMutated();
+    }).catch((error: BusinessError): void => {
+      LOG.error(`move note failed, code=${error.code}, message=${error.message}`);
     });
   }
 
@@ -1383,7 +1401,9 @@ export struct WorkspaceView {
       this.splitPickMode = false;
     });
     if (splitPick) {
-      this.vm.openSecondary(path);
+      this.vm.openSecondary(path).catch((error: BusinessError): void => {
+        LOG.error(`open secondary note failed, code=${error.code}, message=${error.message}`);
+      });
       return;
     }
     this.openNoteFrom(path);
@@ -1394,12 +1414,16 @@ export struct WorkspaceView {
     this.animAssign((): void => {
       this.showSearchOverlay = true;
     });
-    this.searchVm.search(this.vm.currentVault.id, '');
+    this.searchVm.search(this.vm.currentVault.id, '').catch((error: BusinessError): void => {
+      LOG.error(`search failed, code=${error.code}, message=${error.message}`);
+    });
   }
 
   /** 打开最近访问浮层。 */
   private openRecentPanel(): void {
-    this.vm.loadRecentNotes();
+    this.vm.loadRecentNotes().catch((error: BusinessError): void => {
+      LOG.error(`load recent notes failed, code=${error.code}, message=${error.message}`);
+    });
     this.animAssign((): void => {
       this.showRecentPanel = true;
     });
@@ -1430,6 +1454,8 @@ export struct WorkspaceView {
     newNote.action = (): void => {
       this.vm.createNote().then((): void => {
         this.onNoteMutated();
+      }).catch((error: BusinessError): void => {
+        LOG.error(`create note failed, code=${error.code}, message=${error.message}`);
       });
     };
     commands.push(newNote);
@@ -1448,6 +1474,8 @@ export struct WorkspaceView {
     dailyNote.action = (): void => {
       this.vm.openDailyNote().then((): void => {
         this.onNoteMutated();
+      }).catch((error: BusinessError): void => {
+        LOG.error(`open daily note failed, code=${error.code}, message=${error.message}`);
       });
     };
     commands.push(dailyNote);
@@ -1464,8 +1492,11 @@ export struct WorkspaceView {
     reindex.id = 'reindex';
     reindex.title = '重建索引';
     reindex.action = (): void => {
-      this.vm.rescanVault();
-      this.toast($r('app.string.msg_reindex_done'));
+      this.vm.rescanVault().then((): void => {
+        this.toast($r('app.string.msg_reindex_done'));
+      }).catch((error: BusinessError): void => {
+        LOG.error(`rescan vault failed, code=${error.code}, message=${error.message}`);
+      });
     };
     commands.push(reindex);
 
@@ -1495,6 +1526,8 @@ export struct WorkspaceView {
         }, 150);
       }
       this.toast($r('app.string.msg_handwrite_saved'));
+    }).catch((error: BusinessError): void => {
+      LOG.error(`save handwrite image failed, code=${error.code}, message=${error.message}`);
     });
   }
 

@@ -304,6 +304,8 @@ export class VaultViewModel {
     }
     this.currentVault = vault;
     this.expandedPaths = [];
+    // DataView 查询缓存键不含仓库 id，切换仓库必须清空，防止上一仓库结果串显。
+    this.dataViewCache.clear();
     this.closeNote();
     this.writePref('lastVaultId', vault.id);
     await this.refreshTree();
@@ -1454,7 +1456,7 @@ export class VaultViewModel {
     if (!renamed) {
       return false;
     }
-    const affected: string[] = await LinkRewriter.rewriteForRename(context, path, newPath,
+    const affected: string[] = await LinkRewriter.rewriteForRename(context, this.currentVault.id, path, newPath,
       (source: string): Promise<string> => {
         return manager.readNote(this.currentVault, source);
       },
@@ -1721,6 +1723,16 @@ export class VaultViewModel {
       base = `${base}\n`;
     }
     const next: string = `${base}- ${new Date().toTimeString().substring(0, 5)} ${text.trim()}\n`;
+    if (this.editMode && this.selectedPath === path) {
+      // 今日日记正开在编辑器里：磁盘写入的内容会被未保存的草稿在下次
+      // 保存时整体覆盖，闪念将静默丢失。改为直接追加进草稿缓冲本身，
+      // 由正常保存路径落盘。
+      this.draftBuffer = next;
+      this.noteContent = next;
+      await manager.refreshNote(this.currentVault, path);
+      await this.refreshTree();
+      return true;
+    }
     await manager.writeNote(this.currentVault, path, next);
     await manager.refreshNote(this.currentVault, path);
     await this.refreshTree();
@@ -1999,6 +2011,7 @@ export class VaultViewModel {
 
   /** 关闭当前笔记。 */
   public closeNote(): void {
+    this.openToken++;
     this.selectedPath = '';
     this.externalUri = '';
     this.externalFileName = '';
@@ -2196,7 +2209,7 @@ export class VaultViewModel {
       return items;
     }
     const linked: Set<string> = new Set<string>();
-    const backlinks: BacklinkItem[] = await LinkDao.backlinks(context, path);
+    const backlinks: BacklinkItem[] = await LinkDao.backlinks(context, this.currentVault.id, path);
     for (const item of backlinks) {
       linked.add(item.sourcePath);
     }
@@ -2471,7 +2484,7 @@ export class VaultViewModel {
         }
         this.addGraphNode(graph, nodeMap, depths, queue, current, link.targetPath, depth + 1);
       }
-      const backlinks: BacklinkItem[] = await LinkDao.backlinks(context, current);
+      const backlinks: BacklinkItem[] = await LinkDao.backlinks(context, this.currentVault.id, current);
       for (const item of backlinks) {
         this.addGraphNode(graph, nodeMap, depths, queue, item.sourcePath, current, depth + 1);
       }
@@ -2567,7 +2580,16 @@ export class VaultViewModel {
         if (this.vaults.length > 0) {
           await this.selectVault(this.vaults[0]);
         } else {
+          // 最后一个仓库已删：清空所有派生列表，避免残留已删仓库的
+          // 文件/收藏/最近/标签仍可点击（点开会打开已删除的文件）。
           this.currentVault = new VaultInfo();
+          this.vaultFiles = [];
+          this.rootFolders = [];
+          this.recentNotes = [];
+          this.bookmarks = [];
+          this.backups = [];
+          this.allTagNames = [];
+          this.dataViewCache.clear();
           await this.loadVaultGraph();
         }
       }
@@ -2650,7 +2672,7 @@ export class VaultViewModel {
       return;
     }
     this.outline = await BlockDao.outline(context, note.id);
-    this.backlinks = await LinkDao.backlinks(context, this.selectedPath);
+    this.backlinks = await LinkDao.backlinks(context, this.currentVault.id, this.selectedPath);
     this.noteTags = await TagDao.tagsOfNote(context, note.id);
     // 属性以「文件解析结果」为准：与写回链路同源，避免面板顺序与列表值漂移。
     this.noteProperties = this.document.frontmatter.properties;

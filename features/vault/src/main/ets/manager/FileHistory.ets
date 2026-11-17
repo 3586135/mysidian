@@ -61,15 +61,18 @@ export class FileHistory {
       const encoded: string = FileHistory.encodePath(relativePath);
       const name: string = `${encoded}.${Date.now()}.md`;
       const source = fileIo.openSync(absolute, fileIo.OpenMode.READ_ONLY);
-      const target = fileIo.openSync(`${dir}/${name}`,
-        fileIo.OpenMode.WRITE_ONLY | fileIo.OpenMode.CREATE | fileIo.OpenMode.TRUNC);
+      let target: fileIo.File | undefined = undefined;
       try {
+        target = fileIo.openSync(`${dir}/${name}`,
+          fileIo.OpenMode.WRITE_ONLY | fileIo.OpenMode.CREATE | fileIo.OpenMode.TRUNC);
         fileIo.copyFileSync(source.fd, target.fd);
       } finally {
         fileIo.closeSync(source);
-        fileIo.closeSync(target);
+        if (target !== undefined) {
+          fileIo.closeSync(target);
+        }
       }
-      FileHistory.prune(dir, encoded);
+      FileHistory.prune(dir, relativePath);
     } catch (error) {
       const err = error as BusinessError;
       LOG.warn(`snapshot failed, code=${err.code}, message=${err.message}`);
@@ -142,7 +145,7 @@ export class FileHistory {
         fileIo.closeSync(source);
         fileIo.closeSync(target);
       }
-      FileHistory.prune(dir, encoded);
+      FileHistory.prune(dir, relativePath);
     }
     const file = fileIo.openSync(absolute,
       fileIo.OpenMode.READ_WRITE | fileIo.OpenMode.CREATE | fileIo.OpenMode.TRUNC);
@@ -264,18 +267,26 @@ export class FileHistory {
   }
 
   /** 清理超出数量上限的旧快照（含旧编码快照，统一计入配额）。 */
-  private static prune(dir: string, encoded: string): void {
+  private static prune(dir: string, relativePath: string): void {
     const names: string[] = fileIo.listFileSync(dir);
     const matched: string[] = [];
+    const stamps: Map<string, number> = new Map<string, number>();
     for (const name of names) {
-      if (name.startsWith(`${encoded}.`) && name.endsWith('.md')) {
-        matched.push(name);
+      if (!name.endsWith('.md')) {
+        continue;
       }
+      const prefix: string | null = FileHistory.matchPrefix(name, relativePath);
+      if (prefix === null) {
+        continue;
+      }
+      matched.push(name);
+      const stamp: number = Number(name.substring(prefix.length, name.length - 3));
+      stamps.set(name, Number.isNaN(stamp) ? 0 : stamp);
     }
     if (matched.length <= FileHistory.MAX_SNAPSHOTS) {
       return;
     }
-    matched.sort();
+    matched.sort((a: string, b: string): number => (stamps.get(a) ?? 0) - (stamps.get(b) ?? 0));
     const excess: number = matched.length - FileHistory.MAX_SNAPSHOTS;
     for (let index = 0; index < excess; index++) {
       const path: string = `${dir}/${matched[index]}`;

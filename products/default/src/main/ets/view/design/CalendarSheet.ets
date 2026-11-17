@@ -14,6 +14,7 @@ export struct CalendarSheet {
   @Local year: number = 2026;
   @Local month: number = 1;
   @Local days: CalendarDay[] = [];
+  private loadSeq: number = 0;
 
   aboutToAppear(): void {
     const now: Date = new Date();
@@ -175,7 +176,11 @@ export struct CalendarSheet {
 
   /** 加载当前月份的日历数据。 */
   private loadCalendar(): void {
+    const seq: number = ++this.loadSeq;
     this.vm.calendarMonth(this.year, this.month).then((days: CalendarDay[]): void => {
+      if (seq !== this.loadSeq) {
+        return;
+      }
       this.days = days;
     });
   }

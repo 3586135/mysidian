@@ -19,6 +19,16 @@ export class VaultPath {
     while (result.startsWith('/')) {
       result = result.substring(1);
     }
+    if (result.split('/').includes('..')) {
+      const segments: string[] = result.split('/');
+      const kept: string[] = [];
+      for (const segment of segments) {
+        if (segment !== '..') {
+          kept.push(segment);
+        }
+      }
+      result = kept.join('/');
+    }
     return result;
   }
 

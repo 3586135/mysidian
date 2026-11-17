@@ -82,6 +82,12 @@ export class IndexPipeline {
       if (!resolver.has(key)) {
         resolver.set(key, note.path);
       }
+      const dot: number = note.path.lastIndexOf('.');
+      const pathWithoutExt: string = dot <= 0 ? note.path : note.path.substring(0, dot);
+      const pathKey: string = pathWithoutExt.toLowerCase();
+      if (!resolver.has(pathKey)) {
+        resolver.set(pathKey, note.path);
+      }
     }
     return resolver;
   }
@@ -124,7 +130,10 @@ export class IndexPipeline {
       link.targetRaw = inline.target;
       link.context = context;
       link.kind = inline.type === MdInlineType.EMBED ? LinkKind.EMBED : LinkKind.WIKI_LINK;
-      const resolved: string | undefined = resolver.get(inline.target.toLowerCase());
+      let resolved: string | undefined = resolver.get(inline.target.toLowerCase());
+      if (resolved === undefined && inline.target.includes('/')) {
+        resolved = resolver.get(VaultPath.basenameWithoutExt(inline.target).toLowerCase());
+      }
       if (resolved !== undefined) {
         link.targetPath = resolved;
         link.resolved = true;

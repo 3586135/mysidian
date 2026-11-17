@@ -36,7 +36,6 @@ export class TemplateEngine {
   public static render(template: string, title: string, now: Date): TemplateRenderResult {
     const result: TemplateRenderResult = new TemplateRenderResult();
     let content: string = template;
-    content = TemplateEngine.replaceAll(content, '{{title}}', title);
     content = TemplateEngine.replaceAll(content, '{{date}}', TemplateEngine.formatDate(now, 'YYYY-MM-DD'));
     content = TemplateEngine.replaceAll(content, '{{time}}', TemplateEngine.formatDate(now, 'HH:mm'));
     content = TemplateEngine.replaceAll(content, '{{week}}', TemplateEngine.weekKey(now));
@@ -45,6 +44,8 @@ export class TemplateEngine {
       (match: string, format: string): string => {
         return TemplateEngine.formatDate(now, format);
       });
+    // 标题最后替换：标题本身可能含有 {{time}} 等占位符文本，不应被展开。
+    content = TemplateEngine.replaceAll(content, '{{title}}', title);
     // 光标占位符：全部移除并记录首处位置（多个 {{cursor}} 时
     // 第二个此前会残留为字面文本）。
     const cursorIndex: number = content.indexOf(TemplateEngine.CURSOR_TOKEN);

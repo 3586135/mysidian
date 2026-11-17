@@ -279,6 +279,7 @@ struct DesignIndex {
   @Local showFabMenu: boolean = false;     // FAB 长按气泡菜单
   @Local showQuickEditor: boolean = false; // 快速笔记半模态
   @Local fabLongPressConsumed: boolean = false; // 长按已消费标志（防误触发 click）
+  private fabLongPressTimer: number = -1;      // FAB 防误触标志的延时清除定时器
   @Local draftTitle: string = '';          // 快速笔记草稿标题
   @Local draftBody: string = '';           // 快速笔记草稿正文
   @Local showSyncPanel: boolean = false;   // 同步设置浮层（全局，首页/工作台共用）
@@ -315,6 +316,8 @@ struct DesignIndex {
   private graphPanBaseYVp: number = 0;       // 单指平移手势起点：图谱偏移 y
   private graphPanLastYVp: number = 0;       // 未缩放回落页面滚动：上次累计 y
   private searchDebounceId: number = -1;
+  private searchSeq: number = 0;                 // 搜索请求序号：晚到的旧结果不得覆盖新结果
+  private disposed: boolean = false;             // 页面已销毁：阻止销毁后注册回调/消费定时器
   private itemLongPressConsumed: boolean = false; // 列表/卡片长按释放防误触打开
   private itemLongPressTimer: number = -1;
   private initReady: boolean = false;            // 视图模型初始化完成
@@ -426,6 +429,7 @@ struct DesignIndex {
   }
 
   aboutToDisappear(): void {
+    this.disposed = true;
     AbilityContextHolder.onShortcutAction = null;
     AbilityContextHolder.onOpenUri = null;
     AbilityContextHolder.onForeground = null;
@@ -434,6 +438,14 @@ struct DesignIndex {
     if (this.itemLongPressTimer >= 0) {
       clearTimeout(this.itemLongPressTimer);
       this.itemLongPressTimer = -1;
+    }
+    if (this.fabLongPressTimer >= 0) {
+      clearTimeout(this.fabLongPressTimer);
+      this.fabLongPressTimer = -1;
+    }
+    if (this.searchDebounceId >= 0) {
+      clearTimeout(this.searchDebounceId);
+      this.searchDebounceId = -1;
     }
     if (this.mainWindow !== undefined) {
       this.mainWindow.off('keyboardHeightChange', this.keyboardCallback);
@@ -458,6 +470,15 @@ struct DesignIndex {
       this.homeDialogKind = DesignDialogKind.NONE;
       this.homeDialogTargetPath = '';
       this.itemLongPressConsumed = false;
+      // 搜索状态按仓库闭包：残留旧仓库的搜索结果会引导 openWorkspace
+      // 打开新仓库里不存在的路径，编辑保存后会在新仓库凭空创建该文件。
+      this.searchKeyword = '';
+      this.searchRows = [];
+      this.searchSeq++;
+      if (this.searchDebounceId >= 0) {
+        clearTimeout(this.searchDebounceId);
+        this.searchDebounceId = -1;
+      }
     }
     this.lastObservedVaultId = nextId;
   }
@@ -855,6 +876,10 @@ struct DesignIndex {
         // 长按释放后的 click 由消费标志吞掉
         if (this.fabLongPressConsumed) {
           this.fabLongPressConsumed = false;
+          if (this.fabLongPressTimer >= 0) {
+            clearTimeout(this.fabLongPressTimer);
+            this.fabLongPressTimer = -1;
+          }
           return;
         }
         if (this.showFabMenu) {
@@ -876,6 +901,12 @@ struct DesignIndex {
               this.fabLongPressConsumed = true;
               this.toggleFabMenu();
             }
+          })
+          .onActionEnd((_event: GestureEvent) => {
+            this.scheduleClearFabLongPressConsumed();
+          })
+          .onActionCancel(() => {
+            this.scheduleClearFabLongPressConsumed();
           })
       )
     }
@@ -3458,6 +3489,10 @@ struct DesignIndex {
       return;
     }
     window.getLastWindow(context).then((win: window.Window) => {
+      if (this.disposed) {
+        // aboutToDisappear 已解绑键盘回调，此处置订阅会泄漏到下次进入页面。
+        return;
+      }
       const system = win.getWindowAvoidArea(window.AvoidAreaType.TYPE_SYSTEM);
       const nav = win.getWindowAvoidArea(window.AvoidAreaType.TYPE_NAVIGATION_INDICATOR);
       this.topInset = this.getUIContext().px2vp(system.topRect.height);
@@ -3487,6 +3522,10 @@ struct DesignIndex {
       this.swipeOffsetVp = 0;
       this.indicatorScale = 1;
     });
+    // 工作台模式下调用 changeTab 时 Swiper 未挂载，changeIndex 静默失效；
+    // 同步初始索引，保证返回首页重挂载后页面与滑块高亮一致，
+    // 否则点击高亮页签会因索引相等直接 return，用户被卡在错误页面。
+    this.homeInitialTabIndex = clamped;
   }
 
   /** 打开页内工作台子视图：处理携带参数后切换 viewMode（无 router 跳转）。 */
@@ -3632,6 +3671,11 @@ struct DesignIndex {
       this.vm.saveDraft().then((): void => {
         this.syncNowIfAuto();
         openExternal();
+      }).catch((error: BusinessError): void => {
+        // 草稿保存失败也要继续打开外部文件：URI 已被消费，静默丢弃
+        // 用户的「打开文件」意图比保留一次失败的保存更糟。
+        LOG.error(`save draft before open external failed: ${error.message}`);
+        openExternal();
       });
       return;
     }
@@ -3669,15 +3713,23 @@ struct DesignIndex {
 
   /** 执行外部预览文件落盘导入，并按需进入编辑态。 */
   private async finishImportExternal(editAfter: boolean): Promise<void> {
-    const importedPath: string = await this.vm.importExternalToVault();
-    if (importedPath.length === 0) {
+    try {
+      const importedPath: string = await this.vm.importExternalToVault();
+      if (importedPath.length === 0) {
+        this.toast($r('app.string.msg_create_failed'));
+        return;
+      }
+      this.toast($r('app.string.msg_external_imported', importedPath));
+      this.syncNowIfAuto();
+      if (editAfter) {
+        this.vm.startEdit();
+      }
+    } catch (error) {
+      // handleImportExternalRequest 以 fire-and-forget 调用本方法，
+      // 写盘失败若无兜底将成为未处理拒绝且用户无任何反馈。
+      const err = error as BusinessError;
+      LOG.error(`import external failed: ${err.message}`);
       this.toast($r('app.string.msg_create_failed'));
-      return;
-    }
-    this.toast($r('app.string.msg_external_imported', importedPath));
-    this.syncNowIfAuto();
-    if (editAfter) {
-      this.vm.startEdit();
     }
   }
 
@@ -3771,6 +3823,9 @@ struct DesignIndex {
       }
       promptAction.showToast({ message: $r('app.string.design_editor_saved') });
       this.openWorkspace({ 'openPath': path });
+    }).catch((error: BusinessError): void => {
+      LOG.error(`create quick note failed: ${error.message}`);
+      promptAction.showToast({ message: $r('app.string.msg_create_failed') });
     });
   }
 
@@ -3912,8 +3967,14 @@ struct DesignIndex {
     if (this.vm.currentVault.id <= 0) {
       return;
     }
+    const seq: number = ++this.searchSeq;
     this.searchVm.search(this.vm.currentVault.id, this.searchKeyword).then((): void => {
+      if (seq !== this.searchSeq) {
+        return;
+      }
       this.rebuildSearchRows();
+    }).catch((error: BusinessError): void => {
+      LOG.error(`search failed: ${error.message}`);
     });
   }
 
@@ -3926,9 +3987,15 @@ struct DesignIndex {
       clearTimeout(this.searchDebounceId);
       this.searchDebounceId = -1;
     }
+    const seq: number = ++this.searchSeq;
     this.searchVm.setMode(this.vm.currentVault.id, mode).then((): void => {
+      if (seq !== this.searchSeq) {
+        return;
+      }
       this.searchKeyword = this.searchVm.keyword;
       this.rebuildSearchRows();
+    }).catch((error: BusinessError): void => {
+      LOG.error(`switch search mode failed: ${error.message}`);
     });
   }
 
@@ -3937,8 +4004,14 @@ struct DesignIndex {
     if (this.vm.currentVault.id <= 0) {
       return;
     }
+    const seq: number = ++this.searchSeq;
     this.searchVm.selectTag(this.vm.currentVault.id, tag).then((): void => {
+      if (seq !== this.searchSeq) {
+        return;
+      }
       this.rebuildSearchRows();
+    }).catch((error: BusinessError): void => {
+      LOG.error(`select tag search failed: ${error.message}`);
     });
   }
 
@@ -4008,6 +4081,17 @@ struct DesignIndex {
     this.itemLongPressTimer = setTimeout((): void => {
       this.itemLongPressConsumed = false;
       this.itemLongPressTimer = -1;
+    }, 180);
+  }
+
+  /** FAB 长按抬手后延时清除防误触标志；若无后续 click 也能自愈，避免吞掉下一次正常点击。 */
+  private scheduleClearFabLongPressConsumed(): void {
+    if (this.fabLongPressTimer >= 0) {
+      clearTimeout(this.fabLongPressTimer);
+    }
+    this.fabLongPressTimer = setTimeout((): void => {
+      this.fabLongPressConsumed = false;
+      this.fabLongPressTimer = -1;
     }, 180);
   }
 

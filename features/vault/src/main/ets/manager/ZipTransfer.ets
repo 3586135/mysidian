@@ -66,8 +66,8 @@ export class ZipTransfer {
   public static async exportZip(context: common.Context, srcDir: string,
     uri: string): Promise<void> {
     const cacheFile: string = `${context.cacheDir}/export_${Date.now()}.zip`;
-    await zlib.compressFile(srcDir, cacheFile, ZipTransfer.OPTIONS);
     try {
+      await zlib.compressFile(srcDir, cacheFile, ZipTransfer.OPTIONS);
       ZipTransfer.copyFileToUri(cacheFile, uri);
       LOG.info(`exported vault archive from ${srcDir}`);
     } finally {
@@ -103,7 +103,7 @@ export class ZipTransfer {
     } finally {
       fileIo.closeSync(source);
     }
-    const target = fileIo.openSync(uri, fileIo.OpenMode.READ_WRITE);
+    const target = fileIo.openSync(uri, fileIo.OpenMode.READ_WRITE | fileIo.OpenMode.TRUNC);
     try {
       fileIo.writeSync(target.fd, buffer);
     } finally {

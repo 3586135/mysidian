@@ -1,5 +1,9 @@
+import { BusinessError } from '@kit.BasicServicesKit';
 import { DiffLine, HistorySnapshot } from '@ohos/vault';
+import { Logger } from '@ohos/common';
 import { VaultViewModel } from '../../viewmodel/VaultViewModel';
+
+const LOG: Logger = new Logger('HistorySheet');
 
 /** 快照时间格式化。 */
 function formatHistoryTime(timestamp: number): string {
@@ -31,6 +35,8 @@ export struct HistorySheet {
   aboutToAppear(): void {
     this.vm.listHistory().then((list: HistorySnapshot[]): void => {
       this.historyList = list;
+    }).catch((error: BusinessError): void => {
+      LOG.error(`list history failed, code=${error.code}, message=${error.message}`);
     });
   }
 

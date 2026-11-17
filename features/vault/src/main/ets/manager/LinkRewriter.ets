@@ -39,13 +39,15 @@ export class LinkRewriter {
    * 重命名后重写所有指向旧名的源笔记。
    *
    * @param context 应用上下文
+   * @param vaultId 仓库主键
    * @param oldPath 旧相对路径
    * @param newPath 新相对路径
    * @param readNote 读取源笔记内容
    * @param writeNote 写回源笔记内容
    * @returns 被改写的源笔记相对路径列表
    */
-  public static async rewriteForRename(context: common.Context, oldPath: string, newPath: string,
+  public static async rewriteForRename(context: common.Context, vaultId: number,
+    oldPath: string, newPath: string,
     readNote: (path: string) => Promise<string>,
     writeNote: (path: string, content: string) => Promise<void>): Promise<string[]> {
     const oldName: string = VaultPath.basenameWithoutExt(oldPath);
@@ -54,7 +56,7 @@ export class LinkRewriter {
     if (oldName.length === 0 || newName.length === 0 || oldName === newName) {
       return affected;
     }
-    const backlinks: BacklinkItem[] = await LinkDao.backlinks(context, oldPath);
+    const backlinks: BacklinkItem[] = await LinkDao.backlinks(context, vaultId, oldPath);
     for (const item of backlinks) {
       const content: string = await readNote(item.sourcePath);
       const next: string = LinkRewriter.rewriteWikiLinks(content, oldName, newName);

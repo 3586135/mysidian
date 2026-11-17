@@ -27,12 +27,14 @@ export class LinkDao {
   }
 
   /** 查询指向目标笔记的反向链接。 */
-  public static async backlinks(context: common.Context, targetPath: string): Promise<BacklinkItem[]> {
+  public static async backlinks(context: common.Context, vaultId: number,
+    targetPath: string): Promise<BacklinkItem[]> {
     const store = await DbHelper.getStore();
-    const args: Array<relationalStore.ValueType> = [targetPath];
+    const args: Array<relationalStore.ValueType> = [targetPath, vaultId];
     const result = await store.querySql(
       'SELECT n.id, n.path, n.title, l.link_context FROM link l ' +
-      'JOIN note n ON n.id = l.source_note_id WHERE l.target_path = ? ORDER BY n.path ASC', args);
+      'JOIN note n ON n.id = l.source_note_id WHERE l.target_path = ? AND n.vault_id = ? ' +
+      'ORDER BY n.path ASC', args);
     const items: BacklinkItem[] = [];
     if (result.goToFirstRow()) {
       do {

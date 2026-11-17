@@ -92,10 +92,10 @@ export class VaultManager {
     const safeName: string = VaultPath.sanitizeName(name);
     const root: string = `${this.vaultsRoot}/${now}_${safeName}`;
     fileIo.mkdirSync(root, true);
+    const info: VaultInfo = new VaultInfo();
     try {
       await ZipTransfer.importZip(this.context, uri, root);
       const realRoot: string = this.resolveImportRoot(root);
-      const info: VaultInfo = new VaultInfo();
       info.name = safeName;
       info.rootPath = realRoot;
       info.createdAt = now;
@@ -107,6 +107,13 @@ export class VaultManager {
     } catch (error) {
       const err = error as BusinessError;
       LOG.error(`import vault failed, code=${err.code}, message=${err.message}, root=${root}`);
+      if (info.id > 0) {
+        try {
+          await VaultDao.remove(this.context, info.id);
+        } catch (_ignored) {
+          // 清理幽灵仓库行失败不应掩盖原始导入异常
+        }
+      }
       this.removeDirectory(root);
       throw new Error(`vault import failed, code=${err.code}, message=${err.message}`);
     }
@@ -253,10 +260,17 @@ export class VaultManager {
     const file = fileIo.openSync(tempPath,
       fileIo.OpenMode.READ_WRITE | fileIo.OpenMode.CREATE | fileIo.OpenMode.TRUNC);
     try {
-      fileIo.writeSync(file.fd, content);
-      fileIo.fsyncSync(file.fd);
-    } finally {
-      fileIo.closeSync(file);
+      try {
+        fileIo.writeSync(file.fd, content);
+        fileIo.fsyncSync(file.fd);
+      } finally {
+        fileIo.closeSync(file);
+      }
+    } catch (error) {
+      if (fileIo.accessSync(tempPath)) {
+        fileIo.unlinkSync(tempPath);
+      }
+      throw error as Error;
     }
     fileIo.renameSync(tempPath, absolute);
     await VaultDao.touch(this.context, vault.id);
@@ -545,8 +559,14 @@ export class VaultManager {
   /** 去掉回收站文件名的时间戳（及同毫秒防重名附加的序号）前缀。 */
   private static stripTrashStamp(name: string): string {
     let rest: string = name;
+    let stampDigits: number = 0;
     // 最多剥离两段纯数字前缀：时间戳 + 同毫秒防重名序号。
     for (let round = 0; round < 2; round++) {
+      // 第二段序号仅在第一段确实是 13 位 Date.now() 时间戳时才剥离，
+      // 否则 `2024_年度总结.md` 这类自带数字前缀的文件名会被误伤。
+      if (round === 1 && stampDigits !== 13) {
+        return rest;
+      }
       const index: number = rest.indexOf('_');
       if (index <= 0) {
         return rest;
@@ -557,6 +577,9 @@ export class VaultManager {
         if (code < 48 || code > 57) {
           return rest;
         }
+      }
+      if (round === 0) {
+        stampDigits = prefix.length;
       }
       rest = rest.substring(index + 1);
     }
@@ -590,18 +613,23 @@ export class VaultManager {
       if (!VaultPath.isMarkdown(relative)) {
         continue;
       }
-      const absolute: string = VaultPath.absolute(vault.rootPath, relative);
-      const stat = fileIo.statSync(absolute);
-      const row: NoteRow = new NoteRow();
-      row.vaultId = vault.id;
-      row.path = relative;
-      row.ext = VaultPath.extension(relative);
-      row.title = VaultPath.basenameWithoutExt(relative);
-      row.mtime = stat.mtime;
-      row.size = stat.size;
-      row.hash = await this.hashFile(absolute);
-      await NoteDao.upsert(this.context, row);
-      count++;
+      try {
+        const absolute: string = VaultPath.absolute(vault.rootPath, relative);
+        const stat = fileIo.statSync(absolute);
+        const row: NoteRow = new NoteRow();
+        row.vaultId = vault.id;
+        row.path = relative;
+        row.ext = VaultPath.extension(relative);
+        row.title = VaultPath.basenameWithoutExt(relative);
+        row.mtime = stat.mtime;
+        row.size = stat.size;
+        row.hash = await this.hashFile(absolute);
+        await NoteDao.upsert(this.context, row);
+        count++;
+      } catch (error) {
+        LOG.warn(`scan skip file (may be deleted concurrently): ${relative}`);
+        continue;
+      }
     }
     await VaultDao.touch(this.context, vault.id);
     LOG.info(`scanned vault ${vault.name}, ${count} notes`);
@@ -743,7 +771,7 @@ export class VaultManager {
     try {
       file = fileIo.openSync(trimmed, fileIo.OpenMode.READ_ONLY);
       const buffer: ArrayBuffer = new ArrayBuffer(VaultManager.EXTERNAL_READ_CHUNK);
-      const decoder: util.TextDecoder = util.TextDecoder.create('utf-8', { ignoreBOM: true });
+      const decoder: util.TextDecoder = util.TextDecoder.create('utf-8', { ignoreBOM: false });
       const parts: string[] = [];
       let total: number = 0;
       while (total < VaultManager.MAX_EXTERNAL_FILE_BYTES) {
@@ -811,7 +839,7 @@ export class VaultManager {
 
 /** 文件状态信息（修改时间与大小，用于检测外部改动）。 */
 export class FileStatInfo {
-  /** 修改时间（毫秒）。 */
+  /** 修改时间（秒）。 */
   mtime: number = 0;
   /** 文件大小（字节）。 */
   size: number = 0;

@@ -9,7 +9,7 @@ import { Tokenizer } from '../indexer/Tokenizer';
  * 优先使用 FTS5 虚表（MATCH），平台不支持时退化为 LIKE 扫描。
  */
 export class SearchDao {
-  /** ??????????????? SQLite ?????? */
+  /** 片段补齐时按笔记主键分批查询的批大小。 */
   private static readonly SNIPPET_BATCH: number = 200;
 
   /** 执行检索。 */
@@ -21,7 +21,10 @@ export class SearchDao {
       return [];
     }
     let hits: SearchHit[] = [];
-    if (DbHelper.isFtsReady()) {
+    // 关键词非空但分词后 MATCH 表达式为空（如纯标点）时跳过 FTS，
+    // 否则 searchByFts 会退化为 WHERE 1 = 1，把仓库全部笔记误判为关键词命中。
+    if (DbHelper.isFtsReady() &&
+      (keyword.length === 0 || Tokenizer.buildMatchExpression(keyword).length > 0)) {
       try {
         hits = await SearchDao.searchByFts(vaultId, query);
       } catch (error) {

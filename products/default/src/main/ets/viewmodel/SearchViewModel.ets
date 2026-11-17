@@ -1,6 +1,10 @@
 import { common } from '@kit.AbilityKit';
+import { BusinessError } from '@kit.BasicServicesKit';
 import { NoteRow, SearchHit, SearchQuery, TagRef } from '@ohos/domain';
+import { Logger } from '@ohos/common';
 import { FuzzyMatcher, NoteDao, SearchDao, TagDao } from '@ohos/vault';
+
+const LOG: Logger = new Logger('MySidianSearchVM');
 
 /**
  * 搜索与导航视图模型：全文搜索、快速切换器。
@@ -19,6 +23,7 @@ export class SearchViewModel {
 
   private context: common.Context | null = null;
   private notes: NoteRow[] = [];
+  private searchSeq: number = 0;
 
   public setContext(context: common.Context): void {
     this.context = context;
@@ -36,6 +41,7 @@ export class SearchViewModel {
 
   /** 执行搜索（按当前模式分发）。 */
   public async search(vaultId: number, keyword: string): Promise<void> {
+    const seq: number = ++this.searchSeq;
     this.keyword = keyword;
     const context: common.Context | null = this.context;
     if (context === null) {
@@ -44,24 +50,37 @@ export class SearchViewModel {
     this.busy = true;
     try {
       if (this.searchMode === 1) {
-        await this.searchTags(context, vaultId, keyword);
+        await this.searchTags(context, vaultId, keyword, seq);
         return;
       }
       if (this.searchMode === 2) {
-        await this.searchProps(vaultId, keyword);
+        await this.searchProps(vaultId, keyword, seq);
         return;
       }
       const query: SearchQuery = new SearchQuery();
       query.text = keyword;
-      this.hits = await SearchDao.search(context, vaultId, query);
+      const hits: SearchHit[] = await SearchDao.search(context, vaultId, query);
+      if (seq !== this.searchSeq) {
+        return;
+      }
+      this.hits = hits;
+    } catch (error) {
+      const err = error as BusinessError;
+      LOG.error(`search failed, code=${err.code}, message=${err.message}`);
     } finally {
-      this.busy = false;
+      if (seq === this.searchSeq) {
+        this.busy = false;
+      }
     }
   }
 
   /** 标签模式：刷新标签候选；已选中标签时展示该标签的笔记。 */
-  private async searchTags(context: common.Context, vaultId: number, keyword: string): Promise<void> {
+  private async searchTags(context: common.Context, vaultId: number, keyword: string,
+    seq: number): Promise<void> {
     const all: TagRef[] = await TagDao.listAll(context, vaultId);
+    if (seq !== this.searchSeq) {
+      return;
+    }
     const filter: string = keyword.trim().toLowerCase();
     const filtered: TagRef[] = [];
     for (const ref of all) {
@@ -76,11 +95,15 @@ export class SearchViewModel {
     }
     const query: SearchQuery = new SearchQuery();
     query.tag = this.activeTag;
-    this.hits = await SearchDao.search(context, vaultId, query);
+    const hits: SearchHit[] = await SearchDao.search(context, vaultId, query);
+    if (seq !== this.searchSeq) {
+      return;
+    }
+    this.hits = hits;
   }
 
   /** 属性模式：输入「属性名:属性值」（任一段可空）检索笔记。 */
-  private async searchProps(vaultId: number, keyword: string): Promise<void> {
+  private async searchProps(vaultId: number, keyword: string, seq: number): Promise<void> {
     const context: common.Context | null = this.context;
     if (context === null) {
       return;
@@ -98,7 +121,11 @@ export class SearchViewModel {
       this.hits = [];
       return;
     }
-    this.hits = await SearchDao.search(context, vaultId, query);
+    const hits: SearchHit[] = await SearchDao.search(context, vaultId, query);
+    if (seq !== this.searchSeq) {
+      return;
+    }
+    this.hits = hits;
   }
 
   /** 选中或取消选中一个标签，展示使用该标签的笔记。 */

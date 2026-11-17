@@ -99,21 +99,28 @@ export class NoteDao {
   public static async removeByVault(context: common.Context,
     vaultId: number): Promise<void> {
     const store = await DbHelper.getStore();
-    const args: Array<relationalStore.ValueType> = [vaultId];
-    // FTS 行随笔记删除而清理，否则旧 rowid 永久残留、索引无限膨胀。
-    if (DbHelper.isFtsReady()) {
+    store.beginTransaction();
+    try {
+      const args: Array<relationalStore.ValueType> = [vaultId];
+      // FTS 行随笔记删除而清理，否则旧 rowid 永久残留、索引无限膨胀。
+      if (DbHelper.isFtsReady()) {
+        await store.executeSql(
+          'DELETE FROM note_fts WHERE rowid IN (SELECT id FROM note WHERE vault_id = ?)', args);
+      }
       await store.executeSql(
-        'DELETE FROM note_fts WHERE rowid IN (SELECT id FROM note WHERE vault_id = ?)', args);
+        'DELETE FROM block WHERE note_id IN (SELECT id FROM note WHERE vault_id = ?)', args);
+      await store.executeSql(
+        'DELETE FROM link WHERE source_note_id IN (SELECT id FROM note WHERE vault_id = ?)', args);
+      await store.executeSql(
+        'DELETE FROM tag WHERE note_id IN (SELECT id FROM note WHERE vault_id = ?)', args);
+      await store.executeSql(
+        'DELETE FROM prop WHERE note_id IN (SELECT id FROM note WHERE vault_id = ?)', args);
+      await store.executeSql('DELETE FROM note WHERE vault_id = ?', args);
+      store.commit();
+    } catch (error) {
+      store.rollBack();
+      throw error as Error;
     }
-    await store.executeSql(
-      'DELETE FROM block WHERE note_id IN (SELECT id FROM note WHERE vault_id = ?)', args);
-    await store.executeSql(
-      'DELETE FROM link WHERE source_note_id IN (SELECT id FROM note WHERE vault_id = ?)', args);
-    await store.executeSql(
-      'DELETE FROM tag WHERE note_id IN (SELECT id FROM note WHERE vault_id = ?)', args);
-    await store.executeSql(
-      'DELETE FROM prop WHERE note_id IN (SELECT id FROM note WHERE vault_id = ?)', args);
-    await store.executeSql('DELETE FROM note WHERE vault_id = ?', args);
   }
 
   /**
@@ -133,22 +140,29 @@ export class NoteDao {
   public static async removeByPath(context: common.Context, vaultId: number,
     path: string): Promise<void> {
     const store = await DbHelper.getStore();
-    const args: Array<relationalStore.ValueType> = [vaultId, path];
-    if (DbHelper.isFtsReady()) {
+    store.beginTransaction();
+    try {
+      const args: Array<relationalStore.ValueType> = [vaultId, path];
+      if (DbHelper.isFtsReady()) {
+        await store.executeSql(
+          'DELETE FROM note_fts WHERE rowid IN ' +
+          '(SELECT id FROM note WHERE vault_id = ? AND path = ?)', args);
+      }
       await store.executeSql(
-        'DELETE FROM note_fts WHERE rowid IN ' +
-        '(SELECT id FROM note WHERE vault_id = ? AND path = ?)', args);
+        'DELETE FROM block WHERE note_id IN (SELECT id FROM note WHERE vault_id = ? AND path = ?)', args);
+      await store.executeSql(
+        'DELETE FROM link WHERE source_note_id IN (SELECT id FROM note WHERE vault_id = ? AND path = ?)',
+        args);
+      await store.executeSql(
+        'DELETE FROM tag WHERE note_id IN (SELECT id FROM note WHERE vault_id = ? AND path = ?)', args);
+      await store.executeSql(
+        'DELETE FROM prop WHERE note_id IN (SELECT id FROM note WHERE vault_id = ? AND path = ?)', args);
+      await store.executeSql('DELETE FROM note WHERE vault_id = ? AND path = ?', args);
+      store.commit();
+    } catch (error) {
+      store.rollBack();
+      throw error as Error;
     }
-    await store.executeSql(
-      'DELETE FROM block WHERE note_id IN (SELECT id FROM note WHERE vault_id = ? AND path = ?)', args);
-    await store.executeSql(
-      'DELETE FROM link WHERE source_note_id IN (SELECT id FROM note WHERE vault_id = ? AND path = ?)',
-      args);
-    await store.executeSql(
-      'DELETE FROM tag WHERE note_id IN (SELECT id FROM note WHERE vault_id = ? AND path = ?)', args);
-    await store.executeSql(
-      'DELETE FROM prop WHERE note_id IN (SELECT id FROM note WHERE vault_id = ? AND path = ?)', args);
-    await store.executeSql('DELETE FROM note WHERE vault_id = ? AND path = ?', args);
   }
 
   /** 查询指定路径前缀下的笔记相对路径（清空回收站时使用）。 */
