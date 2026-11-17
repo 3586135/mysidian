@@ -18,3 +18,8 @@ export { MdBlockView } from './src/main/ets/render/MdBlockView';
 export { MdDocumentView, MdDocumentViewController } from './src/main/ets/render/MdDocumentView';
 export { MdPropertiesView } from './src/main/ets/render/MdPropertiesView';
 export { MdWebFallback } from './src/main/ets/render/MdWebFallback';
+export { WysiwygBlockKind, WysiwygDocument, WysiwygInline, WysiwygParagraph,
+  WysiwygSpanKind } from './src/main/ets/editor/WysiwygModel';
+export { WysiwygCodec } from './src/main/ets/editor/WysiwygCodec';
+export { WysiwygTableAlign, WysiwygTableCodec, WysiwygTableData } from './src/main/ets/editor/WysiwygTableCodec';
+export { BlockTriggerResult, InlineTriggerResult, WysiwygTriggers } from './src/main/ets/editor/WysiwygTriggers';

@@ -3,7 +3,7 @@ import { photoAccessHelper } from '@kit.MediaLibraryKit';
 import { BusinessError } from '@kit.BasicServicesKit';
 import { DataViewResult, DataViewTask } from '@ohos/domain';
 import { EmptyState, Logger } from '@ohos/common';
-import { MdDocumentView, MdDocumentViewController, MdInlineFlattener } from '@ohos/markdown';
+import { MdDocumentView, MdDocumentViewController, MdInlineFlattener, WysiwygCodec } from '@ohos/markdown';
 import { CompletionCandidate, EditorTextUtils, ListContinuation } from '../../viewmodel/EditorTextUtils';
 import { VaultViewModel } from '../../viewmodel/VaultViewModel';
 import { CompletionPopup } from './CompletionPopup';
@@ -11,6 +11,9 @@ import { EditorToolbar } from './EditorToolbar';
 import { FindReplaceBar } from './FindReplaceBar';
 import { ThreeDotsIcon } from './NoteActionHelper';
 import { FindReplaceUtils } from '../../viewmodel/FindReplaceUtils';
+import { WysiwygCompletionQuery, WysiwygFormatState } from './WysiwygEditorEngine';
+import { WysiwygEditor, WysiwygEditorBridge } from './WysiwygEditor';
+import { WysiwygTableSheet } from './WysiwygTableSheet';
 
 const LOG: Logger = new Logger('EditorPane');
 
@@ -64,8 +67,32 @@ export struct EditorPane {
   @Local findIndex: number = -1;
   /** 阅读态当前是否有选中文本（有选区时屏蔽横向翻页手势，确保拖动手柄顺滑）。 */
   @Local readingSelecting: boolean = false;
+  /** 编辑态是否使用纯源码模式（默认 false，即所见即所得富文本）。 */
+  @Local sourceMode: boolean = false;
+  /** 所见模式工具栏激活态。 */
+  @Local fmtBold: boolean = false;
+  @Local fmtItalic: boolean = false;
+  @Local fmtStrike: boolean = false;
+  @Local fmtHighlight: boolean = false;
+  @Local fmtCode: boolean = false;
+  @Local fmtHeading: number = 0;
+  @Local fmtBlockKind: string = '';
+  @Local showTableSheet: boolean = false;
+  @Local editingTableId: number = 0;
+  @Local editingTableRawMd: string = '';
+  /** 所见 <-> 源码切换光标继承参数。 */
+  @Local wysiwygInitialCaret: number = 0;
+  @Local wysiwygFocusOnLoad: boolean = false;
+  private pendingSourceCaret: number = -1;
+  private lastSourceCaret: number = -1;
+  private focusRestoreSourceCaret: number = -1;
+  private editorStackHeight: number = 0;
 
-  /** 编辑器控制器：用于工具栏在光标处插入语法。 */
+  /** 所见即所得编辑器桥接控制器。 */
+  private wysiwygBridge: WysiwygEditorBridge = new WysiwygEditorBridge();
+  private wysiwygCompletion: WysiwygCompletionQuery | null = null;
+  private wysiwygCompletionKind: 'wiki' | 'tag' = 'wiki';
+  /** 编辑器控制器：用于源码模式工具栏在光标处插入语法。 */
   private textEditorController: TextAreaController = new TextAreaController();
   /** 程序化编辑的期望文本：用于识别控制器修改引起的 onChange 回调。 */
   private expectedText: string = '';
@@ -87,6 +114,18 @@ export struct EditorPane {
     // 注册 VM 注入钩子：光标处插入文本（手写图片等外部内容）。
     this.vm.onInsertTextAtCaret = (text: string, atEnd: boolean): void => {
       if (!this.vm.editMode) {
+        return;
+      }
+      if (!this.sourceMode) {
+        const imgMatch: RegExpExecArray | null = /^\s*!\[\[([^\[\]]+)\]\]\s*$/.exec(text);
+        if (imgMatch !== null) {
+          this.wysiwygBridge.insertImageTarget(imgMatch[1].trim());
+          return;
+        }
+        const cur: string = this.wysiwygBridge.exportMarkdown();
+        const combined: string = atEnd ? `${cur}\n${text}` : `${cur}${text}`;
+        this.wysiwygBridge.loadMarkdown(combined);
+        this.vm.updateDraft(combined);
         return;
       }
       if (atEnd) {
@@ -111,12 +150,22 @@ export struct EditorPane {
     this.redoDepth = 0;
     this.showCompletion = false;
     this.completionItems = [];
+    this.wysiwygCompletion = null;
     this.readingSelecting = false;
+    this.sourceMode = false;
+    this.clearFormatState();
+    this.wysiwygInitialCaret = 0;
+    this.wysiwygFocusOnLoad = false;
+    this.pendingSourceCaret = -1;
+    this.lastSourceCaret = -1;
+    this.focusRestoreSourceCaret = -1;
+    this.showTableSheet = false;
     this.closeFind();
   }
 
   build() {
-    Column() {
+    Stack({ alignContent: Alignment.Center }) {
+      Column() {
       if (this.vm.selectedPath.length === 0 && !this.vm.isExternalMode) {
         EmptyState({
           title: $r('app.string.note_empty_title'),
@@ -165,45 +214,114 @@ export struct EditorPane {
         }
         if (this.vm.editMode) {
           Stack({ alignContent: Alignment.TopStart }) {
-            TextArea({
-              placeholder: $r('app.string.editor_placeholder'),
-              text: this.vm.draftBuffer,
-              controller: this.textEditorController
-            })
-              .fontSize(16)
-              .width('100%')
-              .height('100%')
-              .backgroundColor(Color.Transparent)
-              .fontColor($r('app.color.design_text_primary'))
-              .placeholderColor($r('app.color.design_text_secondary'))
-              .caretColor($r('app.color.design_accent'))
-              .id(EditorPane.EDITOR_ID)
-              .padding({ left: 20, right: 20, top: 8, bottom: 8 })
-              .gesture(this.contentPanGesture())
-              .onTouch((event: TouchEvent) => {
-                this.onContentTouch(event);
-                // 触摸先于聚焦发生：提前切换避让策略，避免键盘弹出瞬间页面跳动。
-                this.onEditorKeyboardMode(true);
+            if (this.sourceMode) {
+              TextArea({
+                placeholder: $r('app.string.editor_placeholder'),
+                text: this.vm.draftBuffer,
+                controller: this.textEditorController
               })
-              .onFocus(() => {
-                this.showToolbar = true;
-                this.onEditorKeyboardMode(true);
-              })
-              .onBlur(() => {
-                this.showToolbar = false;
-                // 键盘已收起时退出键盘交互态，恢复默认避让策略。
-                if (this.keyboardHeight <= 0) {
-                  this.onEditorKeyboardMode(false);
+                .fontSize(16)
+                .width('100%')
+                .height('100%')
+                .backgroundColor(Color.Transparent)
+                .fontColor($r('app.color.design_text_primary'))
+                .placeholderColor($r('app.color.design_text_secondary'))
+                .caretColor($r('app.color.design_accent'))
+                .id(EditorPane.EDITOR_ID)
+                .padding({ left: 20, right: 20, top: 8, bottom: 8 })
+                .gesture(this.contentPanGesture())
+                .onTouch((event: TouchEvent) => {
+                  this.onContentTouch(event);
+                  // 触摸先于聚焦发生：提前切换避让策略，避免键盘弹出瞬间页面跳动。
+                  this.onEditorKeyboardMode(true);
+                })
+                .onFocus(() => {
+                  this.showToolbar = true;
+                  this.onEditorKeyboardMode(true);
+                  if (this.focusRestoreSourceCaret >= 0) {
+                    const restorePos: number = this.focusRestoreSourceCaret;
+                    this.focusRestoreSourceCaret = -1;
+                    this.textEditorController.caretPosition(restorePos);
+                    this.lastSourceCaret = restorePos;
+                  }
+                })
+                .onBlur(() => {
+                  if (!this.sourceMode || !this.vm.editMode) {
+                    return;
+                  }
+                  this.showToolbar = false;
+                  // 键盘已收起时退出键盘交互态，恢复默认避让策略。
+                  if (this.keyboardHeight <= 0) {
+                    this.onEditorKeyboardMode(false);
+                  }
+                })
+                .onAppear(() => {
+                  this.applyPendingCaret();
+                })
+                .onChange((value: string) => {
+                  this.onEditorChange(value);
+                })
+                .onTextSelectionChange((start: number, _end: number) => {
+                  if (this.focusRestoreSourceCaret < 0) {
+                    this.lastSourceCaret = start;
+                  }
+                })
+                .transition(TransitionEffect.opacity(0)
+                  .animation({ duration: 200, curve: Curve.Friction }))
+            } else {
+              WysiwygEditor({
+                initialMarkdown: this.vm.draftBuffer,
+                docKey: this.vm.selectedPath.length > 0 ? this.vm.selectedPath : this.vm.externalUri,
+                fontSize: this.vm.fontSize,
+                initialCaret: this.wysiwygInitialCaret,
+                focusAfterLoad: this.wysiwygFocusOnLoad,
+                bridge: this.wysiwygBridge,
+                onResolveAsset: (target: string): string => this.vm.resolveAsset(target),
+                onMarkdownChange: (md: string): void => {
+                  this.vm.updateDraft(md);
+                  if (this.showFind) {
+                    this.refreshMatches();
+                  }
+                },
+                onKeyboardModeChange: (editing: boolean): void => {
+                  if (this.sourceMode || !this.vm.editMode) {
+                    return;
+                  }
+                  this.showToolbar = editing;
+                  if (editing) {
+                    this.onEditorKeyboardMode(true);
+                  } else if (this.keyboardHeight <= 0) {
+                    this.onEditorKeyboardMode(false);
+                  }
+                },
+                onTouchEditor: (event: TouchEvent): void => {
+                  this.onContentTouch(event);
+                  this.onEditorKeyboardMode(true);
+                },
+                onCompletionQuery: (query: WysiwygCompletionQuery | null, popupX: number,
+                  popupY: number): void => {
+                  this.updateWysiwygCompletion(query, popupX, popupY);
+                },
+                onTriggerImagePick: (): void => {
+                  this.pickAndInsertImage();
+                },
+                onHistoryChange: (u: number, r: number): void => {
+                  this.undoDepth = u;
+                  this.redoDepth = r;
+                },
+                onFormatStateChange: (state: WysiwygFormatState): void => {
+                  this.applyFormatState(state);
+                },
+                onOpenTableEditor: (tableId: number, rawMd: string): void => {
+                  this.editingTableId = tableId;
+                  this.editingTableRawMd = rawMd;
+                  this.showTableSheet = true;
                 }
               })
-              .onAppear(() => {
-                this.applyPendingCaret();
-              })
-              .onChange((value: string) => {
-                this.onEditorChange(value);
-              })
-              .transition(TransitionEffect.opacity(0)
-                .animation({ duration: 200, curve: Curve.Friction }))
+                .width('100%')
+                .height('100%')
+                .gesture(this.contentPanGesture())
+            }
             if (this.showCompletion && this.completionItems.length > 0) {
               CompletionPopup({
                 items: this.completionItems,
@@ -217,10 +335,20 @@ export struct EditorPane {
           }
           .width('100%')
           .layoutWeight(1)
+          .onAreaChange((_oldArea: Area, newArea: Area): void => {
+            this.editorStackHeight = Number(newArea.height);
+          })
           if (this.showToolbar && this.vm.editMode) {
             EditorToolbar({
               undoDepth: this.undoDepth,
               redoDepth: this.redoDepth,
+              activeBold: !this.sourceMode && this.fmtBold,
+              activeItalic: !this.sourceMode && this.fmtItalic,
+              activeStrike: !this.sourceMode && this.fmtStrike,
+              activeHighlight: !this.sourceMode && this.fmtHighlight,
+              activeCode: !this.sourceMode && this.fmtCode,
+              activeHeading: !this.sourceMode ? this.fmtHeading : 0,
+              activeBlockKind: !this.sourceMode ? this.fmtBlockKind : '',
               onInsertFormat: (syntax: string): void => {
                 this.insertFormat(syntax);
               },
@@ -297,6 +425,27 @@ export struct EditorPane {
     }
     .width('100%')
     .height('100%')
+
+      if (this.showTableSheet && this.vm.editMode && !this.sourceMode) {
+        WysiwygTableSheet({
+          tableId: this.editingTableId,
+          rawMd: this.editingTableRawMd,
+          onCancel: (): void => {
+            this.showTableSheet = false;
+          },
+          onConfirm: (tableId: number, nextRawMd: string): void => {
+            this.showTableSheet = false;
+            this.wysiwygBridge.applyTableEdit(tableId, nextRawMd);
+          },
+          onDelete: (tableId: number): void => {
+            this.showTableSheet = false;
+            this.wysiwygBridge.applyTableEdit(tableId, '');
+          }
+        })
+      }
+    }
+    .width('100%')
+    .height('100%')
   }
 
   // ==================== 标题栏 ====================
@@ -342,6 +491,21 @@ export struct EditorPane {
           }
         })
       if (this.vm.editMode) {
+        Text(this.sourceMode ? $r('app.string.editor_mode_source') : $r('app.string.editor_mode_wysiwyg'))
+          .fontSize(12)
+          .fontWeight(FontWeight.Medium)
+          .fontColor(this.sourceMode ? $r('app.color.design_text_primary') : $r('app.color.design_accent'))
+          .height(26)
+          .padding({ left: 8, right: 8 })
+          .borderRadius(13)
+          .backgroundColor(this.sourceMode
+            ? $r('app.color.design_elevated') : $r('app.color.design_accent_weak'))
+          .margin({ right: 4 })
+          .focusable(false)
+          .accessibilityText($r('app.string.editor_mode_toggle_a11y'))
+          .onClick(() => {
+            this.toggleEditModeStyle();
+          })
         SymbolGlyph($r('sys.symbol.magnifyingglass'))
           .fontSize(20)
           .fontColor([$r('app.color.design_text_primary')])
@@ -363,6 +527,13 @@ export struct EditorPane {
           .padding({ left: 8, right: 8 })
           .margin({ left: 4 })
           .onClick(() => {
+            this.sourceMode = false;
+            this.wysiwygInitialCaret = 0;
+            this.wysiwygFocusOnLoad = false;
+            this.pendingSourceCaret = -1;
+            this.lastSourceCaret = -1;
+            this.focusRestoreSourceCaret = -1;
+            this.clearFormatState();
             this.onEditorKeyboardMode(false);
             this.vm.cancelEdit();
           })
@@ -375,6 +546,16 @@ export struct EditorPane {
           .margin({ left: 4 })
           .keyboardShortcut('s', [ModifierKey.CTRL])
           .onClick(() => {
+            if (!this.sourceMode) {
+              this.vm.updateDraft(this.wysiwygBridge.exportMarkdown());
+            }
+            this.sourceMode = false;
+            this.wysiwygInitialCaret = 0;
+            this.wysiwygFocusOnLoad = false;
+            this.pendingSourceCaret = -1;
+            this.lastSourceCaret = -1;
+            this.focusRestoreSourceCaret = -1;
+            this.clearFormatState();
             this.onEditorKeyboardMode(false);
             this.vm.saveDraft().then((): void => {
               this.onNoteMutated();
@@ -591,15 +772,73 @@ export struct EditorPane {
 
   // ==================== 编辑逻辑 ====================
 
-  /** 在光标处插入 Markdown 语法。 */
+  /** 同步工具栏格式化激活态。 */
+  private applyFormatState(state: WysiwygFormatState): void {
+    this.fmtBold = state.bold;
+    this.fmtItalic = state.italic;
+    this.fmtStrike = state.strike;
+    this.fmtHighlight = state.highlight;
+    this.fmtCode = state.code;
+    this.fmtHeading = state.headingLevel;
+    this.fmtBlockKind = state.blockKind;
+  }
+
+  /** 清空工具栏格式化激活态。 */
+  private clearFormatState(): void {
+    this.fmtBold = false;
+    this.fmtItalic = false;
+    this.fmtStrike = false;
+    this.fmtHighlight = false;
+    this.fmtCode = false;
+    this.fmtHeading = 0;
+    this.fmtBlockKind = '';
+  }
+
+  /** 在所见即所得与纯 Markdown 源码视图间无损切换，并保持光标同步。 */
+  private toggleEditModeStyle(): void {
+    this.showCompletion = false;
+    this.completionItems = [];
+    this.wysiwygCompletion = null;
+    this.closeFind();
+    if (!this.sourceMode) {
+      const keepToolbar: boolean = this.showToolbar || this.keyboardHeight > 0;
+      this.pendingSourceCaret = this.wysiwygBridge.getSourceCaretOffset();
+      this.vm.updateDraft(this.wysiwygBridge.exportMarkdown());
+      this.clearFormatState();
+      this.lastSourceCaret = -1;
+      this.sourceMode = true;
+      this.showToolbar = keepToolbar;
+      this.undoDepth = this.undoStack.length;
+      this.redoDepth = this.redoStack.length;
+    } else {
+      const keepToolbar: boolean = this.showToolbar || this.keyboardHeight > 0;
+      const ctrlCaret: number = Math.max(0, this.textEditorController.getCaretOffset().index);
+      const srcCaret: number = ctrlCaret > 0 ? ctrlCaret : Math.max(0, this.lastSourceCaret);
+      this.wysiwygInitialCaret = WysiwygCodec.wysiwygOffsetFromSource(this.vm.draftBuffer, srcCaret);
+      this.wysiwygFocusOnLoad = true;
+      this.sourceMode = false;
+      this.showToolbar = keepToolbar;
+      this.undoDepth = this.wysiwygBridge.getUndoDepth();
+      this.redoDepth = this.wysiwygBridge.getRedoDepth();
+    }
+  }
+
+  /** 在光标处插入 Markdown 语法（所见模式直接应用富文本格式）。 */
   private insertFormat(syntax: string): void {
+    if (!this.sourceMode) {
+      this.wysiwygBridge.applyToolbarAction(syntax);
+      return;
+    }
+    const snippet: string = syntax === 'table'
+      ? '| 列1 | 列2 |\n| --- | --- |\n|  |  |\n'
+      : syntax;
     const caret: number = this.textEditorController.getCaretOffset().index;
-    this.textEditorController.addText(syntax, { offset: caret });
+    this.textEditorController.addText(snippet, { offset: caret });
     // addText 未触发 onChange 时的兜底：手动同步缓冲区。
     const text: string = this.vm.draftBuffer;
     const before: string = text.slice(0, caret);
     const after: string = text.slice(caret);
-    this.vm.updateDraft(before + syntax + after);
+    this.vm.updateDraft(before + snippet + after);
   }
 
   /** 编辑器内容变化：处理列表续行、撤销栈与 wiki 补全。 */
@@ -617,6 +856,10 @@ export struct EditorPane {
     }
     this.expectedText = '';
     const prev: string = this.vm.draftBuffer;
+    if (value === prev) {
+      // 刚切入源码模式首次挂载回调，内容无变化，不弹出补全浮层。
+      return;
+    }
     const caret: number = this.textEditorController.getCaretOffset().index;
     const continuation: ListContinuation | null =
       EditorTextUtils.computeListContinuation(prev, value, caret - 1);
@@ -669,6 +912,10 @@ export struct EditorPane {
 
   /** 撤销一步。 */
   private undoEdit(): void {
+    if (!this.sourceMode) {
+      this.wysiwygBridge.undo();
+      return;
+    }
     const popped: string | undefined = this.undoStack.pop();
     if (popped === undefined) {
       return;
@@ -681,6 +928,10 @@ export struct EditorPane {
 
   /** 重做一步。 */
   private redoEdit(): void {
+    if (!this.sourceMode) {
+      this.wysiwygBridge.redo();
+      return;
+    }
     const popped: string | undefined = this.redoStack.pop();
     if (popped === undefined) {
       return;
@@ -695,7 +946,8 @@ export struct EditorPane {
 
   /** 按当前草稿重新计算匹配集合（当前匹配序号越界时回退为未定位）。 */
   private refreshMatches(): void {
-    this.findMatches = FindReplaceUtils.findAll(this.vm.draftBuffer, this.findKeyword);
+    const haystack: string = this.sourceMode ? this.vm.draftBuffer : this.wysiwygBridge.getPlainText();
+    this.findMatches = FindReplaceUtils.findAll(haystack, this.findKeyword);
     if (this.findIndex >= this.findMatches.length) {
       this.findIndex = -1;
     }
@@ -724,6 +976,13 @@ export struct EditorPane {
     }
     const start: number = this.findMatches[index];
     const end: number = start + this.findKeyword.length;
+    if (!this.sourceMode) {
+      this.wysiwygBridge.requestFocus();
+      setTimeout((): void => {
+        this.wysiwygBridge.selectRange(start, end);
+      }, 60);
+      return;
+    }
     this.getUIContext().getFocusController().requestFocus(EditorPane.EDITOR_ID);
     setTimeout((): void => {
       this.textEditorController.setTextSelection(start, end, { menuPolicy: MenuPolicy.HIDE });
@@ -741,6 +1000,17 @@ export struct EditorPane {
       return;
     }
     const start: number = this.findMatches[this.findIndex];
+    if (!this.sourceMode) {
+      this.wysiwygBridge.replaceRange(start, start + this.findKeyword.length, replacement);
+      this.refreshMatches();
+      const caretAfter: number = start + replacement.length;
+      let target: number = this.findMatches.findIndex((position: number): boolean => position >= caretAfter);
+      if (target < 0 && this.findMatches.length > 0) {
+        target = 0;
+      }
+      this.selectMatch(target);
+      return;
+    }
     const prev: string = this.vm.draftBuffer;
     const next: string = FindReplaceUtils.replaceAt(prev, start, this.findKeyword.length, replacement);
     // 替换是离散操作：强制压入撤销快照，不与前一次输入合并。
@@ -764,6 +1034,13 @@ export struct EditorPane {
     if (count === 0) {
       return;
     }
+    if (!this.sourceMode) {
+      this.wysiwygBridge.replaceAllKeyword(this.findKeyword, replacement);
+      this.refreshMatches();
+      this.findIndex = -1;
+      this.toast($r('app.string.msg_replace_done', count));
+      return;
+    }
     const prev: string = this.vm.draftBuffer;
     const next: string = FindReplaceUtils.replaceAll(prev, this.findKeyword, replacement);
     this.lastUndoPushAt = 0;
@@ -774,9 +1051,50 @@ export struct EditorPane {
     this.toast($r('app.string.msg_replace_done', count));
   }
 
+  /** 所见模式更新 wiki / 标签补全浮层。 */
+  private updateWysiwygCompletion(query: WysiwygCompletionQuery | null, popupX: number,
+    popupY: number): void {
+    if (query === null) {
+      if (this.showCompletion || this.completionItems.length > 0 || this.wysiwygCompletion !== null) {
+        this.showCompletion = false;
+        this.completionItems = [];
+        this.wysiwygCompletion = null;
+      }
+      return;
+    }
+    let kind: 'wiki' | 'tag' = 'wiki';
+    let candidates: CompletionCandidate[] = EditorTextUtils.getWikiCompletionCandidates(
+      query.paraTextUpToCaret, query.caretInPara, this.vm.noteTitles());
+    if (candidates.length === 0) {
+      candidates = EditorTextUtils.getTagCompletionCandidates(
+        query.paraTextUpToCaret, query.caretInPara, this.vm.allTagNames);
+      kind = 'tag';
+    }
+    if (candidates.length === 0) {
+      if (this.showCompletion || this.completionItems.length > 0 || this.wysiwygCompletion !== null) {
+        this.showCompletion = false;
+        this.completionItems = [];
+        this.wysiwygCompletion = null;
+      }
+      return;
+    }
+    this.wysiwygCompletion = query;
+    this.wysiwygCompletionKind = kind;
+    this.completionItems = candidates;
+    const maxW: number = this.contentWidth > 240 ? this.contentWidth - 220 : 120;
+    this.completionX = Math.max(8, Math.min(maxW, popupX));
+    const popupEstH: number = Math.min(candidates.length, 8) * 32 + 12;
+    let clampedY: number = Math.max(8, popupY);
+    if (this.editorStackHeight > 0 && clampedY + 20 + popupEstH > this.editorStackHeight) {
+      clampedY = Math.max(0, popupY - popupEstH - 22);
+    }
+    this.completionY = clampedY;
+    this.showCompletion = true;
+  }
+
   /** 更新 wiki 链接 / 标签补全浮层。 */
   private updateCompletion(text: string, caret: number): void {
-    if (caret < 0) {
+    if (caret < 0 || !this.showToolbar) {
       this.showCompletion = false;
       return;
     }
@@ -799,6 +1117,17 @@ export struct EditorPane {
 
   /** 选中补全候选：在光标处补全标题并闭合链接。 */
   private applyCompletion(item: CompletionCandidate): void {
+    if (!this.sourceMode) {
+      const q: WysiwygCompletionQuery | null = this.wysiwygCompletion;
+      if (q !== null) {
+        const fromGlobal: number = item.replaceFrom >= 0 ? q.paraStart + item.replaceFrom : q.globalCaret;
+        this.wysiwygBridge.applyCompletionCandidate(
+          fromGlobal, q.globalCaret, item.title, item.insertText, this.wysiwygCompletionKind);
+      }
+      this.showCompletion = false;
+      this.wysiwygCompletion = null;
+      return;
+    }
     const caret: number = this.textEditorController.getCaretOffset().index;
     if (caret < 0) {
       return;
@@ -811,8 +1140,22 @@ export struct EditorPane {
     this.showCompletion = false;
   }
 
-  /** 应用模板光标位置：套用模板后把光标放到 {{cursor}} 所在处。 */
+  /** 应用待恢复光标位置：优先处理所见->源码切换继承，其次处理模板 {{cursor}}。 */
   private applyPendingCaret(): void {
+    const srcCaret: number = this.pendingSourceCaret;
+    if (srcCaret >= 0) {
+      this.pendingSourceCaret = -1;
+      const limit: number = this.vm.draftBuffer.length;
+      const position: number = Math.max(0, Math.min(limit, srcCaret));
+      this.focusRestoreSourceCaret = position;
+      this.lastSourceCaret = position;
+      setTimeout((): void => {
+        this.getUIContext().getFocusController().requestFocus(EditorPane.EDITOR_ID);
+        this.textEditorController.caretPosition(position);
+        this.lastSourceCaret = position;
+      }, 60);
+      return;
+    }
     const caret: number = this.vm.pendingCaret;
     if (caret < 0) {
       return;
@@ -844,7 +1187,11 @@ export struct EditorPane {
         return;
       }
       const name: string = relative.substring(relative.lastIndexOf('/') + 1);
-      this.insertFormat(`![[${name}]]`);
+      if (!this.sourceMode) {
+        this.wysiwygBridge.insertImageTarget(name);
+      } else {
+        this.insertFormat(`![[${name}]]`);
+      }
       this.toast($r('app.string.msg_image_done'));
     } catch (error) {
       const err = error as BusinessError;

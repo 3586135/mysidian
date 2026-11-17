@@ -1819,6 +1819,98 @@
     {
       "name": "files_view_grid_label",
       "value": "宫格"
+    },
+    {
+      "name": "editor_mode_wysiwyg",
+      "value": "所见"
+    },
+    {
+      "name": "editor_mode_source",
+      "value": "源码"
+    },
+    {
+      "name": "editor_mode_toggle_a11y",
+      "value": "切换所见即所得与源码编辑"
+    },
+    {
+      "name": "editor_props_title",
+      "value": "笔记属性"
+    },
+    {
+      "name": "editor_props_add",
+      "value": "添加笔记属性"
+    },
+    {
+      "name": "editor_code_block_badge",
+      "value": "代码块"
+    },
+    {
+      "name": "editor_code_exit_hint",
+      "value": "输入 ``` 回车退出"
+    },
+    {
+      "name": "toolbar_table",
+      "value": "表格"
+    },
+    {
+      "name": "table_editor_title",
+      "value": "编辑表格"
+    },
+    {
+      "name": "table_editor_subtitle",
+      "value": "所见即所得 · 自动同步标准 Markdown"
+    },
+    {
+      "name": "table_editor_add_row",
+      "value": "+ 行"
+    },
+    {
+      "name": "table_editor_add_col",
+      "value": "+ 列"
+    },
+    {
+      "name": "table_editor_source_mode",
+      "value": "源码微调"
+    },
+    {
+      "name": "table_editor_grid_mode",
+      "value": "表格视图"
+    },
+    {
+      "name": "table_editor_delete",
+      "value": "删除表格"
+    },
+    {
+      "name": "table_editor_cancel",
+      "value": "取消"
+    },
+    {
+      "name": "table_editor_done",
+      "value": "完成"
+    },
+    {
+      "name": "table_editor_col_placeholder",
+      "value": "表头"
+    },
+    {
+      "name": "table_editor_cell_placeholder",
+      "value": "内容"
+    },
+    {
+      "name": "table_editor_align_left",
+      "value": "左对齐"
+    },
+    {
+      "name": "table_editor_align_center",
+      "value": "居中"
+    },
+    {
+      "name": "table_editor_align_right",
+      "value": "右对齐"
+    },
+    {
+      "name": "table_editor_source_hint",
+      "value": "单元格支持 Markdown 行内格式（**加粗**、`代码`、[[双链]]）"
     }
   ]
 }

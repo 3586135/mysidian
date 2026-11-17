@@ -1680,12 +1680,14 @@ export class VaultViewModel {
   /** 仓库内笔记标题列表（供 wiki 链接补全候选）。 */
   public noteTitles(): string[] {
     const titles: string[] = [];
+    const seen: Set<string> = new Set<string>();
     for (const file of this.vaultFiles) {
       if (!VaultPath.isMarkdown(file)) {
         continue;
       }
       const title: string = VaultPath.basenameWithoutExt(file);
-      if (title.length > 0 && !titles.includes(title)) {
+      if (title.length > 0 && !seen.has(title)) {
+        seen.add(title);
         titles.push(title);
       }
     }
