@@ -2167,36 +2167,6 @@ export class VaultViewModel {
     this.startEdit();
   }
 
-  /**
-   * 快速笔记：以标题（为空时用时间戳）在根目录新建笔记并写入内容。
-   * 同名文件已存在时追加时间戳后缀避免覆盖。返回新建笔记路径（失败返回空串）。
-   */
-  public async createQuickNote(title: string, content: string): Promise<string> {
-    const manager: VaultManager | null = this.manager;
-    if (manager === null || this.currentVault.rootPath.length === 0) {
-      return '';
-    }
-    const now: Date = new Date();
-    const pad = (value: number): string => value < 10 ? `0${value}` : `${value}`;
-    const stamp: string = `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}` +
-      `${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
-    let safeTitle: string = title.trim().replace(/[\\/:*?"<>|#\[\]]/g, '');
-    if (safeTitle.length === 0) {
-      safeTitle = `闪念-${stamp}`;
-    }
-    let path: string = `${safeTitle}.md`;
-    if (this.vaultFiles.includes(path)) {
-      path = `${safeTitle}-${stamp}.md`;
-    }
-    const body: string = content.trim();
-    const noteContent: string = body.length > 0 ? `# ${safeTitle}\n\n${body}\n` : `# ${safeTitle}\n\n`;
-    await manager.writeNote(this.currentVault, path, noteContent);
-    await manager.refreshNote(this.currentVault, path);
-    await this.refreshTree();
-    await this.openNote(path);
-    return path;
-  }
-
   /** 列出仓库内的模板文件。 */
   public async listTemplates(): Promise<string[]> {
     const manager: VaultManager | null = this.manager;

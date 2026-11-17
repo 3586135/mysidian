@@ -400,21 +400,6 @@ export struct EditorPane {
               });
             })
         }
-        SymbolGlyph($r('sys.symbol.doc_plaintext_and_pencil'))
-          .fontSize(20)
-          .fontColor([$r('app.color.design_text_primary')])
-          .width(36)
-          .height(36)
-          .margin({ left: 4 })
-          .accessibilityText($r('app.string.action_edit'))
-          .keyboardShortcut('e', [ModifierKey.CTRL])
-          .onClick(() => {
-            if (this.vm.isExternalMode) {
-              this.promptImportBeforeEdit();
-            } else {
-              this.vm.startEdit();
-            }
-          })
         if (this.isWide) {
           SymbolGlyph($r('sys.symbol.rectangle_grid_1x2'))
             .fontSize(20)
@@ -513,31 +498,6 @@ export struct EditorPane {
     }
     .width('100%')
     .padding({ left: 16, right: 16, bottom: 6 })
-  }
-
-  /** 外部预览态点击编辑时弹窗提示：先导入仓库再编辑，避免静默改动外部文件。 */
-  private promptImportBeforeEdit(): void {
-    const hasVault: boolean = this.vm.vaults.length > 0;
-    AlertDialog.show({
-      title: $r('app.string.msg_external_readonly_edit_title'),
-      message: hasVault ?
-        $r('app.string.msg_external_readonly_edit_desc') :
-        $r('app.string.msg_external_readonly_create_desc'),
-      primaryButton: {
-        value: $r('app.string.dialog_cancel'),
-        action: (): void => {}
-      },
-      secondaryButton: {
-        value: hasVault ?
-          $r('app.string.external_import_to_vault') :
-          $r('app.string.external_import_create_vault'),
-        fontColor: $r('app.color.design_accent'),
-        action: (): void => {
-          this.onRequestImportExternal(true);
-        }
-      },
-      alignment: DialogAlignment.Bottom
-    });
   }
 
   /** 当前打开笔记的右上角操作菜单（重命名 / 移动 / 历史 / 分屏 / 移入回收站）。 */

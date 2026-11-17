@@ -18,6 +18,50 @@
 | v0.6.0 | **查询引擎 RDB 化、代码高亮、书签、本地快照备份与多端生态**：Dataview/日历 RDB 批量加速、列表项文本与标签入库、原生代码块语法着色、置顶书签、本地定时/一键快照备份恢复、2in1 键盘快捷键与桌面长按快捷方式 |
 | v1.0.0 | **全端质感打磨、同步安全无感化、系统打开方式与 1.0 正式发布**：首页默认素雅 5 色莫兰迪纸感列表与原地目录穿透面包屑、透明毛玻璃三页签底栏、按年月分卷日记（`日记/YYYY-MM/YYYY-MM-DD.md`）、自适应大纲浮层与多行编辑工具栏、WebDAV 干跑安全闸门/断点落盘/`.trash/` 软删与新建仓库自签名开关、系统 `.md`「打开方式」只读预览与一键导入、Ceramic Washi 分层应用图标、`md_*` 资源解耦与全模块单测通过 |
 
+## 近期变更（2026-11-17，更多页新增「关于」页）
+
+- 设置组新增第 5 行「关于」（m_about，`sys.symbol.info_circle`，副标题「GitHub 开源项目」），复用 SettingsSheet 浮层新增 `SettingsSheetMode.ABOUT` 模式。
+- 关于页内容：应用图标（startIcon）+ 名称 + **动态版本号**（`bundleManager.getBundleInfoForSelfSync` 读 versionName，替换原硬编码 v1.2.0）；简介与数据说明；开源分组三行（GitHub 仓库 / 检查更新→Releases / 开源许可→LICENSE，点击经 `openExternalLink` 跳系统浏览器）；MIT 版权行。
+- 清理：删除外观 sheet 底部 `settings_about` 硬编码版本文案及其字符串资源（版本信息统一由关于页动态展示，避免双份维护）。
+
+## 近期变更（2026-11-17，首页/工作台交互重构：更多页瘦身、FAB 语义统一、新建即编辑）
+
+### 1. 更多页签重构（移除低价值模块，收敛层级）
+- 删除「知识库四联统计卡」（moreStatsCard，笔记/收藏/标签/快照数字入口）与「最近笔记足迹卡」（moreHistoryCard）——统计可从文件页段栏直接看到，足迹与文件页时间线重复。
+- 工具组删除「标签管理」入口（m_tags）——标签浏览已在搜索页标签模式（modeChips 全文/标签/属性）全覆盖；`openTagSearch()` 方法随之删除（工作台标签芯片跳转 `openWorkspaceTagSearch` 保留）。
+- 新结构仅两层白卡：**笔记工具**（今日日记/模板库）+ **设置与数据**（仓库管理/WebDAV 同步/外观与阅读/备份与维护）。
+
+### 2. 工作台 FAB：新建笔记 → 进入编辑模式（WorkspaceView/EditorPane）
+- `newNoteFab` 重命名 `editFab`：点击 `vm.startEdit()` 进入当前笔记编辑态；显示条件收紧为 `!editMode && selectedPath 非空 && 非外部只读模式`（无选中笔记/外部预览不再显示）。
+- **顶部编辑按钮移除**（决策：与 FAB 功能重复，精简阅读态顶栏为 收藏星标 + 信息面板 + 三点菜单）；`promptImportBeforeEdit()` 一并删除（外部预览导入走横幅按钮）。
+- 快捷键迁移：Ctrl+E → editFab；Ctrl+N（新建笔记）保留为 notesHeader 隐藏热区（与 Ctrl+P/Ctrl+O 同款 Blank 挂载方式）。
+
+### 3. 首页新建与编辑界面统一（移除简陋快速编辑器半模态）
+- 首页 FAB **短按**：原打开 editorSheet 快速笔记半模态 → 改为 `createNoteAndJump()` 直接新建并跳入工作台**编辑态**（与编辑现有笔记完全同一界面，消除割裂感）；长按气泡菜单（今日日记/新建笔记/模板库）不变。
+- 关键修正：`createNoteAndJump()`/`openDailyAndJump()`/`quick_note` 桌面快捷方式均改为 `openWorkspace({})` **不传 openPath**——`openNote→applyDocument` 会复位 `editMode=false`，而 `vm.createNote()` 内部已 openNote+startEdit，重复传 openPath 会把编辑态打回阅读态（旧 bug：气泡新建后落到阅读模式）。
+- 整体删除：editorSheet Builder、showQuickEditor/draftTitle/draftBody 状态、openQuickEditor/closeQuickEditor/saveQuickEditor、DesignInsertChip 类与 insertChips 数组、VaultViewModel.createQuickNote()（无调用方）；返回键链、外部打开前弹层清理同步更新。
+
+### 4. 验证
+- `devecocli check arkts`（4 文件）仅剩已知 app.string 误报；`devecocli build` exitCode=0。
+- 三台模拟器（5555 Mate 90 Pro kk 库 / 5557 Mate X7 / 5559 MatePad）部署冒烟 PASS；5555 a11y 树确认首页结构完好（736 篇段栏/三页签/FAB）。
+- 触摸注入受已知模拟器环境问题限制，更多页新结构与 FAB 新交互未做点击走查（触摸不可用），待模拟器重启后可人工或授权 `verify_ui` 验证。
+
+## 近期变更（2026-11-17，文件页懒加载重构：修复大仓库卡顿与内存暴涨闪退）
+
+### 1. 根因定位（Mate 90 Pro kk 库 735 篇实测）
+- 旧实现：文件页笔记/收藏两分段在非懒加载 `Scroll` 中用 `ForEach` 一次性构建全部笔记卡片（列表/时间线/宫格三种视图均如此），735 张卡片 → 冷启动 RSS **690MB**（`hidumper --mem` 显示 native heap 446MB，ArkTS 堆仅 45MB）、首帧后主线程阻塞 **3.18s**（`recv vsync timeout` 日志）；真机内存吃紧被系统查杀即"闪退"。小仓库（12 篇）对照 RSS 仅 231MB，差值随笔记数线性增长。
+
+### 2. 重构方案（DesignIndex.ets）
+- **列表/时间线模式**：`Scroll + ForEach` → `List({space,scroller}) + Repeat<RecentNoteItem>().virtualScroll({totalCount}).key().each()`，`.cachedCount(6)`，仅构建可见+缓存卡片，滚动内存恒定；底部用 `.contentEndOffset(胶囊底栏高度)` 预留避让。
+- **书架宫格模式**：`Grid(undefined, {regularSize:[1,1], irregularIndexes, onGetIrregularSizeByIndex}) + Repeat().virtualScroll()`，首项精选大卡用 `irregularIndexes:[0]` + `[1,2]` 跨双列，`templateId/template('featured')` 双模板区分精选大卡与便签卡。
+- 排序/文件夹筛选工具行改为固定 `filesToolbarRow`/`bookmarksToolbarRow`（不再随列表滚动），空态保留 Scroll 壳。
+- 删除废弃的 `noteGridThreeCol`/`gridNoteRows`（行拆分全量构建路径）。
+
+### 3. 验证（三台模拟器实测）
+- Mate 90 Pro（735 篇）：冷启动 RSS **690MB → 283MB（-59%）**，vsync timeout（3.18s 主线程阻塞）消除；a11y 树仅含 ~8 张可见卡片（旧实现 ~735 张全量挂载），卡片标题/文件夹徽章/路径/排序胶囊/底部导航渲染完整。
+- Mate X7、MatePad Pro 13：安装冒烟 PASS，RSS 231~234MB 无回归。
+- 触摸注入受已知模拟器环境问题限制，时间线/宫格深滚动未实际驱动（结构同构、构建通过）；`verify_ui` 未执行（待用户授权后可做 UI 走查）。
+
 ## 近期变更（2026-11-17，标签系统对齐 Obsidian 规范）
 
 ### 1. 标签合法性单源收敛（TagRules）

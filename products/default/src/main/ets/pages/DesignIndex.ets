@@ -178,21 +178,6 @@ class DesignBubbleAction {
   }
 }
 
-// ===== 快速笔记编辑器：语法插入 chips =====
-class DesignInsertChip {
-  keyId: string;
-  label: Resource;
-  symbol: Resource;
-  insertText: string;
-
-  constructor(keyId: string, label: Resource, symbol: Resource, insertText: string) {
-    this.keyId = keyId;
-    this.label = label;
-    this.symbol = symbol;
-    this.insertText = insertText;
-  }
-}
-
 /** 按关键词把文本拆为「头/命中/尾」三段（未命中时命中段为空串）。 */
 function splitHighlight(source: string, keyword: string): string[] {
   const parts: string[] = [source, '', ''];
@@ -286,11 +271,8 @@ struct DesignIndex {
   private graphOffsetXVp: number = 0;         // 图谱平移偏移 x（vp）
   private graphOffsetYVp: number = 0;         // 图谱平移偏移 y（vp）
   @Local showFabMenu: boolean = false;     // FAB 长按气泡菜单
-  @Local showQuickEditor: boolean = false; // 快速笔记半模态
   @Local fabLongPressConsumed: boolean = false; // 长按已消费标志（防误触发 click）
   private fabLongPressTimer: number = -1;      // FAB 防误触标志的延时清除定时器
-  @Local draftTitle: string = '';          // 快速笔记草稿标题
-  @Local draftBody: string = '';           // 快速笔记草稿正文
   @Local showSyncPanel: boolean = false;   // 同步设置浮层（全局，首页/工作台共用）
   @Local settingsSheetMode: number = SettingsSheetMode.NONE; // 外观与维护浮层模式（-1 关闭 / 0 外观与阅读 / 1 备份与维护）
   @Local showVaultManager: boolean = false; // 仓库管理浮层（全局，首页/工作台共用）
@@ -370,12 +352,6 @@ struct DesignIndex {
     new DesignBubbleAction('bubble_daily', $r('app.string.design_fab_daily'), $r('sys.symbol.calendar')),
     new DesignBubbleAction('bubble_note', $r('app.string.design_fab_new_note'), $r('sys.symbol.square_and_pencil')),
     new DesignBubbleAction('bubble_template', $r('app.string.design_fab_template'), $r('sys.symbol.doc_text_on_doc_text'))
-  ];
-
-  readonly insertChips: DesignInsertChip[] = [
-    new DesignInsertChip('i_title', $r('app.string.design_editor_insert_title'), $r('sys.symbol.hash'), '\n## '),
-    new DesignInsertChip('i_wikilink', $r('app.string.design_editor_insert_wikilink'), $r('sys.symbol.square_and_pencil'), '[[]]'),
-    new DesignInsertChip('i_todo', $r('app.string.design_editor_insert_todo'), $r('sys.symbol.checkmark_circle'), '- [ ] ')
   ];
 
   aboutToAppear(): void {
@@ -556,10 +532,6 @@ struct DesignIndex {
     }
     if (this.showFabMenu) {
       this.toggleFabMenu();
-      return true;
-    }
-    if (this.showQuickEditor) {
-      this.closeQuickEditor();
       return true;
     }
     if (this.currentTabIndex === 0 && this.filesSegment === 0 && this.currentFolderPath.length > 0) {
@@ -1227,14 +1199,6 @@ struct DesignIndex {
         })
         this.fabMenuOverlay()
       }
-
-      // 快速笔记半模态（含遮罩）
-      if (this.showQuickEditor) {
-        this.overlayScrim(() => {
-          this.closeQuickEditor();
-        })
-        this.editorSheet()
-      }
     }
     .width('100%')
     .height('100%')
@@ -1326,7 +1290,7 @@ struct DesignIndex {
           this.openWorkspace({});
           return;
         }
-        this.openQuickEditor('');
+        this.createNoteAndJump();
       })
       .gesture(
         LongPressGesture({ repeat: false, duration: 320 })
@@ -1376,42 +1340,10 @@ struct DesignIndex {
         .edgeEffect(EdgeEffect.Spring)
       } else {
         // 内层子页签 Swiper（笔记 ↔ 收藏）：SELF_FIRST 保证先划完顶部子页签，再向右滑无缝切到底栏「搜索」
+        // 分段内容自带 List/Grid 虚拟滚动容器（长列表懒加载，内存恒定，修复大仓库卡顿与闪退）
         Swiper(this.filesSubSwiperController) {
-          Scroll(this.filesScroller) {
-            Column({ space: 10 }) {
-              this.notesSegmentContent()
-            }
-            .width('100%')
-            .padding({
-              left: BAR_SIDE_VP,
-              right: BAR_SIDE_VP,
-              top: this.topInset + 114,
-              bottom: CAPSULE_HEIGHT_VP + BAR_BOTTOM_VP + this.bottomInset + 24
-            })
-          }
-          .width('100%')
-          .height('100%')
-          .align(Alignment.Top)
-          .scrollBar(BarState.Off)
-          .edgeEffect(EdgeEffect.Spring)
-
-          Scroll(this.bookmarksScroller) {
-            Column({ space: 10 }) {
-              this.bookmarkSegmentContent()
-            }
-            .width('100%')
-            .padding({
-              left: BAR_SIDE_VP,
-              right: BAR_SIDE_VP,
-              top: this.topInset + 114,
-              bottom: CAPSULE_HEIGHT_VP + BAR_BOTTOM_VP + this.bottomInset + 24
-            })
-          }
-          .width('100%')
-          .height('100%')
-          .align(Alignment.Top)
-          .scrollBar(BarState.Off)
-          .edgeEffect(EdgeEffect.Spring)
+          this.notesSegmentContent()
+          this.bookmarkSegmentContent()
         }
         .index(this.homeInitialSubTab)
         .width('100%')
@@ -1740,165 +1672,227 @@ struct DesignIndex {
       })
   }
 
-  /** 分段 0：纯笔记视图（去除冗余文件夹/收藏堆叠，仅随抽屉所选文件夹或全部笔记呈现）。 */
+  /** 文件页固定工具行（文件夹筛选胶囊 + 排序胶囊），不随列表滚动。 */
   @Builder
-  notesSegmentContent() {
-    Column({ space: 10 }) {
-      if (this.scopedNotes.length > 0 || this.currentFolderPath.length > 0) {
-        Row({ space: 8 }) {
-          if (this.currentFolderPath.length > 0) {
-            Row({ space: 5 }) {
-              SymbolGlyph($r('sys.symbol.folder'))
-                .fontSize(12)
-                .fontColor([this.tintFgOf(this.currentFolderPath)])
-              Text(this.folderLeafName(this.currentFolderPath))
-                .fontSize(11.5)
-                .fontWeight(FontWeight.Medium)
-                .fontColor(this.tintFgOf(this.currentFolderPath))
-                .maxLines(1)
-                .textOverflow({ overflow: TextOverflow.Ellipsis })
-              SymbolGlyph($r('sys.symbol.xmark'))
-                .fontSize(10)
-                .fontColor([this.tintFgOf(this.currentFolderPath)])
-            }
-            .padding({ left: 9, right: 8, top: 4, bottom: 4 })
-            .borderRadius(12)
-            .backgroundColor(this.tintPillOf(this.currentFolderPath))
-            .constraintSize({ maxWidth: 140 })
-            .onClick(() => {
-              this.selectFolderFilter('');
-            })
-          }
-          Blank()
-          this.filesSortChips()
+  filesToolbarRow() {
+    Row({ space: 8 }) {
+      if (this.currentFolderPath.length > 0) {
+        Row({ space: 5 }) {
+          SymbolGlyph($r('sys.symbol.folder'))
+            .fontSize(12)
+            .fontColor([this.tintFgOf(this.currentFolderPath)])
+          Text(this.folderLeafName(this.currentFolderPath))
+            .fontSize(11.5)
+            .fontWeight(FontWeight.Medium)
+            .fontColor(this.tintFgOf(this.currentFolderPath))
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+          SymbolGlyph($r('sys.symbol.xmark'))
+            .fontSize(10)
+            .fontColor([this.tintFgOf(this.currentFolderPath)])
         }
-        .width('100%')
-        .alignItems(VerticalAlign.Center)
+        .padding({ left: 9, right: 8, top: 4, bottom: 4 })
+        .borderRadius(12)
+        .backgroundColor(this.tintPillOf(this.currentFolderPath))
+        .constraintSize({ maxWidth: 140 })
+        .onClick(() => {
+          this.selectFolderFilter('');
+        })
       }
-
-      if (this.scopedNotes.length === 0) {
-        Text(this.currentFolderPath.length > 0 ?
-          $r('app.string.files_folder_empty') : $r('app.string.design_files_empty'))
-          .fontSize(13)
-          .fontColor($r('app.color.design_text_secondary'))
-          .width('100%')
-          .padding({ top: 36, bottom: 36, left: 20, right: 20 })
-          .textAlign(TextAlign.Center)
-      } else if (this.filesViewMode === 2) {
-        this.bookshelfGridView(this.currentFolderPath.length === 0, false)
-      } else if (this.filesViewMode === 1) {
-        ForEach(this.scopedNotes, (item: RecentNoteItem, index: number) => {
-          this.timelineNoteRow(item, index)
-        }, (item: RecentNoteItem) => `tl_${this.currentFolderPath}_${this.filesSortMode}_${item.path}`)
-      } else {
-        ForEach(this.scopedNotes, (item: RecentNoteItem) => {
-          this.recentNoteCard(item)
-        }, (item: RecentNoteItem) => `note_${this.currentFolderPath}_${this.filesSortMode}_${item.path}`)
-      }
+      Blank()
+      this.filesSortChips()
     }
     .width('100%')
+    .alignItems(VerticalAlign.Center)
+    .padding({
+      left: BAR_SIDE_VP,
+      right: BAR_SIDE_VP,
+      top: this.topInset + 114,
+      bottom: 10
+    })
   }
 
-  /** 分段 1：星标收藏笔记视图。 */
+  /** 分段 0：纯笔记视图。列表/时间线走 List+Repeat 虚拟滚动，书架宫格走 Grid+Repeat，均懒加载。 */
   @Builder
-  bookmarkSegmentContent() {
-    Column({ space: 10 }) {
-      if (this.vm.bookmarks.length === 0) {
-        Text($r('app.string.files_bookmarks_empty'))
-          .fontSize(13)
-          .fontColor($r('app.color.design_text_secondary'))
+  notesSegmentContent() {
+    Column() {
+      if (this.scopedNotes.length === 0) {
+        if (this.currentFolderPath.length > 0) {
+          this.filesToolbarRow()
+        }
+        Scroll(this.filesScroller) {
+          Column() {
+            Text(this.currentFolderPath.length > 0 ?
+              $r('app.string.files_folder_empty') : $r('app.string.design_files_empty'))
+              .fontSize(13)
+              .fontColor($r('app.color.design_text_secondary'))
+              .width('100%')
+              .padding({ top: 36, bottom: 36, left: 20, right: 20 })
+              .textAlign(TextAlign.Center)
+          }
           .width('100%')
-          .padding({ top: 36, bottom: 36, left: 20, right: 20 })
-          .textAlign(TextAlign.Center)
-      } else {
-        Row() {
-          Blank()
-          this.filesSortChips()
+          .padding({
+            left: BAR_SIDE_VP,
+            right: BAR_SIDE_VP,
+            top: this.currentFolderPath.length > 0 ? 0 : this.topInset + 114,
+            bottom: CAPSULE_HEIGHT_VP + BAR_BOTTOM_VP + this.bottomInset + 24
+          })
         }
         .width('100%')
-
-        if (this.filesViewMode === 2) {
-          this.bookshelfGridView(false, true)
-        } else if (this.filesViewMode === 1) {
-          ForEach(this.bookmarkNotes, (item: RecentNoteItem, index: number) => {
-            this.timelineNoteRow(item, index)
-          }, (item: RecentNoteItem) => `bmtl_${this.filesSortMode}_${item.path}`)
-        } else {
-          ForEach(this.bookmarkNotes, (item: RecentNoteItem) => {
-            this.bookmarkNoteCard(item.path)
-          }, (item: RecentNoteItem) => `bm_${this.filesSortMode}_${item.path}`)
+        .layoutWeight(1)
+        .align(Alignment.Top)
+        .scrollBar(BarState.Off)
+        .edgeEffect(EdgeEffect.Spring)
+      } else if (this.filesViewMode === 2) {
+        this.filesToolbarRow()
+        this.bookshelfGridView(this.currentFolderPath.length === 0, false)
+      } else {
+        this.filesToolbarRow()
+        List({ space: 10, scroller: this.filesScroller }) {
+          Repeat<RecentNoteItem>(this.scopedNotes)
+            .virtualScroll({ totalCount: this.scopedNotes.length })
+            .key((item: RecentNoteItem, index: number) => this.filesViewMode === 1 ?
+              `tl_${this.currentFolderPath}_${this.filesSortMode}_${item.path}` :
+              `note_${this.currentFolderPath}_${this.filesSortMode}_${item.path}`)
+            .each((ri: RepeatItem<RecentNoteItem>) => {
+              ListItem() {
+                if (this.filesViewMode === 1) {
+                  this.timelineNoteRow(ri.item, ri.index)
+                } else {
+                  this.recentNoteCard(ri.item)
+                }
+              }
+            })
         }
+        .cachedCount(6)
+        .width('100%')
+        .layoutWeight(1)
+        .scrollBar(BarState.Off)
+        .edgeEffect(EdgeEffect.Spring)
+        .contentEndOffset(CAPSULE_HEIGHT_VP + BAR_BOTTOM_VP + this.bottomInset + 24)
+        .padding({ left: BAR_SIDE_VP, right: BAR_SIDE_VP })
       }
     }
     .width('100%')
+    .height('100%')
+  }
+
+  /** 收藏分段固定工具行（排序胶囊右对齐）。 */
+  @Builder
+  bookmarksToolbarRow() {
+    Row() {
+      Blank()
+      this.filesSortChips()
+    }
+    .width('100%')
+    .alignItems(VerticalAlign.Center)
+    .padding({
+      left: BAR_SIDE_VP,
+      right: BAR_SIDE_VP,
+      top: this.topInset + 114,
+      bottom: 10
+    })
+  }
+
+  /** 分段 1：星标收藏笔记视图（与笔记分段同构，懒加载）。 */
+  @Builder
+  bookmarkSegmentContent() {
+    Column() {
+      if (this.vm.bookmarks.length === 0) {
+        Scroll(this.bookmarksScroller) {
+          Column() {
+            Text($r('app.string.files_bookmarks_empty'))
+              .fontSize(13)
+              .fontColor($r('app.color.design_text_secondary'))
+              .width('100%')
+              .padding({ top: 36, bottom: 36, left: 20, right: 20 })
+              .textAlign(TextAlign.Center)
+          }
+          .width('100%')
+          .padding({
+            left: BAR_SIDE_VP,
+            right: BAR_SIDE_VP,
+            top: this.topInset + 114,
+            bottom: CAPSULE_HEIGHT_VP + BAR_BOTTOM_VP + this.bottomInset + 24
+          })
+        }
+        .width('100%')
+        .layoutWeight(1)
+        .align(Alignment.Top)
+        .scrollBar(BarState.Off)
+        .edgeEffect(EdgeEffect.Spring)
+      } else if (this.filesViewMode === 2) {
+        this.bookmarksToolbarRow()
+        this.bookshelfGridView(false, true)
+      } else {
+        this.bookmarksToolbarRow()
+        List({ space: 10, scroller: this.bookmarksScroller }) {
+          Repeat<RecentNoteItem>(this.bookmarkNotes)
+            .virtualScroll({ totalCount: this.bookmarkNotes.length })
+            .key((item: RecentNoteItem, index: number) => this.filesViewMode === 1 ?
+              `bmtl_${this.filesSortMode}_${item.path}` : `bm_${this.filesSortMode}_${item.path}`)
+            .each((ri: RepeatItem<RecentNoteItem>) => {
+              ListItem() {
+                if (this.filesViewMode === 1) {
+                  this.timelineNoteRow(ri.item, ri.index)
+                } else {
+                  this.bookmarkNoteCard(ri.item.path)
+                }
+              }
+            })
+        }
+        .cachedCount(6)
+        .width('100%')
+        .layoutWeight(1)
+        .scrollBar(BarState.Off)
+        .edgeEffect(EdgeEffect.Spring)
+        .contentEndOffset(CAPSULE_HEIGHT_VP + BAR_BOTTOM_VP + this.bottomInset + 24)
+        .padding({ left: BAR_SIDE_VP, right: BAR_SIDE_VP })
+      }
+    }
+    .width('100%')
+    .height('100%')
   }
 
   /**
-   * 笔记卡片宫格视图：
-   * - showFeatured=true 时，首行渲染「2:1 精选最近编辑区」（左侧深墨黑最近笔记大卡 + 右侧莫兰迪便签卡）；
+   * 笔记卡片宫格视图（Grid+Repeat 虚拟滚动懒加载，内存恒定）：
+   * - showFeatured=true 时，首项为「2:1 精选最近编辑区」（columnSpan=2 的深墨黑最近笔记大卡）；
    * - 其余笔记以三列莫兰迪便签卡片宫格呈现（右上角均可直接点按星标收藏/取消收藏）。
    */
   @Builder
   bookshelfGridView(showFeatured: boolean, onlyBookmarks: boolean) {
-    Column({ space: 16 }) {
-      if (this.gridNotesForSource(onlyBookmarks ? 1 : 0).length === 0) {
-        Text($r('app.string.design_files_empty'))
-          .fontSize(13)
-          .fontColor($r('app.color.design_text_secondary'))
-          .width('100%')
-          .padding({ top: 24, bottom: 24 })
-          .textAlign(TextAlign.Center)
-      } else {
-        if (showFeatured && this.gridNotesForSource(onlyBookmarks ? 1 : 0).length >= 1) {
-          Row({ space: 12 }) {
-            Column() {
-              this.featuredSpreadCard(this.gridNotesForSource(onlyBookmarks ? 1 : 0)[0])
-            }
-            .layoutWeight(2)
-
-            if (this.gridNotesForSource(onlyBookmarks ? 1 : 0).length >= 2) {
-              Column() {
-                this.bookCoverCard(this.gridNotesForSource(onlyBookmarks ? 1 : 0)[1], 124)
-              }
-              .layoutWeight(1)
-            }
+    Grid(undefined, {
+      regularSize: [1, 1],
+      irregularIndexes: showFeatured ? [0] : [],
+      onGetIrregularSizeByIndex: (index: number): [number, number] => [1, 2]
+    }) {
+      Repeat<RecentNoteItem>(this.gridNotesForSource(onlyBookmarks ? 1 : 0))
+        .virtualScroll({ totalCount: this.gridNotesForSource(onlyBookmarks ? 1 : 0).length })
+        .key((item: RecentNoteItem, index: number) =>
+          `grid_${onlyBookmarks ? 1 : 0}_${this.currentFolderPath}_${this.filesSortMode}_${item.path}`)
+        .templateId((item: RecentNoteItem, index: number): string =>
+          (showFeatured && index === 0) ? 'featured' : 'cover')
+        .each((ri: RepeatItem<RecentNoteItem>) => {
+          GridItem() {
+            this.bookCoverCard(ri.item, 130)
           }
-          .width('100%')
-          .alignItems(VerticalAlign.Top)
-        }
-
-        this.noteGridThreeCol(onlyBookmarks ? 1 : 0,
-          showFeatured ? Math.min(2, this.gridNotesForSource(onlyBookmarks ? 1 : 0).length) : 0)
-      }
+        })
+        .template('featured', (ri: RepeatItem<RecentNoteItem>) => {
+          GridItem() {
+            this.featuredSpreadCard(ri.item)
+          }
+        }, { cachedCount: 1 })
     }
+    .columnsTemplate('1fr 1fr 1fr')
+    .columnsGap(12)
+    .rowsGap(16)
+    .cachedCount(3)
     .width('100%')
-  }
-
-  /** 共用三列莫兰迪便签卡片宫格（source: 0 全部 / 1 收藏）。 */
-  @Builder
-  noteGridThreeCol(source: number, startFrom: number) {
-    Column({ space: 16 }) {
-      ForEach(this.gridNoteRows(source, startFrom), (row: RecentNoteItem[]) => {
-        Row({ space: 12 }) {
-          ForEach([0, 1, 2], (colOffset: number) => {
-            if (colOffset < row.length) {
-              Column() {
-                this.bookCoverCard(row[colOffset], 130)
-              }
-              .layoutWeight(1)
-            } else {
-              Blank()
-                .layoutWeight(1)
-            }
-          }, (colOffset: number) =>
-            `col_${source}_${colOffset}_${colOffset < row.length ? row[colOffset].path : 'empty'}`)
-        }
-        .width('100%')
-        .alignItems(VerticalAlign.Top)
-      }, (row: RecentNoteItem[]) =>
-        `row_${source}_${this.currentFolderPath}_${this.filesSortMode}_${row.map((n: RecentNoteItem) => n.path).join('|')}`)
-    }
-    .width('100%')
+    .layoutWeight(1)
+    .scrollBar(BarState.Off)
+    .edgeEffect(EdgeEffect.Spring)
+    .contentEndOffset(CAPSULE_HEIGHT_VP + BAR_BOTTOM_VP + this.bottomInset + 24)
+    .padding({ left: BAR_SIDE_VP, right: BAR_SIDE_VP })
   }
 
   /** 首行左侧：最近编辑笔记精选大卡（支持一键星标收藏与直接点按续写）。 */
@@ -2470,16 +2464,6 @@ struct DesignIndex {
   private folderLeafName(folderPath: string): string {
     const slash: number = folderPath.lastIndexOf('/');
     return slash >= 0 ? folderPath.substring(slash + 1) : folderPath;
-  }
-
-  /** 三列宫格每行起始下标。 */
-  private gridNoteRows(source: number, startFrom: number): RecentNoteItem[][] {
-    const items: RecentNoteItem[] = this.gridNotesForSource(source);
-    const rows: RecentNoteItem[][] = [];
-    for (let i: number = startFrom; i < items.length; i += 3) {
-      rows.push(items.slice(i, i + 3));
-    }
-    return rows;
   }
 
   /** 按路径哈希稳定选取 5 款素雅低饱和纸色索引。 */
@@ -3323,18 +3307,10 @@ struct DesignIndex {
       // 底层滚动内容区：向上滚动时穿过顶栏毛玻璃按钮下方
       Scroll() {
         Column({ space: 14 }) {
-          // 1. 知识库数据概览四联卡（笔记 / 收藏 / 标签 / 快照）
-          this.moreStatsCard()
-
-          // 2. 最近笔记足迹大卡
-          if (this.shelfNotes.length > 0) {
-            this.moreHistoryCard()
-          }
-
-          // 3. 笔记快捷工具分组白卡（今日日记 / 模板库 / 标签管理）
+          // 1. 笔记快捷工具分组白卡（今日日记 / 模板库）
           this.moreToolsGroupCard()
 
-          // 4. 设置与数据管理分组白卡（仓库管理 / WebDAV 同步 / 外观与阅读 / 备份与维护）
+          // 2. 设置与数据管理分组白卡（仓库管理 / WebDAV 同步 / 外观与阅读 / 备份与维护）
           this.moreSettingsGroupCard()
         }
         .width('100%')
@@ -3370,166 +3346,7 @@ struct DesignIndex {
     .height('100%')
   }
 
-  /** 更多页卡片 1：知识库四联统计概览（笔记 / 收藏 / 标签 / 快照）。 */
-  @Builder
-  moreStatsCard() {
-    Row() {
-      Column({ space: 4 }) {
-        SymbolGlyph($r('sys.symbol.doc_plaintext'))
-          .fontSize(20)
-          .fontColor([$r('app.color.design_accent')])
-        Text($r('app.string.more_stat_notes'))
-          .fontSize(13)
-          .fontWeight(FontWeight.Medium)
-          .fontColor($r('app.color.design_text_primary'))
-          .margin({ top: 2 })
-        Text(`${this.vm.vaultFiles.length}`)
-          .fontSize(12)
-          .fontColor($r('app.color.design_text_secondary'))
-      }
-      .layoutWeight(1)
-      .alignItems(HorizontalAlign.Center)
-      .onClick(() => {
-        this.selectFilesSegment(0);
-        this.changeTab(0);
-      })
-
-      Column({ space: 4 }) {
-        SymbolGlyph($r('sys.symbol.star_fill'))
-          .fontSize(20)
-          .fontColor([$r('app.color.design_accent')])
-        Text($r('app.string.more_stat_bookmarks'))
-          .fontSize(13)
-          .fontWeight(FontWeight.Medium)
-          .fontColor($r('app.color.design_text_primary'))
-          .margin({ top: 2 })
-        Text(`${this.vm.bookmarks.length}`)
-          .fontSize(12)
-          .fontColor($r('app.color.design_text_secondary'))
-      }
-      .layoutWeight(1)
-      .alignItems(HorizontalAlign.Center)
-      .onClick(() => {
-        this.selectFilesSegment(1);
-        this.changeTab(0);
-      })
-
-      Column({ space: 4 }) {
-        SymbolGlyph($r('sys.symbol.hash'))
-          .fontSize(20)
-          .fontColor([$r('app.color.design_accent')])
-        Text($r('app.string.more_stat_tags'))
-          .fontSize(13)
-          .fontWeight(FontWeight.Medium)
-          .fontColor($r('app.color.design_text_primary'))
-          .margin({ top: 2 })
-        Text(`${this.vm.allTagNames.length}`)
-          .fontSize(12)
-          .fontColor($r('app.color.design_text_secondary'))
-      }
-      .layoutWeight(1)
-      .alignItems(HorizontalAlign.Center)
-      .onClick(() => {
-        this.openTagSearch();
-      })
-
-      Column({ space: 4 }) {
-        SymbolGlyph($r('sys.symbol.doc_zipper'))
-          .fontSize(20)
-          .fontColor([$r('app.color.design_accent')])
-        Text($r('app.string.more_stat_backups'))
-          .fontSize(13)
-          .fontWeight(FontWeight.Medium)
-          .fontColor($r('app.color.design_text_primary'))
-          .margin({ top: 2 })
-        Text(`${this.vm.backups.length}`)
-          .fontSize(12)
-          .fontColor($r('app.color.design_text_secondary'))
-      }
-      .layoutWeight(1)
-      .alignItems(HorizontalAlign.Center)
-      .onClick(() => {
-        this.openSettingsSheet(SettingsSheetMode.MAINTENANCE);
-      })
-    }
-    .width('100%')
-    .padding({ top: 16, bottom: 16, left: 8, right: 8 })
-    .borderRadius(20)
-    .backgroundColor($r('app.color.design_surface_solid'))
-    .border({ width: 1, color: $r('app.color.design_stroke') })
-  }
-
-  /** 更多页卡片 2：最近笔记足迹卡。 */
-  @Builder
-  moreHistoryCard() {
-    Column({ space: 12 }) {
-      Row() {
-        Text($r('app.string.more_section_history'))
-          .fontSize(16)
-          .fontWeight(FontWeight.Bold)
-          .fontColor($r('app.color.design_text_primary'))
-          .layoutWeight(1)
-        SymbolGlyph($r('sys.symbol.chevron_right'))
-          .fontSize(14)
-          .fontColor([$r('app.color.design_text_secondary')])
-      }
-      .width('100%')
-      .alignItems(VerticalAlign.Center)
-      .onClick(() => {
-        this.filesViewMode = 1;
-        this.selectFolderFilter('');
-      })
-
-      ForEach(this.shelfNotes.slice(0, 3), (item: RecentNoteItem) => {
-        Row({ space: 12 }) {
-          this.miniBookCover(item.path, item.title)
-
-          Column({ space: 4 }) {
-            Text(item.title)
-              .fontSize(15)
-              .fontWeight(FontWeight.Medium)
-              .fontColor($r('app.color.design_text_primary'))
-              .maxLines(1)
-              .textOverflow({ overflow: TextOverflow.Ellipsis })
-            Row({ space: 6 }) {
-              Text(this.folderBadgeOf(item.path))
-                .fontSize(10)
-                .fontColor($r('app.color.design_accent'))
-                .padding({ left: 6, right: 6, top: 1, bottom: 1 })
-                .borderRadius(6)
-                .backgroundColor($r('app.color.design_accent_weak'))
-              Text(item.path)
-                .fontSize(12)
-                .fontColor($r('app.color.design_text_secondary'))
-                .maxLines(1)
-                .textOverflow({ overflow: TextOverflow.Ellipsis })
-                .layoutWeight(1)
-            }
-            .width('100%')
-          }
-          .alignItems(HorizontalAlign.Start)
-          .layoutWeight(1)
-
-          this.itemMoreButton(item.path, false, $r('app.color.design_text_secondary'), false)
-        }
-        .width('100%')
-        .padding({ top: 4, bottom: 4 })
-        .gestureModifier(this.longPressFor(item.path, false))
-        .onClick(() => {
-          this.handleCardTap(() => {
-            this.openWorkspace({ 'openPath': item.path });
-          });
-        })
-      }, (item: RecentNoteItem) => `hist_${item.path}`)
-    }
-    .width('100%')
-    .padding(16)
-    .borderRadius(20)
-    .backgroundColor($r('app.color.design_surface_solid'))
-    .border({ width: 1, color: $r('app.color.design_stroke') })
-  }
-
-  /** 更多页卡片 3：笔记工具分组白卡（今日日记 / 模板库 / 标签管理）。 */
+  /** 更多页卡片 1：笔记工具分组白卡（今日日记 / 模板库）。 */
   @Builder
   moreToolsGroupCard() {
     Column() {
@@ -3543,7 +3360,7 @@ struct DesignIndex {
           this.moreListRow(entry)
         }
         .width('100%')
-      }, (entry: DesignMoreEntry) => `${entry.keyId}_${this.vm.allTagNames.length}`)
+      }, (entry: DesignMoreEntry) => entry.keyId)
     }
     .width('100%')
     .borderRadius(20)
@@ -3552,16 +3369,14 @@ struct DesignIndex {
     .clip(true)
   }
 
-  /** 笔记快捷工具入口（仅含笔记创作与标签组织工具）。 */
+  /** 笔记快捷工具入口（今日日记 / 模板库）。 */
   @Computed
   get moreTools(): DesignMoreEntry[] {
     return [
       new DesignMoreEntry('m_daily', $r('app.string.design_more_daily'),
         $r('app.string.design_more_daily_sub'), $r('sys.symbol.calendar')),
       new DesignMoreEntry('m_templates', $r('app.string.design_more_templates'),
-        $r('app.string.design_more_templates_sub'), $r('sys.symbol.doc_text_on_doc_text')),
-      new DesignMoreEntry('m_tags', $r('app.string.design_more_tags'),
-        $r('app.string.design_more_tags_sub', this.vm.allTagNames.length), $r('sys.symbol.hash'))
+        $r('app.string.design_more_templates_sub'), $r('sys.symbol.doc_text_on_doc_text'))
     ];
   }
 
@@ -3600,7 +3415,9 @@ struct DesignIndex {
       new DesignMoreEntry('m_appearance', $r('app.string.design_more_appearance'),
         this.appearanceSummaryLabel(), $r('sys.symbol.paintpalette')),
       new DesignMoreEntry('m_backup', $r('app.string.design_more_backup'),
-        $r('app.string.design_more_backup_sub', this.vm.backups.length), $r('sys.symbol.doc_zipper'))
+        $r('app.string.design_more_backup_sub', this.vm.backups.length), $r('sys.symbol.doc_zipper')),
+      new DesignMoreEntry('m_about', $r('app.string.design_more_about'),
+        $r('app.string.design_more_about_sub'), $r('sys.symbol.info_circle'))
     ];
   }
 
@@ -3716,117 +3533,6 @@ struct DesignIndex {
       bottom: BAR_BOTTOM_VP + this.bottomInset + FAB_SIZE_VP + BAR_GAP_VP + 8
     })
     .hitTestBehavior(HitTestMode.Transparent)
-  }
-
-  // ==================== 快速笔记半模态 ====================
-
-  @Builder
-  editorSheet() {
-    Column() {
-      // 顶部抓手
-      Column() {
-      }
-      .width(36)
-      .height(4)
-      .borderRadius(2)
-      .backgroundColor($r('app.color.design_divider'))
-      .margin({ top: 10, bottom: 14 })
-
-      // 标题行：取消 / 标题 / 保存
-      Row() {
-        Text($r('app.string.design_editor_title'))
-          .fontSize(18)
-          .fontWeight(FontWeight.Bold)
-          .fontColor($r('app.color.design_text_primary'))
-          .layoutWeight(1)
-        Text($r('app.string.design_editor_cancel'))
-          .fontSize(14)
-          .fontColor($r('app.color.design_text_secondary'))
-          .padding({ left: 12, right: 12, top: 6, bottom: 6 })
-          .onClick(() => {
-            this.closeQuickEditor();
-          })
-        Text($r('app.string.design_editor_save'))
-          .fontSize(14)
-          .fontWeight(FontWeight.Medium)
-          .fontColor($r('app.color.design_accent'))
-          .padding({ left: 16, right: 16, top: 7, bottom: 7 })
-          .borderRadius(18)
-          .backgroundColor($r('app.color.design_accent_weak'))
-          .onClick(() => {
-            this.saveQuickEditor();
-          })
-      }
-      .width('100%')
-      .alignItems(VerticalAlign.Center)
-      .padding({ left: 2, right: 0 })
-
-      // 标题输入
-      TextInput({ text: this.draftTitle, placeholder: $r('app.string.design_editor_title_hint') })
-        .width('100%')
-        .height(48)
-        .margin({ top: 10 })
-        .padding({ left: 14, right: 14 })
-        .borderRadius(14)
-        .backgroundColor($r('app.color.design_elevated'))
-        .placeholderColor($r('app.color.design_text_secondary'))
-        .placeholderFont({ size: 15 })
-        .fontSize(15)
-        .fontColor($r('app.color.design_text_primary'))
-        .caretColor($r('app.color.design_accent'))
-        .onChange((value: string) => {
-          this.draftTitle = value;
-        })
-
-      // 正文输入
-      TextArea({ text: this.draftBody, placeholder: $r('app.string.design_editor_body_hint') })
-        .width('100%')
-        .layoutWeight(1)
-        .margin({ top: 10 })
-        .padding(14)
-        .borderRadius(14)
-        .backgroundColor($r('app.color.design_elevated'))
-        .placeholderColor($r('app.color.design_text_secondary'))
-        .placeholderFont({ size: 14 })
-        .fontSize(14)
-        .fontColor($r('app.color.design_text_primary'))
-        .caretColor($r('app.color.design_accent'))
-        .constraintSize({ minHeight: 120 })
-        .onChange((value: string) => {
-          this.draftBody = value;
-        })
-
-      // Markdown 语法插入条（自动换行平铺，避免窄屏或大字号下横向溢出）
-      Flex({ wrap: FlexWrap.Wrap }) {
-        ForEach(this.insertChips, (chip: DesignInsertChip) => {
-          Row({ space: 6 }) {
-            SymbolGlyph(chip.symbol)
-              .fontSize(15)
-              .fontColor([$r('app.color.design_accent')])
-            Text(chip.label)
-              .fontSize(13)
-              .fontColor($r('app.color.design_text_secondary'))
-          }
-          .padding({ left: 14, right: 14, top: 8, bottom: 8 })
-          .borderRadius(18)
-          .backgroundColor($r('app.color.design_elevated'))
-          .border({ width: 1, color: $r('app.color.design_stroke') })
-          .margin({ right: 8, bottom: 8 })
-          .onClick(() => {
-            this.draftBody = this.draftBody + chip.insertText;
-          })
-        }, (chip: DesignInsertChip) => chip.keyId)
-      }
-      .width('100%')
-      .margin({ top: 12, bottom: 4 })
-    }
-    .width('100%')
-    .height('76%')
-    .padding({ left: BAR_SIDE_VP, right: BAR_SIDE_VP, bottom: Math.max(this.bottomInset, 14) })
-    .backgroundColor($r('app.color.design_surface_solid'))
-    .borderRadius({ topLeft: 28, topRight: 28 })
-    .transition(TransitionEffect.translate({ y: '100%' })
-      .animation({ duration: 360, curve: curves.springMotion(0.42, 0.86) }))
   }
 
   // ==================== 遮罩 ====================
@@ -4032,7 +3738,7 @@ struct DesignIndex {
       if (this.viewMode === DesignViewMode.WORKSPACE) {
         this.exitWorkspace();
       }
-      this.openQuickEditor('');
+      this.createNoteAndJump();
       return;
     }
     if (action === 'daily_note') {
@@ -4088,7 +3794,6 @@ struct DesignIndex {
   /** 打开外部文件前先收起可能遮挡正文的首页弹层/弹窗。 */
   private dismissAllModalsForExternal(): void {
     this.showFabMenu = false;
-    this.showQuickEditor = false;
     this.showSyncPanel = false;
     this.showVaultManager = false;
     this.settingsSheetMode = SettingsSheetMode.NONE;
@@ -4193,44 +3898,6 @@ struct DesignIndex {
     });
   }
 
-  /** 打开快速笔记半模态（可预填标题）。 */
-  private openQuickEditor(prefillTitle: string): void {
-    this.getUIContext().animateTo({ duration: 300, curve: Curve.Friction }, () => {
-      this.draftTitle = prefillTitle;
-      this.draftBody = '';
-      this.showFabMenu = false;
-      this.showQuickEditor = true;
-    });
-  }
-
-  /** 关闭快速笔记半模态。 */
-  private closeQuickEditor(): void {
-    this.getUIContext().animateTo({ duration: 260, curve: Curve.Friction }, () => {
-      this.showQuickEditor = false;
-    });
-  }
-
-  /** 保存快速笔记：新建笔记并跳转工作台。 */
-  private saveQuickEditor(): void {
-    const title: string = this.draftTitle;
-    const body: string = this.draftBody;
-    this.closeQuickEditor();
-    if (title.trim().length === 0 && body.trim().length === 0) {
-      return;
-    }
-    this.vm.createQuickNote(title, body).then((path: string): void => {
-      if (path.length === 0) {
-        promptAction.showToast({ message: $r('app.string.msg_create_failed') });
-        return;
-      }
-      promptAction.showToast({ message: $r('app.string.design_editor_saved') });
-      this.openWorkspace({ 'openPath': path });
-    }).catch((error: BusinessError): void => {
-      LOG.error(`create quick note failed: ${error.message}`);
-      promptAction.showToast({ message: $r('app.string.msg_create_failed') });
-    });
-  }
-
   /** 气泡菜单动作分发。 */
   private onBubbleAction(keyId: string): void {
     this.toggleFabMenu();
@@ -4252,7 +3919,7 @@ struct DesignIndex {
     }
   }
 
-  /** 打开今天的日记并跳转工作台。 */
+  /** 打开今天的日记并跳转工作台（新建日记自动进入编辑态）。 */
   private openDailyAndJump(): void {
     if (this.vm.vaults.length === 0) {
       this.openWorkspace({});
@@ -4260,19 +3927,21 @@ struct DesignIndex {
     }
     this.vm.openDailyNote().then((ok: boolean): void => {
       if (ok) {
-        this.openWorkspace({ 'openPath': this.vm.selectedPath });
+        // 不传 openPath：openNote 会经 applyDocument 复位编辑态，
+        // createNote/openDailyNote 内部已完成打开并进入编辑，直接切换视图即可。
+        this.openWorkspace({});
       }
     });
   }
 
-  /** 新建空白笔记并跳转工作台。 */
+  /** 新建空白笔记并跳转工作台编辑态。 */
   private createNoteAndJump(): void {
     if (this.vm.vaults.length === 0) {
       this.openWorkspace({});
       return;
     }
     this.vm.createNote().then((): void => {
-      this.openWorkspace({ 'openPath': this.vm.selectedPath });
+      this.openWorkspace({});
     });
   }
 
@@ -4291,10 +3960,6 @@ struct DesignIndex {
     }
     if (keyId === 'm_templates') {
       this.openWorkspace({ 'action': 'templates' });
-      return;
-    }
-    if (keyId === 'm_tags') {
-      this.openTagSearch();
       return;
     }
     if (keyId === 'm_vaults') {
@@ -4317,16 +3982,9 @@ struct DesignIndex {
       this.openSettingsSheet(SettingsSheetMode.MAINTENANCE);
       return;
     }
-  }
-
-  /** 切到搜索页并以标签模式展示（标签管理入口）。 */
-  private openTagSearch(): void {
-    this.changeTab(1);
-    if (this.vm.currentVault.id > 0) {
-      this.searchVm.setMode(this.vm.currentVault.id, 1).then((): void => {
-        this.searchKeyword = this.searchVm.keyword;
-        this.rebuildSearchRows();
-      });
+    if (keyId === 'm_about') {
+      this.openSettingsSheet(SettingsSheetMode.ABOUT);
+      return;
     }
   }
 

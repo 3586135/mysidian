@@ -97,8 +97,32 @@
       "value": "重建索引"
     },
     {
-      "name": "settings_about",
-      "value": "MySidian v1.2.0 · 鸿蒙原生 Markdown 笔记应用\n仓库保存在应用沙箱，导出 zip 后可在桌面 Obsidian 中打开。"
+      "name": "about_desc",
+      "value": "鸿蒙原生 Obsidian 风格 Markdown 笔记应用：本地优先存储、WebDAV 同步、双链、标签与 Dataview 查询。"
+    },
+    {
+      "name": "about_data_note",
+      "value": "仓库数据保存在应用沙箱，可随时导出 zip，在桌面端 Obsidian 中无缝继续使用。"
+    },
+    {
+      "name": "about_open_source",
+      "value": "开源"
+    },
+    {
+      "name": "about_github",
+      "value": "GitHub 仓库"
+    },
+    {
+      "name": "about_check_update",
+      "value": "检查更新"
+    },
+    {
+      "name": "about_license",
+      "value": "开源许可（MIT）"
+    },
+    {
+      "name": "about_copyright",
+      "value": "© 2026 3586135 · MIT License"
     },
     {
       "name": "sync_title",
@@ -1235,6 +1259,14 @@
     {
       "name": "design_more_backup_sub",
       "value": "本地快照 %d 份 · 重建索引"
+    },
+    {
+      "name": "design_more_about",
+      "value": "关于"
+    },
+    {
+      "name": "design_more_about_sub",
+      "value": "GitHub 开源项目"
     },
     {
       "name": "design_tag_arch",

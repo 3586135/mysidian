@@ -1,11 +1,12 @@
-import { ConfigurationConstant } from '@kit.AbilityKit';
+import { bundleManager, ConfigurationConstant } from '@kit.AbilityKit';
 import { VaultBackupInfo } from '@ohos/vault';
 import { VaultViewModel } from '../../viewmodel/VaultViewModel';
 
 export enum SettingsSheetMode {
   NONE = -1,
   APPEARANCE = 0,
-  MAINTENANCE = 1
+  MAINTENANCE = 1,
+  ABOUT = 2
 }
 
 /**
@@ -15,9 +16,24 @@ export enum SettingsSheetMode {
  */
 @ComponentV2
 export struct SettingsSheet {
+  private static readonly GITHUB_URL: string = 'https://github.com/3586135/mysidian';
+  private static readonly RELEASES_URL: string = 'https://github.com/3586135/mysidian/releases';
+  private static readonly LICENSE_URL: string = 'https://github.com/3586135/mysidian/blob/main/LICENSE';
+
   @Param vm: VaultViewModel = new VaultViewModel();
   @Param mode: number = SettingsSheetMode.APPEARANCE;
   @Event onClose: () => void = (): void => {};
+  @Local versionName: string = '';
+
+  aboutToAppear(): void {
+    try {
+      const info: bundleManager.BundleInfo = bundleManager.getBundleInfoForSelfSync(
+        bundleManager.BundleFlag.GET_BUNDLE_INFO_DEFAULT);
+      this.versionName = info.versionName;
+    } catch (error) {
+      this.versionName = '';
+    }
+  }
 
   build() {
     Stack() {
@@ -35,7 +51,8 @@ export struct SettingsSheet {
       Column() {
         Row() {
           Text(this.mode === SettingsSheetMode.MAINTENANCE ?
-            $r('app.string.design_more_backup') : $r('app.string.design_more_appearance'))
+            $r('app.string.design_more_backup') : (this.mode === SettingsSheetMode.ABOUT ?
+              $r('app.string.design_more_about') : $r('app.string.design_more_appearance')))
             .fontSize(20)
             .fontWeight(FontWeight.Bold)
             .fontColor($r('app.color.design_text_primary'))
@@ -112,22 +129,17 @@ export struct SettingsSheet {
                       ConfigurationConstant.ColorMode.COLOR_MODE_DARK)
                   }
                 }
-                .width('100%')
-                .alignItems(VerticalAlign.Center)
-              }
               .width('100%')
-              .padding(16)
-              .borderRadius(20)
-              .backgroundColor($r('app.color.design_surface_solid'))
-              .border({ width: 1, color: $r('app.color.design_stroke') })
-
-              Text($r('app.string.settings_about'))
-                .fontSize(12)
-                .fontColor($r('app.color.design_text_secondary'))
-                .lineHeight(19)
-                .width('100%')
-                .margin({ top: 16 })
-            } else {
+              .alignItems(VerticalAlign.Center)
+            }
+            .width('100%')
+            .padding(16)
+            .borderRadius(20)
+            .backgroundColor($r('app.color.design_surface_solid'))
+            .border({ width: 1, color: $r('app.color.design_stroke') })
+          } else if (this.mode === SettingsSheetMode.ABOUT) {
+            this.aboutContent()
+          } else {
               this.sectionLabel($r('app.string.settings_maintenance'))
 
               Column() {
@@ -202,6 +214,79 @@ export struct SettingsSheet {
     }
     .width('100%')
     .height('100%')
+  }
+
+  /** 关于内容：应用标识 + 简介 + 开源入口 + 版权。 */
+  @Builder
+  aboutContent() {
+    Column() {
+      Row({ space: 14 }) {
+        Image($r('app.media.startIcon'))
+          .width(56)
+          .height(56)
+          .borderRadius(14)
+          .border({ width: 1, color: $r('app.color.design_stroke') })
+        Column({ space: 2 }) {
+          Text('MySidian')
+            .fontSize(20)
+            .fontWeight(FontWeight.Bold)
+            .fontColor($r('app.color.design_text_primary'))
+          Text(this.versionName.length > 0 ? `v${this.versionName}` : '')
+            .fontSize(12)
+            .fontColor($r('app.color.design_text_secondary'))
+        }
+        .alignItems(HorizontalAlign.Start)
+      }
+      .width('100%')
+      .padding({ top: 8, bottom: 4 })
+
+      Column({ space: 8 }) {
+        Text($r('app.string.about_desc'))
+          .fontSize(13)
+          .fontColor($r('app.color.design_text_primary'))
+          .lineHeight(20)
+        Text($r('app.string.about_data_note'))
+          .fontSize(12)
+          .fontColor($r('app.color.design_text_secondary'))
+          .lineHeight(18)
+      }
+      .alignItems(HorizontalAlign.Start)
+      .width('100%')
+      .padding(16)
+      .borderRadius(20)
+      .backgroundColor($r('app.color.design_surface_solid'))
+      .border({ width: 1, color: $r('app.color.design_stroke') })
+      .margin({ top: 14 })
+
+      this.sectionLabel($r('app.string.about_open_source'))
+
+      Column() {
+        this.groupedRow($r('sys.symbol.doc_text'), $r('app.string.about_github'), '', (): void => {
+          this.vm.openExternalLink(SettingsSheet.GITHUB_URL);
+        })
+        this.insetDivider()
+        this.groupedRow($r('sys.symbol.arrow_clockwise'), $r('app.string.about_check_update'), '', (): void => {
+          this.vm.openExternalLink(SettingsSheet.RELEASES_URL);
+        })
+        this.insetDivider()
+        this.groupedRow($r('sys.symbol.doc_plaintext'), $r('app.string.about_license'), '', (): void => {
+          this.vm.openExternalLink(SettingsSheet.LICENSE_URL);
+        })
+      }
+      .width('100%')
+      .borderRadius(20)
+      .backgroundColor($r('app.color.design_surface_solid'))
+      .border({ width: 1, color: $r('app.color.design_stroke') })
+      .clip(true)
+
+      Text($r('app.string.about_copyright'))
+        .fontSize(11)
+        .fontColor($r('app.color.design_text_secondary'))
+        .width('100%')
+        .textAlign(TextAlign.Center)
+        .margin({ top: 18 })
+    }
+    .width('100%')
   }
 
   /** 主题模式单选胶囊。 */

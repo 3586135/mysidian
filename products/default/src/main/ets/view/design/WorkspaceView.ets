@@ -498,8 +498,8 @@ export struct WorkspaceView {
       .width('100%')
       .height('100%')
 
-      if (!this.vm.editMode) {
-        this.newNoteFab(20)
+      if (!this.vm.editMode && this.vm.selectedPath.length > 0 && !this.vm.isExternalMode) {
+        this.editFab(20)
       }
 
       // 非三栏设备浮动信息面板（内容区 < 900vp 或高度不足时右缘滑入覆盖层，默认收起）
@@ -572,8 +572,8 @@ export struct WorkspaceView {
       .width('100%')
       .height('100%')
 
-      if (!this.vm.editMode && !this.vm.isExternalMode) {
-        this.newNoteFab(this.editorKeyboardMode && this.keyboardHeight > 0 ?
+      if (!this.vm.editMode && this.vm.selectedPath.length > 0 && !this.vm.isExternalMode) {
+        this.editFab(this.editorKeyboardMode && this.keyboardHeight > 0 ?
           this.keyboardHeight + 20 : 20)
       }
 
@@ -766,6 +766,15 @@ export struct WorkspaceView {
         .keyboardShortcut('o', [ModifierKey.CTRL])
         .onClick(() => {
           this.openQuickSwitcher();
+        })
+      Blank().width(0).height(0)
+        .keyboardShortcut('n', [ModifierKey.CTRL])
+        .onClick(() => {
+          this.vm.createNote().then((): void => {
+            this.onNoteMutated();
+          }).catch((error: BusinessError): void => {
+            LOG.error(`create note failed, code=${error.code}, message=${error.message}`);
+          });
         })
       SymbolGlyph($r('sys.symbol.chevron_left'))
         .fontSize(22)
@@ -1025,9 +1034,9 @@ export struct WorkspaceView {
     .height('100%')
   }
 
-  /** 新建笔记悬浮按钮。 */
+  /** 编辑当前笔记悬浮按钮（原「新建笔记」FAB 改为进入编辑模式）。 */
   @Builder
-  newNoteFab(bottomMargin: number) {
+  editFab(bottomMargin: number) {
     Column() {
       SymbolGlyph($r('sys.symbol.square_and_pencil'))
         .fontSize(24)
@@ -1041,17 +1050,13 @@ export struct WorkspaceView {
     .shadow({ radius: 20, color: $r('app.color.design_shadow'), offsetY: 6 })
     .justifyContent(FlexAlign.Center)
     .margin({ right: 20, bottom: bottomMargin })
-    .accessibilityText($r('app.string.action_new_note'))
-    .keyboardShortcut('n', [ModifierKey.CTRL])
+    .accessibilityText($r('app.string.action_edit'))
+    .keyboardShortcut('e', [ModifierKey.CTRL])
     .transition(TransitionEffect.scale({ x: 0, y: 0 })
       .combine(TransitionEffect.opacity(0))
       .animation({ duration: 250, curve: Curve.Friction }))
     .onClick(() => {
-      this.vm.createNote().then((): void => {
-        this.onNoteMutated();
-      }).catch((error: BusinessError): void => {
-        LOG.error(`create note failed, code=${error.code}, message=${error.message}`);
-      });
+      this.vm.startEdit();
     })
   }
 
