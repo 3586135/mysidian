@@ -430,6 +430,9 @@ export class SyncViewModel {
       LOG.warn('resolve conflict rejected: sync in progress');
       return false;
     }
+    // 解决期间置 syncing：反向封锁并发 runSync 在推送/基线写入中途启动，
+    // 否则规划阶段读取的基线与清单会被解决过程覆盖，冲突复活。
+    this.syncing = true;
     try {
       await this.engine.pushConflictKeepLocal(vault, this.buildConfig(), conflict, context);
       const remoteAbs: string = `${vault.rootPath}/${conflict.conflictPath}`;
@@ -441,6 +444,8 @@ export class SyncViewModel {
     } catch (error) {
       LOG.warn('resolve keep local push failed');
       return false;
+    } finally {
+      this.syncing = false;
     }
   }
 
@@ -456,6 +461,8 @@ export class SyncViewModel {
       LOG.warn('resolve conflict rejected: sync in progress');
       return false;
     }
+    // 同 resolveConflictKeepLocal：解决期间置 syncing，封锁并发 runSync。
+    this.syncing = true;
     try {
       const localAbs: string = `${vault.rootPath}/${conflict.path}`;
       const remoteAbs: string = `${vault.rootPath}/${conflict.conflictPath}`;
@@ -489,6 +496,8 @@ export class SyncViewModel {
     } catch (error) {
       LOG.warn('resolve use remote failed');
       return false;
+    } finally {
+      this.syncing = false;
     }
   }
 

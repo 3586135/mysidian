@@ -656,11 +656,6 @@ export class VaultManager {
     return count;
   }
 
-  /** 查询仓库笔记列表。 */
-  public async listNotes(vault: VaultInfo): Promise<NoteRow[]> {
-    return await NoteDao.listByVault(this.context, vault.id);
-  }
-
   /** 刷新单篇笔记的元数据（保存后调用）。 */
   public async refreshNote(vault: VaultInfo, relativePath: string): Promise<NoteRow | null> {
     const absolute: string = VaultPath.absolute(vault.rootPath, relativePath);

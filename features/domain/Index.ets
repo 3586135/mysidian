@@ -8,7 +8,7 @@ export { VaultInfo, NoteRow, FileNode, FlatFileNode, LinkRef, TagRef, SearchHit,
   OutlineEntry, BacklinkItem, UnlinkedMention, IndexProgress, CalendarDay, GraphNode, GraphEdge,
   GraphData } from './src/main/ets/model/VaultModel';
 
-export { SyncState, ConflictResolution, RemoteTrashStatus, SyncSafetyReason } from './src/main/ets/model/SyncModel';
+export { SyncState, RemoteTrashStatus, SyncSafetyReason } from './src/main/ets/model/SyncModel';
 export { SyncConfig, RemoteEntry, SyncStatus, SyncPlanSummary, SyncConflict } from './src/main/ets/model/SyncModel';
 
 export { SyncProvider } from './src/main/ets/service/SyncProvider';

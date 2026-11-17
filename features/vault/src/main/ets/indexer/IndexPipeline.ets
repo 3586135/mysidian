@@ -24,10 +24,13 @@ export class IndexPipeline {
    * @param document 解析后的文档
    */
   public static async indexNote(context: common.Context, note: NoteRow,
-    document: MdDocument): Promise<void> {
+    document: MdDocument, prebuiltResolver?: Map<string, string>): Promise<void> {
     await BlockDao.replaceForNote(context, note.id, document.blocks);
 
-    const resolver: Map<string, string> = await IndexPipeline.buildResolver(context, note.vaultId);
+    // 批量索引时由调用方传入整批构建一次的解析表，
+    // 避免每篇笔记都全表扫描 note 表（整库重建 O(N²) → O(N)）。
+    const resolver: Map<string, string> = prebuiltResolver !== undefined
+      ? prebuiltResolver : await IndexPipeline.buildResolver(context, note.vaultId);
     const links: LinkRef[] = IndexPipeline.collectLinks(document, resolver);
     await LinkDao.replaceForNote(context, note.id, links);
 
@@ -64,33 +67,44 @@ export class IndexPipeline {
   public static async reindexVault(context: common.Context, vaultId: number,
     documents: Map<string, MdDocument>): Promise<void> {
     const notes: NoteRow[] = await NoteDao.listByVault(context, vaultId);
+    const resolver: Map<string, string> = IndexPipeline.buildResolverFromNotes(notes);
     for (const note of notes) {
       const document: MdDocument | undefined = documents.get(note.path);
       if (document === undefined) {
         continue;
       }
-      await IndexPipeline.indexNote(context, note, document);
+      await IndexPipeline.indexNote(context, note, document, resolver);
     }
   }
 
   /** 构建「文件名 → 相对路径」的解析表。 */
   private static async buildResolver(context: common.Context, vaultId: number):
     Promise<Map<string, string>> {
-    const resolver: Map<string, string> = new Map<string, string>();
     const notes: NoteRow[] = await NoteDao.listByVault(context, vaultId);
+    return IndexPipeline.buildResolverFromNotes(notes);
+  }
+
+  /** 由笔记列表构建解析表（纯函数，供批量索引一次构建、逐篇复用）。 */
+  public static buildResolverFromNotes(notes: NoteRow[]): Map<string, string> {
+    const resolver: Map<string, string> = new Map<string, string>();
     for (const note of notes) {
-      const key: string = VaultPath.basenameWithoutExt(note.path).toLowerCase();
-      if (!resolver.has(key)) {
-        resolver.set(key, note.path);
-      }
-      const dot: number = note.path.lastIndexOf('.');
-      const pathWithoutExt: string = dot <= 0 ? note.path : note.path.substring(0, dot);
-      const pathKey: string = pathWithoutExt.toLowerCase();
-      if (!resolver.has(pathKey)) {
-        resolver.set(pathKey, note.path);
-      }
+      IndexPipeline.addResolverEntry(resolver, note.path);
     }
     return resolver;
+  }
+
+  /** 把单条路径写入解析表的两个键（去扩展名文件名 / 去扩展名路径，小写）；已有键保留首个。 */
+  public static addResolverEntry(resolver: Map<string, string>, path: string): void {
+    const key: string = VaultPath.basenameWithoutExt(path).toLowerCase();
+    if (!resolver.has(key)) {
+      resolver.set(key, path);
+    }
+    const dot: number = path.lastIndexOf('.');
+    const pathWithoutExt: string = dot <= 0 ? path : path.substring(0, dot);
+    const pathKey: string = pathWithoutExt.toLowerCase();
+    if (!resolver.has(pathKey)) {
+      resolver.set(pathKey, path);
+    }
   }
 
   /** 收集文档中的链接。 */

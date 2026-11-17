@@ -1,20 +1,11 @@
 /**
- * 轻量 LaTeX → HTML 渲染器（原生实现，不依赖 KaTeX 运行时）。
+ * 轻量 LaTeX → 纯文本渲染器（原生实现，不依赖 KaTeX / Web 引擎）。
  *
  * 覆盖 Obsidian 笔记中常见的构造：分数、上下标、根号、希腊字母、
- * 常用运算符与 \text{} 文本。渲染结果交给 MdWebFallback（关闭脚本）显示。
- *
- * 实现要点：先对原始文本做 HTML 转义，再展开命令与上下标，
- * 因此生成的标签不会被二次转义，用户内容也不会破坏结构。
+ * 常用运算符与 \text{} 文本，输出 Unicode 近似文本供原生 ArkUI 渲染，
+ * 深浅色模式下都可读。
  */
 export class MathRenderer {
-  /** 数学公式的附加样式（注入 MdWebFallback）。 */
-  public static readonly CSS: string =
-    '.frac{display:inline-block;vertical-align:middle;text-align:center;margin:0 2px;}' +
-    '.frac .num{display:block;border-bottom:1px solid currentColor;padding:0 4px;}' +
-    '.frac .den{display:block;padding:0 4px;}' +
-    '.sqrt .radic{border-top:1px solid currentColor;padding:0 2px;}' +
-    '.mtext{font-family:sans-serif;font-style:normal;}';
 
   /** 希腊字母与常用符号表。 */
   private static readonly SYMBOLS: Record<string, string> = {
@@ -59,15 +50,6 @@ export class MathRenderer {
     'p': 'ₚ', 'r': 'ᵣ', 's': 'ₛ', 't': 'ₜ', 'u': 'ᵤ',
     'v': 'ᵥ', 'x': 'ₓ'
   };
-
-  /** 把 LaTeX 片段渲染为 HTML。 */
-  public static toHtml(latex: string): string {
-    const trimmed: string = latex.trim();
-    if (trimmed.length === 0) {
-      return '';
-    }
-    return MathRenderer.render(MathRenderer.escapeHtml(trimmed), 0);
-  }
 
   /**
    * 把 LaTeX 片段转换为纯文本近似（Unicode 上下标）。
@@ -200,40 +182,6 @@ export class MathRenderer {
     return out;
   }
 
-  /** 渲染过程：命令与上下标递归展开（输入已转义）。 */
-  private static render(text: string, depth: number): string {
-    let html: string = '';
-    let index: number = 0;
-    const guard: number = 12;
-    while (index < text.length) {
-      if (depth > guard) {
-        html += text.substring(index);
-        break;
-      }
-      const ch: string = text.charAt(index);
-      if (ch === '\\') {
-        const command: CommandChunk = MathRenderer.readCommand(text, index);
-        if (command.name.length > 0) {
-          html += MathRenderer.applyCommand(command, text, depth);
-          index = command.next;
-          continue;
-        }
-        html += ch;
-        index++;
-        continue;
-      }
-      if (ch === '^' || ch === '_') {
-        const script: ScriptChunk = MathRenderer.readScript(text, index, ch, depth);
-        html += script.html;
-        index = script.next;
-        continue;
-      }
-      html += ch;
-      index++;
-    }
-    return html;
-  }
-
   /** 读取一个反斜杠命令。 */
   private static readCommand(text: string, start: number): CommandChunk {
     const chunk: CommandChunk = new CommandChunk();
@@ -259,62 +207,6 @@ export class MathRenderer {
     return chunk;
   }
 
-  /** 应用命令。 */
-  private static applyCommand(command: CommandChunk, text: string, depth: number): string {
-    if (command.escaped) {
-      const symbol: string = MathRenderer.SYMBOLS[command.name];
-      if (symbol !== undefined) {
-        return symbol;
-      }
-      return command.name;
-    }
-    const name: string = command.name;
-    if (name === 'frac' || name === 'dfrac' || name === 'tfrac') {
-      const numerator: ScriptChunk = MathRenderer.readCommandGroup(command, text);
-      const denominator: ScriptChunk = MathRenderer.readCommandGroup(command, text);
-      return `<span class="frac"><span class="num">${MathRenderer.render(numerator.body, depth + 1)}` +
-        `</span><span class="den">${MathRenderer.render(denominator.body, depth + 1)}</span></span>`;
-    }
-    if (name === 'sqrt') {
-      const radicand: ScriptChunk = MathRenderer.readCommandGroup(command, text);
-      return `<span class="sqrt">√<span class="radic">${MathRenderer.render(radicand.body, depth + 1)}</span></span>`;
-    }
-    if (name === 'text' || name === 'mathrm' || name === 'operatorname') {
-      const group: ScriptChunk = MathRenderer.readCommandGroup(command, text);
-      return `<span class="mtext">${group.body}</span>`;
-    }
-    if (name === 'left' || name === 'right') {
-      // 括号修饰符：丢弃修饰符本身，内部内容照常渲染。
-      return '';
-    }
-    const symbol: string = MathRenderer.SYMBOLS[name];
-    if (symbol !== undefined) {
-      return symbol;
-    }
-    return name;
-  }
-
-  /** 读取上标 / 下标。 */
-  private static readScript(text: string, start: number, marker: string, depth: number): ScriptChunk {
-    const chunk: ScriptChunk = new ScriptChunk();
-    let index: number = start + 1;
-    let body: string = '';
-    if (index < text.length && text.charAt(index) === '{') {
-      const group: ScriptChunk = MathRenderer.readGroup(text, index);
-      body = group.body;
-      index = group.next;
-    } else if (index < text.length) {
-      body = text.charAt(index);
-      index++;
-    }
-    const tag: string = marker === '^' ? 'sup' : 'sub';
-    // 深度递增传递，避免嵌套上下标反复从 0 计数绕过递归护栏。
-    chunk.html = `<${tag}>${MathRenderer.render(body, depth + 1)}</${tag}>`;
-    chunk.next = index;
-    return chunk;
-  }
-
-  /** 读取 {...} 分组内容。 */
   /** 读取命令参数 {...} 分组并同步推进 command.next，避免外层循环重复输出参数。 */
   private static readCommandGroup(command: CommandChunk, text: string): ScriptChunk {
     const group: ScriptChunk = MathRenderer.readGroup(text, command.next);
@@ -350,15 +242,6 @@ export class MathRenderer {
     chunk.next = index;
     return chunk;
   }
-
-  /** HTML 转义。 */
-  public static escapeHtml(text: string): string {
-    let result: string = text;
-    result = result.split('&').join('&amp;');
-    result = result.split('<').join('&lt;');
-    result = result.split('>').join('&gt;');
-    return result;
-  }
 }
 
 /** 命令解析结果。 */
@@ -371,7 +254,6 @@ class CommandChunk {
 /** 上下标 / 分组解析结果。 */
 class ScriptChunk {
   body: string = '';
-  html: string = '';
   text: string = '';
   next: number = 0;
 }

@@ -325,24 +325,34 @@ export class WebDavProvider implements SyncProvider {
           });
         this.preferPathDestination = response.responseCode >= 200 && response.responseCode < 300;
       }
-      if (response.responseCode >= 200 && response.responseCode < 300) {
+      let lastCode: number = response.responseCode;
+      if (lastCode >= 200 && lastCode < 300) {
         return RemoteTrashStatus.MOVED;
       }
-      if (response.responseCode === 404) {
+      if (lastCode === 404) {
         return RemoteTrashStatus.NOT_FOUND;
       }
-      if (response.responseCode === 412) {
+      if (lastCode === 412) {
         const retryTrashPath: string = WebDavProvider.withCollisionSuffix(trashPath);
+        const retryDestination: string = this.preferPathDestination
+          ? this.destinationPathOf(retryTrashPath)
+          : this.destinationHeaderOf(retryTrashPath);
         const retry: http.HttpResponse = await this.request(sourceUrl,
           WebDavProvider.MOVE_METHOD, http.HttpDataType.STRING, undefined, {
-            'Destination': this.destinationHeaderOf(retryTrashPath),
+            'Destination': retryDestination,
             'Overwrite': 'F'
           });
-        if (retry.responseCode >= 200 && retry.responseCode < 300) {
+        lastCode = retry.responseCode;
+        if (lastCode >= 200 && lastCode < 300) {
           return RemoteTrashStatus.MOVED;
         }
       }
-      LOG.warn(`webdav MOVE to .trash skipped (code=${response.responseCode}): ${path}`);
+      if (WebDavProvider.isTransientHttpCode(lastCode)) {
+        // 认证过期/限流/服务端 5xx 是瞬时故障：抛错让引擎保留原 synced 基线，下轮重试软删；
+        // 吞成 UNSUPPORTED 会写 local_deleted 墓碑，删除传播从此被永久跳过。
+        throw new Error(WebDavProvider.describeCode(lastCode, 'webdav MOVE'));
+      }
+      LOG.warn(`webdav MOVE to .trash skipped (code=${lastCode}): ${path}`);
       return RemoteTrashStatus.UNSUPPORTED;
     } catch (error) {
       const err = error as BusinessError;
@@ -352,6 +362,15 @@ export class WebDavProvider implements SyncProvider {
       LOG.warn(`webdav MOVE failed, rethrowing for retry (${path}): ${err.message}`);
       throw error as Error;
     }
+  }
+
+  /**
+   * 瞬时故障判定：认证过期/封禁（401/403/407）、超时（408）、限流（429）、
+   * 服务端错误（5xx，501「未实现」除外）。此类失败应重试而非永久跳过。
+   */
+  private static isTransientHttpCode(code: number): boolean {
+    return code === 401 || code === 403 || code === 407 || code === 408 ||
+      code === 429 || (code >= 500 && code !== 501);
   }
 
   /** 兼容保留接口：生产同步路径禁用直接 HTTP DELETE，防止误删 Obsidian 远端文件。 */
@@ -633,8 +652,9 @@ export class WebDavProvider implements SyncProvider {
       const slashUrl: string = url.endsWith('/') ? url : `${url}/`;
       if (slashUrl !== url) {
         const retrySlash: http.HttpResponse = await this.sendPropfind(slashUrl);
-        if (retrySlash.responseCode === 207 || retrySlash.responseCode === 200 ||
-          retrySlash.responseCode !== 301) {
+        // 仅当尾斜杠重试真正成功（207/200）才采纳；失败时保留原响应，
+        // 让下方 404 根目录恢复与错误路径按原状态码继续判断。
+        if (retrySlash.responseCode === 207 || retrySlash.responseCode === 200) {
           response = retrySlash;
         }
       }

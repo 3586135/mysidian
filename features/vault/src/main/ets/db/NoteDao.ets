@@ -82,19 +82,6 @@ export class NoteDao {
     return rows;
   }
 
-  /** 统计仓库笔记数量。 */
-  public static async count(context: common.Context, vaultId: number): Promise<number> {
-    const store = await DbHelper.getStore();
-    const args: Array<relationalStore.ValueType> = [vaultId];
-    const result = await store.querySql('SELECT COUNT(*) FROM note WHERE vault_id = ?', args);
-    let count: number = 0;
-    if (result.goToFirstRow()) {
-      count = result.getLong(0);
-    }
-    result.close();
-    return count;
-  }
-
   /** 删除仓库下全部笔记记录（重新索引前调用）。 */
   public static async removeByVault(context: common.Context,
     vaultId: number): Promise<void> {
@@ -163,23 +150,6 @@ export class NoteDao {
       store.rollBack();
       throw error as Error;
     }
-  }
-
-  /** 查询指定路径前缀下的笔记相对路径（清空回收站时使用）。 */
-  public static async listByPathPrefix(context: common.Context, vaultId: number,
-    prefix: string): Promise<string[]> {
-    const store = await DbHelper.getStore();
-    const args: Array<relationalStore.ValueType> = [vaultId, `${prefix}%`];
-    const result = await store.querySql(
-      'SELECT path FROM note WHERE vault_id = ? AND path LIKE ? ORDER BY path ASC', args);
-    const paths: string[] = [];
-    if (result.goToFirstRow()) {
-      do {
-        paths.push(result.getString(0));
-      } while (result.goToNextRow());
-    }
-    result.close();
-    return paths;
   }
 
   private static readRow(result: relationalStore.ResultSet): NoteRow {

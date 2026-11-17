@@ -326,6 +326,7 @@ export class VaultViewModel {
     // DataView 查询缓存键不含仓库 id，切换仓库必须清空，防止上一仓库结果串显。
     this.dataViewCache.clear();
     this.closeNote();
+    this.clearNavigationState();
     this.writePref('lastVaultId', vault.id);
     await this.refreshTree();
     await this.ensureIndexed(vault);
@@ -370,6 +371,9 @@ export class VaultViewModel {
     for (const path of files) {
       fileSet[path] = true;
     }
+    // 解析表整批构建一次：首同步时全部文件都要建索引，
+    // 逐篇 indexNote 内部各自全表扫描会把首同步推成 O(N²)。
+    const resolver: Map<string, string> = IndexPipeline.buildResolverFromNotes(notes);
     // FTS 自愈：历史版本存在 FTS 行缺失（ftsReady 误判 false 期间未写入），
     // 对缺失行强制重建，保证全文检索可命中全部笔记。
     const ftsReady: boolean = DbHelper.isFtsReady();
@@ -381,7 +385,7 @@ export class VaultViewModel {
       }
       const row: NoteRow | undefined = known[path];
       if (row === undefined) {
-        await this.indexNoteByPath(vault, path);
+        await this.indexNoteByPath(vault, path, resolver);
         changed++;
         continue;
       }
@@ -392,7 +396,7 @@ export class VaultViewModel {
       const blockCount: number = await BlockDao.countOfNote(context, row.id);
       if (blockCount === 0 || stat.mtime !== row.mtime || stat.size !== row.size ||
         (ftsReady && !ftsIds.has(row.id))) {
-        await this.indexNoteByPath(vault, path);
+        await this.indexNoteByPath(vault, path, resolver);
         changed++;
       }
     }
@@ -410,7 +414,8 @@ export class VaultViewModel {
   }
 
   /** 重建单篇笔记的索引（外部改动后使用）。 */
-  private async indexNoteByPath(vault: VaultInfo, path: string): Promise<void> {
+  private async indexNoteByPath(vault: VaultInfo, path: string,
+    resolver: Map<string, string>): Promise<void> {
     const context: common.Context | null = this.context;
     const manager: VaultManager | null = this.manager;
     if (context === null || manager === null) {
@@ -420,9 +425,12 @@ export class VaultViewModel {
     if (row === null) {
       return;
     }
+    // 新文件此时才登记进 note 表：同步补入解析表，
+    // 保证本批后续笔记的 wiki 链接能解析到它。
+    IndexPipeline.addResolverEntry(resolver, row.path);
     const content: string = await manager.readNote(vault, path);
     const document: MdDocument = MarkdownParser.parse(content);
-    await IndexPipeline.indexNote(context, row, document);
+    await IndexPipeline.indexNote(context, row, document, resolver);
   }
 
   /** 展开或折叠目录。 */
@@ -1512,7 +1520,9 @@ export class VaultViewModel {
       // 链接索引可能尚未建立或已过期：退回按文件扫描，保证引用不被漏改。
       rewritten = await this.rewriteLinksByScan(path, newPath);
     }
-    await this.reindexPaths(rewritten);
+    // 重命名笔记自身必须一并重建索引：note 表标题已随路径更新，
+    // 但 FTS 行仍是旧标题，不重建则按新名搜索无法命中、旧名反而命中。
+    await this.reindexPaths([newPath].concat(rewritten));
     await this.rewritePathRefs(path, newPath);
     if (this.selectedPath === path) {
       await this.openNote(newPath);
@@ -2172,6 +2182,15 @@ export class VaultViewModel {
     }
   }
 
+  /** 清空以路径为键、不含仓库 id 的导航状态：返回历史与分屏第二栏。
+   *  切库/删库时必须调用，否则「返回」会尝试在仓库 B 中打开仓库 A 的路径，
+   *  分屏栏继续显示已不可达的旧仓库内容。 */
+  private clearNavigationState(): void {
+    this.noteHistory = [];
+    this.canGoBack = false;
+    this.closeSecondary();
+  }
+
   /** 关闭当前笔记。 */
   public closeNote(): void {
     this.openToken++;
@@ -2709,6 +2728,7 @@ export class VaultViewModel {
       await this.refreshVaults();
       if (this.currentVault.id === vault.id) {
         this.closeNote();
+        this.clearNavigationState();
         this.tree = [];
         this.treeItems = [];
         this.mtimeByPath = new Map<string, number>();
@@ -2745,13 +2765,16 @@ export class VaultViewModel {
     await this.refreshTree();
     await manager.scanVault(this.currentVault);
     const notes: NoteRow[] = await NoteDao.listByVault(context, this.currentVault.id);
+    // 解析表整批构建一次：循环内 note 表不再变化（scanVault 已登记全部文件），
+    // 逐篇复用避免每篇一次全表扫描（720 篇仓库重建从 O(N²) 次查询降为 O(N)）。
+    const resolver: Map<string, string> = IndexPipeline.buildResolverFromNotes(notes);
     for (const note of notes) {
       // 单篇笔记读取/解析/索引失败不中断整批：本方法常以 fire-and-forget 方式
       // 在同步完成后调用，任何一处抛错都会静默吞掉后续的树刷新，导致笔记不出现。
       try {
         const content: string = await manager.readNote(this.currentVault, note.path);
         const document: MdDocument = MarkdownParser.parse(content);
-        await IndexPipeline.indexNote(context, note, document);
+        await IndexPipeline.indexNote(context, note, document, resolver);
       } catch (error) {
         LOG.warn(`rescan index note failed: ${note.path}`);
       }

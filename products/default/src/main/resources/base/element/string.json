@@ -29,10 +29,6 @@
       "value": "导出仓库"
     },
     {
-      "name": "action_refresh",
-      "value": "刷新"
-    },
-    {
       "name": "action_back",
       "value": "返回"
     },
@@ -57,40 +53,8 @@
       "value": "搜索"
     },
     {
-      "name": "action_quick",
-      "value": "跳转"
-    },
-    {
-      "name": "action_commands",
-      "value": "命令"
-    },
-    {
-      "name": "action_sync",
-      "value": "同步"
-    },
-    {
-      "name": "action_settings",
-      "value": "设置"
-    },
-    {
-      "name": "settings_title",
-      "value": "设置"
-    },
-    {
       "name": "settings_font_size",
       "value": "正文字号"
-    },
-    {
-      "name": "settings_font_small",
-      "value": "小"
-    },
-    {
-      "name": "settings_font_medium",
-      "value": "中"
-    },
-    {
-      "name": "settings_font_large",
-      "value": "大"
     },
     {
       "name": "settings_reindex",
@@ -389,14 +353,6 @@
       "value": "暂无属性"
     },
     {
-      "name": "vault_empty_title",
-      "value": "还没有仓库"
-    },
-    {
-      "name": "vault_empty_desc",
-      "value": "导入一个 Obsidian 仓库压缩包，或新建一个空仓库开始记录"
-    },
-    {
       "name": "welcome_title",
       "value": "欢迎使用 MySidian"
     },
@@ -457,10 +413,6 @@
       "value": "从左侧文件列表中选择一篇笔记"
     },
     {
-      "name": "file_tree_title",
-      "value": "文件"
-    },
-    {
       "name": "dialog_vault_name",
       "value": "仓库名称"
     },
@@ -489,36 +441,12 @@
       "value": "新建笔记"
     },
     {
-      "name": "action_new_vault",
-      "value": "新建仓库"
-    },
-    {
       "name": "action_import_vault_short",
       "value": "导入"
     },
     {
       "name": "action_create_vault_short",
       "value": "新建"
-    },
-    {
-      "name": "new_note_default_name",
-      "value": "未命名"
-    },
-    {
-      "name": "status_chars",
-      "value": "字符"
-    },
-    {
-      "name": "status_backlinks",
-      "value": "反链"
-    },
-    {
-      "name": "status_words",
-      "value": "词"
-    },
-    {
-      "name": "tab_header_outline",
-      "value": "大纲"
     },
     {
       "name": "editor_placeholder",
@@ -533,10 +461,6 @@
       "value": "维护"
     },
     {
-      "name": "settings_vault_manage",
-      "value": "仓库管理"
-    },
-    {
       "name": "menu_quick_switch",
       "value": "快速切换笔记"
     },
@@ -545,16 +469,8 @@
       "value": "命令面板"
     },
     {
-      "name": "tab_notes",
-      "value": "笔记"
-    },
-    {
       "name": "tab_vaults",
       "value": "仓库"
-    },
-    {
-      "name": "tab_settings",
-      "value": "设置"
     },
     {
       "name": "vault_card_open",
@@ -587,26 +503,6 @@
     {
       "name": "msg_reindex_done",
       "value": "索引重建完成"
-    },
-    {
-      "name": "msg_no_recent_note",
-      "value": "没有其他笔记可打开"
-    },
-    {
-      "name": "menu_back_note",
-      "value": "返回上一笔记"
-    },
-    {
-      "name": "menu_recent_notes",
-      "value": "最近访问的笔记"
-    },
-    {
-      "name": "menu_daily_note",
-      "value": "今天的日记"
-    },
-    {
-      "name": "menu_new_note",
-      "value": "新建笔记"
     },
     {
       "name": "recent_notes_title",
@@ -671,10 +567,6 @@
     {
       "name": "props_key_hint",
       "value": "属性名"
-    },
-    {
-      "name": "props_value_hint",
-      "value": "属性值"
     },
     {
       "name": "props_type_text",
@@ -945,212 +837,12 @@
       "value": "搜索"
     },
     {
-      "name": "design_tab_graph",
-      "value": "图谱"
-    },
-    {
       "name": "design_tab_more",
       "value": "更多"
     },
     {
-      "name": "design_vault_name",
-      "value": "Personal Vault"
-    },
-    {
-      "name": "design_collapse",
-      "value": "收起"
-    },
-    {
-      "name": "design_folder_daily",
-      "value": "00-每日笔记"
-    },
-    {
-      "name": "design_folder_tech",
-      "value": "01-技术沉淀"
-    },
-    {
-      "name": "design_folder_reading",
-      "value": "02-读书笔记"
-    },
-    {
-      "name": "design_note1_title",
-      "value": "ArkTS 状态管理实战"
-    },
-    {
-      "name": "design_note1_summary",
-      "value": "@Local 与 @ObservedV2 的深浅观察边界，V1/V2 混用踩坑记录。"
-    },
-    {
-      "name": "design_note1_time",
-      "value": "今天 09:24"
-    },
-    {
-      "name": "design_note2_title",
-      "value": "鸿蒙应用架构笔记"
-    },
-    {
-      "name": "design_note2_summary",
-      "value": "模块化 HAR 拆分与 HSP 共享包的选型对比，跨包状态共享方案。"
-    },
-    {
-      "name": "design_note2_time",
-      "value": "昨天 21:03"
-    },
-    {
-      "name": "design_note3_title",
-      "value": "Markdown 渲染引擎设计"
-    },
-    {
-      "name": "design_note3_summary",
-      "value": "块级解析器 + 行内解析器的两阶段管线，流式渲染与增量索引。"
-    },
-    {
-      "name": "design_note3_time",
-      "value": "昨天 14:40"
-    },
-    {
-      "name": "design_note4_title",
-      "value": "读书笔记：卡片笔记法"
-    },
-    {
-      "name": "design_note4_summary",
-      "value": "渐进式总结的三个层级：摘录、转述、产出，链接先行。"
-    },
-    {
-      "name": "design_note4_time",
-      "value": "11-10"
-    },
-    {
       "name": "design_search_hint",
       "value": "搜索笔记、标签、双链…"
-    },
-    {
-      "name": "design_filter_tag",
-      "value": "#标签"
-    },
-    {
-      "name": "design_filter_wikilink",
-      "value": "[[双链]]"
-    },
-    {
-      "name": "design_filter_todo",
-      "value": "未完成待办"
-    },
-    {
-      "name": "design_filter_recent",
-      "value": "最近修改"
-    },
-    {
-      "name": "design_hit1_title_head",
-      "value": ""
-    },
-    {
-      "name": "design_hit1_title_hit",
-      "value": "ArkTS"
-    },
-    {
-      "name": "design_hit1_title_tail",
-      "value": " 笔记引擎架构建模"
-    },
-    {
-      "name": "design_hit1_body_head",
-      "value": "自研 Markdown 引擎的分层架构：解析层用 "
-    },
-    {
-      "name": "design_hit1_body_hit",
-      "value": "ArkTS 纯静态类型实现"
-    },
-    {
-      "name": "design_hit1_body_tail",
-      "value": "，渲染层映射 ArkUI 组件树…"
-    },
-    {
-      "name": "design_hit1_time",
-      "value": "今天 09:24"
-    },
-    {
-      "name": "design_hit2_title_head",
-      "value": ""
-    },
-    {
-      "name": "design_hit2_title_hit",
-      "value": "ArkTS"
-    },
-    {
-      "name": "design_hit2_title_tail",
-      "value": " 性能优化清单"
-    },
-    {
-      "name": "design_hit2_body_head",
-      "value": "减少 ForEach 全量重建、@Trace 精细追踪、"
-    },
-    {
-      "name": "design_hit2_body_hit",
-      "value": "懒加载节点复用"
-    },
-    {
-      "name": "design_hit2_body_tail",
-      "value": "与布局测量缓存…"
-    },
-    {
-      "name": "design_hit2_time",
-      "value": "昨天 21:03"
-    },
-    {
-      "name": "design_hit3_title_head",
-      "value": "从 TypeScript 到 "
-    },
-    {
-      "name": "design_hit3_title_hit",
-      "value": "ArkTS"
-    },
-    {
-      "name": "design_hit3_title_tail",
-      "value": " 迁移指南"
-    },
-    {
-      "name": "design_hit3_body_head",
-      "value": "严格模式禁用 any 与解构赋值，对象字面量必须"
-    },
-    {
-      "name": "design_hit3_body_hit",
-      "value": "显式类型上下文"
-    },
-    {
-      "name": "design_hit3_body_tail",
-      "value": "，类模型替代结构类型…"
-    },
-    {
-      "name": "design_hit3_time",
-      "value": "11-08"
-    },
-    {
-      "name": "design_graph_center",
-      "value": "ArkTS 引擎设计"
-    },
-    {
-      "name": "design_graph_n1",
-      "value": "状态管理"
-    },
-    {
-      "name": "design_graph_n2",
-      "value": "渲染管线"
-    },
-    {
-      "name": "design_graph_n3",
-      "value": "双链实现"
-    },
-    {
-      "name": "design_graph_n4",
-      "value": "搜索索引"
-    },
-    {
-      "name": "design_graph_n5",
-      "value": "同步引擎"
-    },
-    {
-      "name": "design_graph_n6",
-      "value": "模板系统"
     },
     {
       "name": "design_graph_hint",
@@ -1161,36 +853,8 @@
       "value": "%d 个链接群簇 · %d 篇未链接笔记"
     },
     {
-      "name": "design_editor_title",
-      "value": "新建笔记"
-    },
-    {
-      "name": "design_editor_cancel",
-      "value": "取消"
-    },
-    {
-      "name": "design_editor_save",
-      "value": "保存"
-    },
-    {
-      "name": "design_editor_title_hint",
-      "value": "笔记标题"
-    },
-    {
       "name": "design_editor_body_hint",
       "value": "支持 Markdown 语法…"
-    },
-    {
-      "name": "design_editor_insert_title",
-      "value": "标题"
-    },
-    {
-      "name": "design_editor_insert_wikilink",
-      "value": "双链"
-    },
-    {
-      "name": "design_editor_insert_todo",
-      "value": "待办"
     },
     {
       "name": "design_fab_daily",
@@ -1199,14 +863,6 @@
     {
       "name": "design_fab_new_note",
       "value": "新建空白笔记"
-    },
-    {
-      "name": "design_fab_voice",
-      "value": "语音闪念"
-    },
-    {
-      "name": "design_more_section_plugins",
-      "value": "核心插件"
     },
     {
       "name": "design_more_daily",
@@ -1225,32 +881,12 @@
       "value": "会议纪要 · 周报 · 读书笔记"
     },
     {
-      "name": "design_more_tags",
-      "value": "标签管理器"
-    },
-    {
-      "name": "design_more_tags_sub",
-      "value": "共 %d 个标签"
-    },
-    {
-      "name": "design_more_section_settings",
-      "value": "设置"
-    },
-    {
       "name": "design_more_sync",
       "value": "WebDAV 同步"
     },
     {
-      "name": "design_more_sync_sub",
-      "value": "已同步 · 2 分钟前"
-    },
-    {
       "name": "design_more_appearance",
       "value": "外观与阅读"
-    },
-    {
-      "name": "design_more_appearance_sub",
-      "value": "正文字号 · 主题模式"
     },
     {
       "name": "design_more_appearance_value_system",
@@ -1279,46 +915,6 @@
     {
       "name": "design_more_about_sub",
       "value": "GitHub 开源项目"
-    },
-    {
-      "name": "design_tag_arch",
-      "value": "架构"
-    },
-    {
-      "name": "design_tag_hm",
-      "value": "鸿蒙"
-    },
-    {
-      "name": "design_tag_engine",
-      "value": "引擎"
-    },
-    {
-      "name": "design_tag_method",
-      "value": "方法"
-    },
-    {
-      "name": "design_tag_perf",
-      "value": "性能"
-    },
-    {
-      "name": "design_files_recent",
-      "value": "最近编辑"
-    },
-    {
-      "name": "design_folder_daily_count",
-      "value": "12 篇"
-    },
-    {
-      "name": "design_folder_tech_count",
-      "value": "28 篇"
-    },
-    {
-      "name": "design_folder_reading_count",
-      "value": "9 篇"
-    },
-    {
-      "name": "design_search_count",
-      "value": "找到 3 篇相关笔记"
     },
     {
       "name": "design_search_mode_full",
@@ -1353,16 +949,8 @@
       "value": "请先创建仓库"
     },
     {
-      "name": "design_files_folder_count",
-      "value": "%d 篇"
-    },
-    {
       "name": "design_files_empty",
       "value": "还没有笔记，点按右下角 + 开始创作"
-    },
-    {
-      "name": "design_workspace_empty",
-      "value": "未打开笔记，从首页选择一篇开始"
     },
     {
       "name": "design_onboard_title",
@@ -1393,20 +981,8 @@
       "value": "昨天"
     },
     {
-      "name": "design_more_workspace",
-      "value": "工作台"
-    },
-    {
-      "name": "design_more_workspace_sub",
-      "value": "完整编辑器与全部功能"
-    },
-    {
       "name": "design_fab_template",
       "value": "从模板新建"
-    },
-    {
-      "name": "design_editor_saved",
-      "value": "已保存"
     },
     {
       "name": "design_graph_source",
@@ -1493,18 +1069,6 @@
       "value": "收藏 %d"
     },
     {
-      "name": "files_seg_timeline",
-      "value": "时间线"
-    },
-    {
-      "name": "files_seg_folders",
-      "value": "文件夹"
-    },
-    {
-      "name": "files_view_grid",
-      "value": "切换卡片/列表视图"
-    },
-    {
       "name": "files_sort_label",
       "value": "排序"
     },
@@ -1521,10 +1085,6 @@
       "value": "文件名"
     },
     {
-      "name": "files_cover_footer",
-      "value": "Markdown"
-    },
-    {
       "name": "files_featured_badge",
       "value": "最近编辑"
     },
@@ -1533,32 +1093,8 @@
       "value": "暂无收藏笔记，点按笔记右上角星标即可置顶收藏"
     },
     {
-      "name": "files_root_notes_header",
-      "value": "根目录笔记 (%d)"
-    },
-    {
-      "name": "files_folder_root",
-      "value": "全部目录"
-    },
-    {
       "name": "files_folder_empty",
       "value": "当前文件夹暂无子目录或笔记"
-    },
-    {
-      "name": "files_folder_up",
-      "value": "返回上级目录"
-    },
-    {
-      "name": "files_folder_summary",
-      "value": "%d 个文件夹 · %d 篇笔记"
-    },
-    {
-      "name": "files_folder_sub_count",
-      "value": "%d 个子文件夹"
-    },
-    {
-      "name": "files_folder_section_notes",
-      "value": "本目录笔记 (%d)"
     },
     {
       "name": "more_vault_current",
@@ -1573,36 +1109,8 @@
       "value": "笔记"
     },
     {
-      "name": "more_stat_bookmarks",
-      "value": "收藏"
-    },
-    {
-      "name": "more_stat_tags",
-      "value": "标签"
-    },
-    {
-      "name": "more_stat_backups",
-      "value": "快照"
-    },
-    {
-      "name": "more_section_services",
-      "value": "常用服务"
-    },
-    {
-      "name": "more_service_quick",
-      "value": "闪念速记"
-    },
-    {
       "name": "more_service_vaults",
       "value": "仓库管理"
-    },
-    {
-      "name": "more_service_export",
-      "value": "导出备份"
-    },
-    {
-      "name": "more_section_history",
-      "value": "最近笔记"
     },
     {
       "name": "search_tags_all_header",
@@ -1737,10 +1245,6 @@
       "value": "外部预览 · 只读"
     },
     {
-      "name": "external_preview_desc",
-      "value": "打开自外部文件（未写入仓库），导入当前仓库后可编辑并同步"
-    },
-    {
       "name": "external_import_to_vault",
       "value": "导入仓库"
     },
@@ -1759,18 +1263,6 @@
     {
       "name": "msg_external_read_failed",
       "value": "无法读取该 Markdown 文件"
-    },
-    {
-      "name": "msg_external_readonly_edit_title",
-      "value": "外部文件只读预览"
-    },
-    {
-      "name": "msg_external_readonly_edit_desc",
-      "value": "当前打开的是外部 Markdown 文件，导入当前仓库后即可编辑并参与同步。"
-    },
-    {
-      "name": "msg_external_readonly_create_desc",
-      "value": "当前尚未创建笔记仓库，请先新建仓库并自动导入该文件后再编辑。"
     },
     {
       "name": "search_tags_sort_count",
@@ -1861,16 +1353,8 @@
       "value": "输入 ``` 回车退出"
     },
     {
-      "name": "toolbar_table",
-      "value": "表格"
-    },
-    {
       "name": "table_editor_title",
       "value": "编辑表格"
-    },
-    {
-      "name": "table_editor_subtitle",
-      "value": "所见即所得 · 自动同步标准 Markdown"
     },
     {
       "name": "table_editor_add_row",

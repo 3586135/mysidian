@@ -24,12 +24,6 @@ export enum SyncSafetyReason {
   BULK_TRASH = 'bulkTrash'
 }
 
-export enum ConflictResolution {
-  KEEP_LOCAL = 'keepLocal',
-  KEEP_REMOTE = 'keepRemote',
-  KEEP_BOTH = 'keepBoth'
-}
-
 /** 同步配置。 */
 export class SyncConfig {
   /** 供应商标识，如 webdav */

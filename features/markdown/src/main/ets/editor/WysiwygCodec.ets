@@ -139,6 +139,14 @@ export class WysiwygCodec {
         i = end;
         continue;
       }
+      if (p.kind === WysiwygBlockKind.PARAGRAPH && p.inlines.length === 0) {
+        // 空段落是「显式空行」标记，只补 1 个换行；
+        // 若按普通段落补 2 个，k 个空行每轮往返会增长为约 2k 个（数据损坏）。
+        chunks.push('');
+        chunks.push('\n');
+        i++;
+        continue;
+      }
       chunks.push(WysiwygCodec.serializeSingleBlock(p));
       chunks.push(p.tightBreakAfter ? '\n' : '\n\n');
       i++;
@@ -285,7 +293,9 @@ export class WysiwygCodec {
         i++;
         continue;
       }
-      offset += WysiwygCodec.serializeSingleBlock(p).length + (p.tightBreakAfter ? 1 : 2);
+      // 空段落序列化时只补 1 个换行（与 serializeParagraphs 保持一致）。
+      const emptyParagraph: boolean = p.kind === WysiwygBlockKind.PARAGRAPH && p.inlines.length === 0;
+      offset += WysiwygCodec.serializeSingleBlock(p).length + (emptyParagraph ? 1 : (p.tightBreakAfter ? 1 : 2));
       i++;
     }
 

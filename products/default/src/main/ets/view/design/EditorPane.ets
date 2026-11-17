@@ -5,7 +5,7 @@ import { BusinessError } from '@kit.BasicServicesKit';
 import { DataViewResult, DataViewTask, SyncFileFilter } from '@ohos/domain';
 import { EmptyState, Logger } from '@ohos/common';
 import { VaultManager } from '@ohos/vault';
-import { MdDocumentView, MdDocumentViewController, MdInlineFlattener, WysiwygCodec } from '@ohos/markdown';
+import { MdDocumentView, MdDocumentViewController, WysiwygCodec } from '@ohos/markdown';
 import { CompletionCandidate, EditorTextUtils, ListContinuation } from '../../viewmodel/EditorTextUtils';
 import { VaultViewModel } from '../../viewmodel/VaultViewModel';
 import { CompletionPopup } from './CompletionPopup';

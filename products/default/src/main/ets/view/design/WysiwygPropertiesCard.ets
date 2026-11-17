@@ -25,10 +25,13 @@ export struct WysiwygPropertiesCard {
   @Local listInputText: string = '';
 
   aboutToAppear(): void {
-    this.expanded = this.hasFrontmatter && this.parseProperties().length > 0;
+    this.expanded = this.hasFrontmatter && this.properties.length > 0;
   }
 
-  private parseProperties(): MdProperty[] {
+  /** 缓存的属性解析结果：仅在 frontmatterRaw / hasFrontmatter 变化时重算，
+   *  避免 build() 中每次渲染重复解析 6 次。 */
+  @Computed
+  get properties(): MdProperty[] {
     if (!this.hasFrontmatter && this.frontmatterRaw.trim().length === 0) {
       return [];
     }
@@ -61,7 +64,7 @@ export struct WysiwygPropertiesCard {
   }
 
   private commitScalarEdit(prop: MdProperty): void {
-    const props: MdProperty[] = this.parseProperties();
+    const props: MdProperty[] = this.properties;
     for (const item of props) {
       if (item.key === prop.key && item.type !== MdPropType.MAP && item.type !== MdPropType.LIST) {
         item.value = this.editValue;
@@ -73,7 +76,7 @@ export struct WysiwygPropertiesCard {
   }
 
   private toggleBool(prop: MdProperty, nextVal: boolean): void {
-    const props: MdProperty[] = this.parseProperties();
+    const props: MdProperty[] = this.properties;
     for (const item of props) {
       if (item.key === prop.key) {
         item.value = nextVal ? 'true' : 'false';
@@ -84,7 +87,7 @@ export struct WysiwygPropertiesCard {
   }
 
   private removeListItem(prop: MdProperty, idx: number): void {
-    const props: MdProperty[] = this.parseProperties();
+    const props: MdProperty[] = this.properties;
     for (const item of props) {
       if (item.key === prop.key && item.type === MdPropType.LIST) {
         item.listValue = item.listValue.filter((_v: string, i: number): boolean => i !== idx);
@@ -99,7 +102,7 @@ export struct WysiwygPropertiesCard {
     if (text.length === 0) {
       return;
     }
-    const props: MdProperty[] = this.parseProperties();
+    const props: MdProperty[] = this.properties;
     for (const item of props) {
       if (item.key === prop.key && item.type === MdPropType.LIST) {
         item.listValue = [...item.listValue, text];
@@ -112,7 +115,7 @@ export struct WysiwygPropertiesCard {
   }
 
   private removeProp(key: string): void {
-    const props: MdProperty[] = this.parseProperties().filter((p: MdProperty): boolean => p.key !== key);
+    const props: MdProperty[] = this.properties.filter((p: MdProperty): boolean => p.key !== key);
     this.applyPropertyChanges(props, [key]);
   }
 
@@ -121,7 +124,7 @@ export struct WysiwygPropertiesCard {
     if (key.length === 0) {
       return;
     }
-    const props: MdProperty[] = this.parseProperties();
+    const props: MdProperty[] = this.properties;
     for (const p of props) {
       if (p.key === key) {
         this.addingProp = false;
@@ -298,15 +301,15 @@ export struct WysiwygPropertiesCard {
             .fontSize(13)
             .fontWeight(FontWeight.Medium)
             .fontColor($r('app.color.design_text_secondary'))
-          if (this.parseProperties().length > 0) {
-            Text(`${this.parseProperties().length}`)
+          if (this.properties.length > 0) {
+            Text(`${this.properties.length}`)
               .fontSize(11)
               .fontColor($r('app.color.design_accent'))
               .padding({ left: 6, right: 6, top: 1, bottom: 1 })
               .borderRadius(8)
               .backgroundColor($r('app.color.design_accent_weak'))
           }
-          if (this.parseProperties().length > 0) {
+          if (this.properties.length > 0) {
             SymbolGlyph(this.expanded ? $r('sys.symbol.chevron_down') : $r('sys.symbol.chevron_right'))
               .fontSize(12)
               .fontColor([$r('app.color.design_text_secondary')])
@@ -314,7 +317,7 @@ export struct WysiwygPropertiesCard {
         }
         .layoutWeight(1)
         .onClick(() => {
-          if (this.parseProperties().length > 0) {
+          if (this.properties.length > 0) {
             this.expanded = !this.expanded;
           } else {
             this.addingProp = !this.addingProp;
@@ -343,10 +346,10 @@ export struct WysiwygPropertiesCard {
       .width('100%')
       .alignItems(VerticalAlign.Center)
 
-      if (this.expanded && this.parseProperties().length > 0) {
+      if (this.expanded && this.properties.length > 0) {
         Scroll() {
           Column({ space: 2 }) {
-            ForEach(this.parseProperties(), (prop: MdProperty, idx: number) => {
+            ForEach(this.properties, (prop: MdProperty, idx: number) => {
               this.propRow(prop)
             }, (prop: MdProperty, idx: number): string => `wprop_${idx}_${prop.key}_${prop.value}_${prop.listValue.length}`)
           }

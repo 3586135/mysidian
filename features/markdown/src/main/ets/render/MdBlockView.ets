@@ -1012,15 +1012,4 @@ export struct MdBlockView {
     }
     return '•';
   }
-
-  private calloutIcon(): string {
-    const type: string = this.block.calloutType;
-    if (type === 'TIP') {
-      return '✓';
-    }
-    if (type === 'NOTE') {
-      return 'i';
-    }
-    return '!';
-  }
 }

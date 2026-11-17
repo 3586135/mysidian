@@ -75,6 +75,8 @@ class SyncExecutionPlan {
   localTrashes: RemoteEntry[] = [];
   keptLocalDeleted: RemoteEntry[] = [];
   verifiedEqualEntries: RemoteEntry[] = [];
+  /** 规划阶段收集并哈希好的本地条目快照（persistSyncState 复用，避免全库二次 sha256）。 */
+  localEntries: RemoteEntry[] = [];
   serverTagMap: Map<string, string> = new Map<string, string>();
   summary: SyncPlanSummary = new SyncPlanSummary();
 }
@@ -157,7 +159,7 @@ export class SyncEngine {
       }
 
       if (!progress.hasErrors()) {
-        await this.persistSyncState(provider, vault, context, plan);
+        await this.persistSyncState(provider, vault, context, plan, progress);
         this.status.state = this.conflicts.length > 0 ? SyncState.CONFLICT : SyncState.SUCCESS;
         this.status.message = this.conflicts.length > 0 ? 'conflict' : 'success';
         this.status.lastSyncAt = Date.now();
@@ -269,8 +271,9 @@ export class SyncEngine {
     plan.ignoreRules = SyncEngine.loadIgnoreRules(vault.rootPath);
 
     const remoteEntries: RemoteEntry[] = await provider.list('');
-    const localEntries: RemoteEntry[] = await this.collectLocalEntries(
+    plan.localEntries = await this.collectLocalEntries(
       vault, plan.baselines, plan.ignoreRules);
+    const localEntries: RemoteEntry[] = plan.localEntries;
     LOG.info(`sync plan: local=${localEntries.length}, remote=${remoteEntries.length}, ` +
       `targetChanged=${plan.targetChanged}`);
 
@@ -601,14 +604,39 @@ export class SyncEngine {
   }
 
   private async persistSyncState(provider: SyncProvider, vault: VaultInfo,
-    context: common.Context, plan: SyncExecutionPlan): Promise<void> {
+    context: common.Context, plan: SyncExecutionPlan,
+    progress: SyncExecutionProgress): Promise<void> {
     const conflictRemoteMap: Map<string, RemoteEntry> = new Map<string, RemoteEntry>();
     for (const item of plan.conflicts) {
       conflictRemoteMap.set(item.local.path, item.remote);
     }
 
-    const finalEntries: RemoteEntry[] = await this.collectLocalEntries(
-      vault, plan.baselines, plan.ignoreRules);
+    // 复用规划阶段的本地条目快照（哈希已算好），避免成功轮次全库二次 sha256；
+    // 仅对执行期间实际落盘的拉取文件重算哈希（内容已变化）。
+    // 规划时点之后用户的编辑/新建不进入本轮基线与清单，下轮按未同步内容
+    // 重新上传——修复「同步中编辑被误标已同步、永不推送」的丢失类缺陷。
+    // 本轮已软删（含本地回收站传播）的条目不再写入清单与基线。
+    const finalEntries: RemoteEntry[] = [];
+    for (const entry of plan.localEntries) {
+      if (progress.succeededTrashes.has(entry.path)) {
+        continue;
+      }
+      if (progress.succeededPulls.has(entry.path)) {
+        const pulledAbs: string = `${vault.rootPath}/${entry.path}`;
+        if (fileIo.accessSync(pulledAbs)) {
+          const pulledStat = fileIo.statSync(pulledAbs);
+          const pulledItem: RemoteEntry = new RemoteEntry();
+          pulledItem.path = entry.path;
+          pulledItem.size = pulledStat.size;
+          pulledItem.mtime = pulledStat.mtime;
+          pulledItem.etag = await hash.hash(pulledAbs, 'sha256');
+          pulledItem.isDir = false;
+          finalEntries.push(pulledItem);
+        }
+        continue;
+      }
+      finalEntries.push(entry);
+    }
     const finalLocalMap: Set<string> = new Set<string>();
     const manifestEntries: RemoteEntry[] = [];
     for (const entry of finalEntries) {

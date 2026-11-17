@@ -204,6 +204,16 @@ export default function wysiwygCodecTest() {
         .assertEqual('BoldWordNormalWord'.length);
     });
 
+    it('roundTripsExplicitBlankLinesWithoutGrowth', 0, () => {
+      // 显式空行（连续 2 个及以上）往返必须逐字稳定；此前每轮序列化会让空行倍增（数据损坏）。
+      const md: string = '第一段\n\n\n\n中间隔两行\n\n尾段';
+      const doc: WysiwygDocument = WysiwygCodec.parse(md);
+      const once: string = WysiwygCodec.serialize(doc);
+      expect(once).assertEqual(md);
+      const twice: string = WysiwygCodec.serialize(WysiwygCodec.parse(once));
+      expect(twice).assertEqual(md);
+    });
+
     it('roundTripsVisualTableAndMapsCaretAcrossTable', 0, () => {
       const md: string = [
         '前置段落',

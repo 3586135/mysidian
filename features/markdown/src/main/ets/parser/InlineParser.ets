@@ -50,15 +50,19 @@ export class InlineParser {
       }
 
       if (ch === '`') {
+        let openRun: number = 0;
+        while (index + openRun < end && text.charAt(index + openRun) === '`') {
+          openRun++;
+        }
         const close: number = this.findCodeEnd(text, index, end);
         if (close > index) {
           this.flush(nodes, buffer);
           buffer = '';
           const node: MdInline = new MdInline();
           node.type = MdInlineType.INLINE_CODE;
-          node.text = text.substring(index + 1, close);
+          node.text = text.substring(index + openRun, close);
           nodes.push(node);
-          index = close + 1;
+          index = close + openRun;
           continue;
         }
       }
@@ -270,13 +274,16 @@ export class InlineParser {
     }
     const result: InlineParseResult = new InlineParseResult();
     const node: MdInline = new MdInline();
-    const label: string = text.substring(start + 1, close);
+    // IMAGE 时 start 指向 '!'，label 应从其后第 2 位起（否则 alt 会带上多余的 '['）。
+    const label: string = text.substring(start + (isImage ? 2 : 1), close);
     if (isImage) {
       node.type = MdInlineType.IMAGE;
       node.text = label;
       node.url = text.substring(close + 2, urlEnd).trim();
     } else {
       node.type = MdInlineType.LINK;
+      // label 原文存入 text：flattener（阅读视图）与 WysiwygCodec（编辑器往返）都读它。
+      node.text = label;
       node.url = text.substring(close + 2, urlEnd).trim();
       node.children = this.parseRange(text, start + 1, close, depth + 1);
     }
@@ -305,7 +312,7 @@ export class InlineParser {
     if (contentStart >= end || text.charAt(contentStart) === ' ' || text.charAt(contentStart) === '\n') {
       return null;
     }
-    const close: number = this.findMarkerEnd(text, contentStart, end, marker, runLength);
+    const close: number = this.findMarkerEnd(text, contentStart, end, marker, runLength, depth);
     if (close <= contentStart || close > end) {
       return null;
     }
@@ -329,9 +336,14 @@ export class InlineParser {
     return result;
   }
 
-  /** 查找成对强调标记的结束位置。 */
+  /**
+   * 查找成对强调标记的结束位置。
+   * 候选闭合需满足：run 长度 >= 开串长度、前字符非空白（右侧翼）；
+   * '_' 额外要求后继非字母数字（CommonMark 词内下划线 _snake_case_ 不成强调）。
+   * 不可闭合时尝试按嵌套强调解析内层（如 *a **b** c*），成功则跳过继续找外层闭合。
+   */
   private findMarkerEnd(text: string, start: number, end: number, marker: string,
-    markerLength: number): number {
+    markerLength: number, depth: number): number {
     let index: number = start;
     while (index < end) {
       const ch: string = text.charAt(index);
@@ -340,31 +352,42 @@ export class InlineParser {
         continue;
       }
       if (ch === '`') {
+        let run: number = 0;
+        while (index + run < end && text.charAt(index + run) === '`') {
+          run++;
+        }
         const codeEnd: number = this.findCodeEnd(text, index, end);
         if (codeEnd > index) {
-          index = codeEnd + 1;
+          index = codeEnd + run;
           continue;
         }
+        index += run;
+        continue;
       }
-      if (ch === marker && this.markerMatches(text, index, end, marker, markerLength)) {
-        return index;
+      if (ch === marker) {
+        let run: number = 0;
+        while (index + run < end && text.charAt(index + run) === marker) {
+          run++;
+        }
+        const prev: string = index > 0 ? text.charAt(index - 1) : ' ';
+        const next: string = index + run < end ? text.charAt(index + run) : '';
+        const intrawordUnderscore: boolean = marker === '_' && this.isWordChar(next);
+        if (run >= markerLength && prev !== ' ' && prev !== '\n' && prev !== '\t' && !intrawordUnderscore) {
+          return index;
+        }
+        if (depth < 16) {
+          const inner: InlineParseResult | null = this.parseEmphasis(text, index, end, marker, depth + 1);
+          if (inner !== null) {
+            index = inner.next;
+            continue;
+          }
+        }
+        index += run;
+        continue;
       }
       index++;
     }
     return -1;
-  }
-
-  private markerMatches(text: string, index: number, end: number, marker: string,
-    markerLength: number): boolean {
-    if (index + markerLength > end) {
-      return false;
-    }
-    for (let offset: number = 0; offset < markerLength; offset++) {
-      if (text.charAt(index + offset) !== marker) {
-        return false;
-      }
-    }
-    return true;
   }
 
   /** 查找行内代码结束位置（返回结束反引号索引）。 */

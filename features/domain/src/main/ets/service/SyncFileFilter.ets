@@ -87,11 +87,6 @@ export class SyncPathGuard {
     return SyncFileFilter.isSyncable(lastSeg);
   }
 
-  /** 判断路径是否属于受保护的远端文件（禁止写入、移动或删除）。 */
-  public static isProtectedRemotePath(relativePath: string): boolean {
-    return !SyncPathGuard.isSafeSyncPath(relativePath);
-  }
-
   /** 校验远端回收站目标路径（必须位于 .trash/ 下且无路径穿越）。 */
   public static isValidTrashPath(relativePath: string): boolean {
     if (!relativePath.startsWith('.trash/') || relativePath.endsWith('/') ||

@@ -227,6 +227,52 @@ export default function markdownParserTest() {
       expect(inlines[0].text).assertEqual('3 * 4 * 5');
     });
 
+    it('parsesMarkdownLinkLabel', 0, () => {
+      const document = MarkdownParser.parse('click [label](https://a.com) here');
+      const inlines = document.blocks[0].inlines;
+      expect(inlines[1].type).assertEqual(MdInlineType.LINK);
+      expect(inlines[1].text).assertEqual('label');
+      expect(inlines[1].url).assertEqual('https://a.com');
+    });
+
+    it('parsesNestedEmphasisInsideEmphasis', 0, () => {
+      // *a **b** c*：外层斜体包住内层粗体，不再拆散为独立块。
+      const document = MarkdownParser.parse('*a **b** c*');
+      const inlines = document.blocks[0].inlines;
+      expect(inlines[0].type).assertEqual(MdInlineType.EMPHASIS);
+      expect(inlines[0].children[1].type).assertEqual(MdInlineType.STRONG);
+      expect(inlines[0].children[1].children[0].text).assertEqual('b');
+    });
+
+    it('parsesMultiBacktickCodeSpan', 0, () => {
+      // ``code`` 是双反引号代码（内容不含反引号），不再吞并后续 `single`。
+      const document = MarkdownParser.parse('``code`` and `single`');
+      const inlines = document.blocks[0].inlines;
+      expect(inlines[0].type).assertEqual(MdInlineType.INLINE_CODE);
+      expect(inlines[0].text).assertEqual('code');
+      expect(inlines[2].type).assertEqual(MdInlineType.INLINE_CODE);
+      expect(inlines[2].text).assertEqual('single');
+    });
+
+    it('rejectsIntrawordUnderscoreEmphasis', 0, () => {
+      // CommonMark：词内下划线 _snake_case_ 不成强调，独立 _em_ 仍是斜体。
+      const document = MarkdownParser.parse('_snake_case_var and _em_');
+      const inlines = document.blocks[0].inlines;
+      expect(inlines[0].type).assertEqual(MdInlineType.TEXT);
+      expect(inlines[0].text).assertEqual('_snake_case_var and ');
+      expect(inlines[1].type).assertEqual(MdInlineType.EMPHASIS);
+      expect(inlines[1].children[0].text).assertEqual('em');
+    });
+
+    it('parsesInlineImageLabelWithoutBracket', 0, () => {
+      // 行内 ![alt](img.png) 的 alt 不应带上多余的 '['（曾导致 WYSIWYG 往返损坏为 ![[alt](img.png)）。
+      const document = MarkdownParser.parse('text ![alt](img.png) end');
+      const inlines = document.blocks[0].inlines;
+      expect(inlines[1].type).assertEqual(MdInlineType.IMAGE);
+      expect(inlines[1].text).assertEqual('alt');
+      expect(inlines[1].url).assertEqual('img.png');
+    });
+
     it('parsesStrikethrough', 0, () => {
       const document = MarkdownParser.parse('~~已删除~~');
       expect(document.blocks[0].inlines[0].type).assertEqual(MdInlineType.STRIKETHROUGH);
