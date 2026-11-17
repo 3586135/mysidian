@@ -10,6 +10,11 @@ const LOG: Logger = new Logger('MySidianSearchVM');
  * 搜索与导航视图模型：全文搜索、快速切换器。
  * 搜索模式：0 全文 / 1 标签 / 2 属性（frontmatter）。
  */
+export class TagSortMode {
+  static readonly COUNT_DESC: number = 0;
+  static readonly NAME_ASC: number = 1;
+}
+
 @ObservedV2
 export class SearchViewModel {
   @Trace keyword: string = '';
@@ -17,6 +22,8 @@ export class SearchViewModel {
   @Trace busy: boolean = false;
   @Trace searchMode: number = 0;
   @Trace tagChips: TagRef[] = [];
+  /** 标签排序方式：0 按数量从多到少（默认）/ 1 按名称 A→Z。 */
+  @Trace tagSortMode: number = TagSortMode.COUNT_DESC;
   @Trace activeTag: string = '';
   @Trace quickKeyword: string = '';
   @Trace quickItems: NoteRow[] = [];
@@ -88,7 +95,7 @@ export class SearchViewModel {
         filtered.push(ref);
       }
     }
-    this.tagChips = filtered;
+    this.tagChips = SearchViewModel.sortTags(filtered, this.tagSortMode);
     if (this.activeTag.length === 0) {
       this.hits = [];
       return;
@@ -126,6 +133,29 @@ export class SearchViewModel {
       return;
     }
     this.hits = hits;
+  }
+
+  /** 切换标签排序方式（数量从多到少 / 按名称）并立即重排已加载标签。 */
+  public setTagSortMode(mode: number): void {
+    const normalized: number = mode === TagSortMode.NAME_ASC ?
+      TagSortMode.NAME_ASC : TagSortMode.COUNT_DESC;
+    if (this.tagSortMode === normalized) {
+      return;
+    }
+    this.tagSortMode = normalized;
+    this.tagChips = SearchViewModel.sortTags(this.tagChips, normalized);
+  }
+
+  /** 对标签集合排序：0 按引用数降序（同数按名称升序），1 按名称升序。 */
+  public static sortTags(items: TagRef[], mode: number): TagRef[] {
+    const sorted: TagRef[] = items.slice();
+    sorted.sort((left: TagRef, right: TagRef): number => {
+      if (mode === TagSortMode.COUNT_DESC && left.count !== right.count) {
+        return right.count - left.count;
+      }
+      return left.tag.localeCompare(right.tag);
+    });
+    return sorted;
   }
 
   /** 选中或取消选中一个标签，展示使用该标签的笔记（统一小写，#Tag/#tag 同一标签）。 */

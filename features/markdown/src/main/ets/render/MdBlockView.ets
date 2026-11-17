@@ -47,6 +47,8 @@ export struct MdBlockView {
     (target: string, onResult: (uri: string) => void): void => {};
   /** 点击图片全屏预览。 */
   @Event onPreviewImage: (uri: string) => void = (_uri: string): void => {};
+  /** 阅读态正文是否处于长按划词选中状态。 */
+  @Event onSelectionChange: (active: boolean) => void = (_active: boolean): void => {};
   @Local dataTasks: DataViewTask[] = [];
   @Local dataLoaded: boolean = false;
   private dataViewQuery: DataViewQuery | null = null;
@@ -164,6 +166,9 @@ export struct MdBlockView {
           },
           onOpenTag: (tag: string): void => {
             this.onOpenTag(tag);
+          },
+          onSelectionChange: (active: boolean): void => {
+            this.onSelectionChange(active);
           }
         })
       } else if (this.block.type === MdBlockType.LIST) {
@@ -223,6 +228,9 @@ export struct MdBlockView {
         },
         onOpenTag: (tag: string): void => {
           this.onOpenTag(tag);
+        },
+        onSelectionChange: (active: boolean): void => {
+          this.onSelectionChange(active);
         }
       })
     }
@@ -270,6 +278,9 @@ export struct MdBlockView {
             },
             onOpenTag: (tag: string): void => {
               this.onOpenTag(tag);
+            },
+            onSelectionChange: (active: boolean): void => {
+              this.onSelectionChange(active);
             }
           })
           if (item.isTask && this.taskHasMeta(item)) {
@@ -398,6 +409,10 @@ export struct MdBlockView {
         .fontFamily('monospace')
         .fontColor($r('app.color.md_text_primary'))
         .width('100%')
+        .copyOption(CopyOptions.LocalDevice)
+        .onTextSelectionChange((selectionStart: number, selectionEnd: number) => {
+          this.onSelectionChange(selectionEnd > selectionStart);
+        })
     }
     .width('100%')
     .alignItems(HorizontalAlign.Start)
@@ -499,6 +514,9 @@ export struct MdBlockView {
               },
               onOpenTag: (tag: string): void => {
                 this.onOpenTag(tag);
+              },
+              onSelectionChange: (active: boolean): void => {
+                this.onSelectionChange(active);
               }
             })
             if (this.taskHasMeta(task.item)) {
@@ -548,6 +566,9 @@ export struct MdBlockView {
               },
               onOpenTag: (tag: string): void => {
                 this.onOpenTag(tag);
+              },
+              onSelectionChange: (active: boolean): void => {
+                this.onSelectionChange(active);
               }
             })
               .layoutWeight(1)
@@ -570,6 +591,9 @@ export struct MdBlockView {
               },
               onOpenTag: (tag: string): void => {
                 this.onOpenTag(tag);
+              },
+              onSelectionChange: (active: boolean): void => {
+                this.onSelectionChange(active);
               }
             })
               .layoutWeight(1)
@@ -605,6 +629,9 @@ export struct MdBlockView {
           },
           onOpenTag: (tag: string): void => {
             this.onOpenTag(tag);
+          },
+          onSelectionChange: (active: boolean): void => {
+            this.onSelectionChange(active);
           }
         })
         if (index < this.dataViewListItems.length - 1) {
@@ -661,6 +688,9 @@ export struct MdBlockView {
           },
           onOpenTag: (tag: string): void => {
             this.onOpenTag(tag);
+          },
+          onSelectionChange: (active: boolean): void => {
+            this.onSelectionChange(active);
           }
         })
       }
@@ -689,6 +719,7 @@ export struct MdBlockView {
           .maxLines(2)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
           .layoutWeight(1)
+          .copyOption(CopyOptions.LocalDevice)
         Text(this.block.calloutType)
           .fontSize(this.fontSize - 4)
           .fontColor($r('app.color.md_text_secondary'))
@@ -709,6 +740,9 @@ export struct MdBlockView {
           },
           onOpenTag: (tag: string): void => {
             this.onOpenTag(tag);
+          },
+          onSelectionChange: (active: boolean): void => {
+            this.onSelectionChange(active);
           }
         })
         .width('100%')
@@ -742,6 +776,7 @@ export struct MdBlockView {
         .fontColor($r('app.color.md_text_primary'))
         .textAlign(TextAlign.Center)
         .width('100%')
+        .copyOption(CopyOptions.LocalDevice)
     }
     .width('100%')
     .alignItems(HorizontalAlign.Center)
@@ -776,6 +811,9 @@ export struct MdBlockView {
               },
               onOpenTag: (tag: string): void => {
                 this.onOpenTag(tag);
+              },
+              onSelectionChange: (active: boolean): void => {
+                this.onSelectionChange(active);
               }
             })
               .layoutWeight(1)
@@ -798,6 +836,9 @@ export struct MdBlockView {
                 },
                 onOpenTag: (tag: string): void => {
                   this.onOpenTag(tag);
+                },
+                onSelectionChange: (active: boolean): void => {
+                  this.onSelectionChange(active);
                 }
               })
                 .layoutWeight(1)
@@ -843,6 +884,7 @@ export struct MdBlockView {
         .fontFamily('monospace')
         .fontColor($r('app.color.md_text_secondary'))
         .width('100%')
+        .copyOption(CopyOptions.LocalDevice)
     }
     .width('100%')
     .padding(10)
@@ -875,6 +917,7 @@ export struct MdBlockView {
           .fontSize(this.fontSize - 3)
           .fontColor($r('app.color.md_text_secondary'))
           .margin({ top: 4 })
+          .copyOption(CopyOptions.LocalDevice)
       }
     }
     .width('100%')
@@ -920,6 +963,9 @@ export struct MdBlockView {
             },
             onPreviewImage: (uri: string): void => {
               this.onPreviewImage(uri);
+            },
+            onSelectionChange: (active: boolean): void => {
+              this.onSelectionChange(active);
             }
           })
         }, (block: MdBlock, index: number): string =>

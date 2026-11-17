@@ -31,6 +31,7 @@ export struct MdPropertiesView {
         .fontSize(this.fontSize - 1)
         .fontColor($r('app.color.md_text_secondary'))
         .width(92)
+        .copyOption(CopyOptions.LocalDevice)
       if (this.isTagProperty(property)) {
         Flex({ wrap: FlexWrap.Wrap }) {
           ForEach(this.tagTokens(property), (token: string, index: number) => {
@@ -53,11 +54,13 @@ export struct MdPropertiesView {
           .layoutWeight(1)
           .maxLines(8)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
+          .copyOption(CopyOptions.LocalDevice)
       } else if (property.value.length > 0) {
         Text(property.value)
           .fontSize(this.fontSize - 1)
           .fontColor($r('app.color.md_text_primary'))
           .layoutWeight(1)
+          .copyOption(CopyOptions.LocalDevice)
       } else {
         Text('—')
           .fontSize(this.fontSize - 1)

@@ -98,7 +98,7 @@
     },
     {
       "name": "settings_about",
-      "value": "MySidian v1.0.0 · 鸿蒙原生 Markdown 笔记应用\n仓库保存在应用沙箱，导出 zip 后可在桌面 Obsidian 中打开。"
+      "value": "MySidian v1.2.0 · 鸿蒙原生 Markdown 笔记应用\n仓库保存在应用沙箱，导出 zip 后可在桌面 Obsidian 中打开。"
     },
     {
       "name": "sync_title",
@@ -1727,6 +1727,66 @@
     {
       "name": "msg_external_readonly_create_desc",
       "value": "当前尚未创建笔记仓库，请先新建仓库并自动导入该文件后再编辑。"
+    },
+    {
+      "name": "search_tags_sort_count",
+      "value": "数量↓"
+    },
+    {
+      "name": "search_tags_sort_name",
+      "value": "名称"
+    },
+    {
+      "name": "drawer_all_notes",
+      "value": "全部笔记"
+    },
+    {
+      "name": "drawer_bookmarks",
+      "value": "收藏"
+    },
+    {
+      "name": "drawer_trash",
+      "value": "最近删除"
+    },
+    {
+      "name": "drawer_folders",
+      "value": "文件夹"
+    },
+    {
+      "name": "drawer_new_folder",
+      "value": "新建文件夹"
+    },
+    {
+      "name": "drawer_empty_folders",
+      "value": "暂无文件夹，点击下方新建"
+    },
+    {
+      "name": "drawer_open_a11y",
+      "value": "打开文件夹侧栏"
+    },
+    {
+      "name": "drawer_close_a11y",
+      "value": "收起文件夹侧栏"
+    },
+    {
+      "name": "drawer_note_count",
+      "value": "%d 篇笔记"
+    },
+    {
+      "name": "files_view_mode_a11y",
+      "value": "切换列表/时间线/宫格视图"
+    },
+    {
+      "name": "files_view_list_label",
+      "value": "列表"
+    },
+    {
+      "name": "files_view_timeline_label",
+      "value": "时间线"
+    },
+    {
+      "name": "files_view_grid_label",
+      "value": "宫格"
     }
   ]
 }

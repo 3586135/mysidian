@@ -6,6 +6,7 @@ import { SyncState, TagRef } from '@ohos/domain';
 import { Logger } from '@ohos/common';
 import { SettingsSheet, SettingsSheetMode } from '../view/design/SettingsSheet';
 import { SyncSettingsSheet } from '../view/design/SyncSettingsSheet';
+import { TrashSheet } from '../view/design/TrashSheet';
 import { VaultManagerSheet } from '../view/design/VaultManagerSheet';
 import { TreeItemMenuSheet } from '../view/design/TreeItemMenuSheet';
 import {
@@ -19,9 +20,9 @@ import { WorkspaceView, DesignViewMode, WorkspaceBackSignal } from '../view/desi
 import { CreateVaultRequest, DesignDialogKind, DialogHost } from '../view/design/DialogHost';
 import { GraphLayout, GraphLayoutStats } from '../viewmodel/GraphLayout';
 import { DesignPalette } from '../viewmodel/DesignPalette';
-import { SearchViewModel } from '../viewmodel/SearchViewModel';
+import { SearchViewModel, TagSortMode } from '../viewmodel/SearchViewModel';
 import { SyncViewModel } from '../viewmodel/SyncViewModel';
-import { RecentNoteItem, RootFolderSummary, VaultViewModel } from '../viewmodel/VaultViewModel';
+import { DrawerFolderItem, RecentNoteItem, VaultViewModel } from '../viewmodel/VaultViewModel';
 import { AbilityContextHolder } from '../defaultability/AbilityContextHolder';
 
 const LOG: Logger = new Logger('DesignIndex');
@@ -259,10 +260,18 @@ struct DesignIndex {
   @Local topInset: number = 0;             // 状态栏避让高度（vp）
   @Local bottomInset: number = 0;          // 导航条避让高度（vp）
   @Local filesCollapsed: boolean = false;  // 文件页：目录区收起
-  @Local filesSegment: number = 0;         // 文件页分段：0 书架 / 1 书签 / 2 时间轴 / 3 目录
-  @Local currentFolderPath: string = '';   // 文件页：当前目录穿透浏览路径（'' 为根目录）
-  @Local filesGridMode: boolean = false;   // 文件页视图模式：false 素雅列表视图 / true 书架封面宫格
-  @Local filesSortMode: number = 0;       // 收藏/文件夹页签笔记排序：0 默认 / 1 最近修改 / 2 文件名
+  @Local filesSegment: number = 0;         // 文件页子页签：0 笔记 / 1 收藏
+  @Local currentFolderPath: string = '';   // 文件页：当前抽屉选中的文件夹路径（'' 为全部笔记）
+  @Local filesViewMode: number = 0;        // 文件页视图模式：0 素雅列表 / 1 时间线流 / 2 书架宫格
+  @Local filesSortMode: number = 0;        // 笔记排序：0 默认 / 1 最近修改 / 2 文件名
+  @Local showFolderDrawer: boolean = false;// 左侧文件夹抽屉开关
+  @Local drawerDragDeltaVp: number = 0;    // 抽屉拖动手势实时偏移（vp）
+  @Local screenWidthVp: number = 390;      // 根容器宽度（vp，抽屉宽度与位移基准）
+  @Local expandedDrawerDirs: string[] = [];// 左侧抽屉内展开的子目录路径列表
+  @Local showHomeTrashSheet: boolean = false; // 抽屉打开的回收站浮层
+  @Local subSwipeOffsetVp: number = 0;     // 顶部子页签 Swiper 手势偏移（vp）
+  @Local subSwiperWidthVp: number = 0;     // 顶部子页签 Swiper 宽度（vp）
+  @Local segBarWidthVp: number = 0;        // 顶部子页签胶囊容器宽度（vp）
   @Local searchKeyword: string = '';       // 搜索页：关键词
   @Local searchRows: DesignSearchRow[] = [];// 搜索页：命中结果（含高亮分段）
   @Local selectedGraphPath: string = '';   // 图谱页：选中节点路径（默认当前笔记）
@@ -299,9 +308,12 @@ struct DesignIndex {
 
   // ===== 控制器与画布上下文 =====
   private swiperController: SwiperController = new SwiperController();
+  private filesSubSwiperController: SwiperController = new SwiperController();
   // 工作台返回首页重建 Swiper 时的初始页签（避免每次滑动联动重置动画）
   private homeInitialTabIndex: number = 0;
+  private homeInitialSubTab: number = 0;
   private filesScroller: Scroller = new Scroller();
+  private bookmarksScroller: Scroller = new Scroller();
   private canvasSettings: RenderingContextSettings = new RenderingContextSettings(true);
   private canvasContext: CanvasRenderingContext2D = new CanvasRenderingContext2D(this.canvasSettings);
   private graphNodeMap: Map<string, DesignGraphNodeVp> = new Map<string, DesignGraphNodeVp>();
@@ -466,6 +478,10 @@ struct DesignIndex {
     const nextId: number = this.vm.currentVault.id;
     if (this.lastObservedVaultId >= 0 && nextId !== this.lastObservedVaultId) {
       this.currentFolderPath = '';
+      this.showFolderDrawer = false;
+      this.drawerDragDeltaVp = 0;
+      this.expandedDrawerDirs = [];
+      this.showHomeTrashSheet = false;
       this.homeMenuPath = '';
       this.homeDialogKind = DesignDialogKind.NONE;
       this.homeDialogTargetPath = '';
@@ -483,7 +499,7 @@ struct DesignIndex {
     this.lastObservedVaultId = nextId;
   }
 
-  /** 系统返回键：工作台 → 信号下发工作台返回链；首页 → 依次关闭浮层 → 退出子目录 → 默认退出。 */
+  /** 系统返回键：工作台 → 信号下发工作台返回链；首页 → 依次关闭浮层/抽屉 → 清目录筛选 → 默认退出。 */
   onBackPress(): boolean {
     if (this.homeDialogKind !== DesignDialogKind.NONE) {
       this.getUIContext().animateTo({ duration: 220, curve: Curve.Friction }, () => {
@@ -496,6 +512,12 @@ struct DesignIndex {
       this.itemLongPressConsumed = false;
       this.getUIContext().animateTo({ duration: 220, curve: Curve.Friction }, () => {
         this.homeMenuPath = '';
+      });
+      return true;
+    }
+    if (this.showHomeTrashSheet) {
+      this.getUIContext().animateTo({ duration: 220, curve: Curve.Friction }, () => {
+        this.showHomeTrashSheet = false;
       });
       return true;
     }
@@ -528,6 +550,10 @@ struct DesignIndex {
       this.workspaceBackSignal.request();
       return true;
     }
+    if (this.showFolderDrawer) {
+      this.closeFolderDrawer();
+      return true;
+    }
     if (this.showFabMenu) {
       this.toggleFabMenu();
       return true;
@@ -536,9 +562,8 @@ struct DesignIndex {
       this.closeQuickEditor();
       return true;
     }
-    if (this.currentTabIndex === 0 && this.currentFolderPath.length > 0 &&
-      (this.filesSegment === 0 || this.filesSegment === 3)) {
-      this.navigateFolderUp();
+    if (this.currentTabIndex === 0 && this.filesSegment === 0 && this.currentFolderPath.length > 0) {
+      this.selectFolderFilter('');
       return true;
     }
     return false;
@@ -547,7 +572,7 @@ struct DesignIndex {
   build() {
     Stack({ alignContent: Alignment.Bottom }) {
       if (this.viewMode === DesignViewMode.HOME) {
-        this.homeContent()
+        this.homeDrawerShell()
       } else {
         WorkspaceView({
           vm: this.vm,
@@ -662,6 +687,21 @@ struct DesignIndex {
         })
       }
 
+      // 首页回收站浮层（左侧抽屉「最近删除」入口打开）
+      if (this.showHomeTrashSheet) {
+        TrashSheet({
+          vm: this.vm,
+          onClose: (): void => {
+            this.getUIContext().animateTo({ duration: 220, curve: Curve.Friction }, () => {
+              this.showHomeTrashSheet = false;
+            });
+          },
+          onNoteMutated: (): void => {
+            this.onHomeNoteMutated();
+          }
+        })
+      }
+
       // 首页条目操作菜单（长按卡片 / 点按右侧更多入口）
       if (this.homeMenuPath.length > 0) {
         TreeItemMenuSheet({
@@ -677,7 +717,7 @@ struct DesignIndex {
             });
           },
           onOpenFolder: (folder: string): void => {
-            this.enterFolder(folder);
+            this.selectFolderFilter(folder);
           },
           onNewNoteInFolder: (folder: string): void => {
             this.vm.createNote(folder).then((): void => {
@@ -739,12 +779,407 @@ struct DesignIndex {
     .height('100%')
     .backgroundColor($r('app.color.design_bg'))
     .onAreaChange((_oldArea: Area, newArea: Area) => {
+      const w: number = Number(newArea.width);
+      if (w > 0) {
+        this.screenWidthVp = w;
+      }
       // 布局形态变化后重新评估键盘避让策略（宽屏无底部悬浮导航栏）。
-      const wide: boolean = Number(newArea.width) >= 600;
+      const wide: boolean = w >= 600;
       if (wide !== this.isWide) {
         this.isWide = wide;
         this.applyKeyboardAvoidMode();
       }
+    })
+  }
+
+  /**
+   * 首页外壳：底层为左侧文件夹抽屉，上层为随手势/弹性动效向右推开的主视图（带圆角、微缩与遮罩）。
+   */
+  @Builder
+  homeDrawerShell() {
+    Stack({ alignContent: Alignment.TopStart }) {
+      if (this.vm.vaults.length > 0) {
+        this.folderDrawerPanel()
+      }
+
+      Stack({ alignContent: Alignment.TopStart }) {
+        this.homeContent()
+
+        if (this.showFolderDrawer || this.drawerDragDeltaVp !== 0) {
+          Column()
+            .width('100%')
+            .height('100%')
+            .backgroundColor($r('app.color.design_dim'))
+            .opacity(0.15 + 0.35 * this.drawerProgress)
+            .onClick(() => {
+              this.closeFolderDrawer();
+            })
+            .gesture(
+              PanGesture({ fingers: 1, direction: PanDirection.Left, distance: 8 })
+                .onActionUpdate((event: GestureEvent) => {
+                  if (event.offsetX < 0) {
+                    this.drawerDragDeltaVp = Math.max(-this.drawerWidthVp, event.offsetX);
+                  }
+                })
+                .onActionEnd((event: GestureEvent) => {
+                  if (event.offsetX <= -56 || event.velocityX <= -400) {
+                    this.closeFolderDrawer();
+                  } else {
+                    this.openFolderDrawer();
+                  }
+                })
+                .onActionCancel(() => {
+                  this.openFolderDrawer();
+                })
+            )
+        }
+      }
+      .width('100%')
+      .height('100%')
+      .backgroundColor($r('app.color.design_bg'))
+      .borderRadius(this.drawerProgress > 0.02 ? 24 : 0)
+      .clip(this.drawerProgress > 0.02)
+      .shadow(this.drawerProgress > 0.02 ? {
+        radius: 28,
+        color: $r('app.color.design_shadow'),
+        offsetX: -8,
+        offsetY: 4
+      } : { radius: 0, color: Color.Transparent })
+      .scale({ x: 1 - 0.03 * this.drawerProgress, y: 1 - 0.03 * this.drawerProgress })
+      .translate({ x: this.drawerOffsetVp })
+    }
+    .width('100%')
+    .height('100%')
+    .clip(true)
+    .backgroundColor($r('app.color.design_bg'))
+    .transition(TransitionEffect.OPACITY.animation({ duration: 240, curve: Curve.Friction }))
+  }
+
+  /** 左侧抽屉文件夹面板：全部笔记 / 收藏 / 最近删除 + 嵌套文件夹树 + 底部新建文件夹。 */
+  @Builder
+  folderDrawerPanel() {
+    Column({ space: 12 }) {
+      // 抽屉顶栏：仓库切换胶囊 + 收起抽屉按钮
+      Row({ space: 8 }) {
+        Row({ space: 6 }) {
+          Stack() {
+            SymbolGlyph($r('sys.symbol.folder'))
+              .fontSize(14)
+              .fontColor([$r('app.color.design_accent')])
+          }
+          .width(26)
+          .height(26)
+          .borderRadius(8)
+          .backgroundColor($r('app.color.design_accent_weak'))
+
+          Text(this.vm.currentVault.name)
+            .fontSize(15)
+            .fontWeight(FontWeight.Bold)
+            .fontColor($r('app.color.design_text_primary'))
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+            .layoutWeight(1)
+
+          SymbolGlyph($r('sys.symbol.chevron_down'))
+            .fontSize(12)
+            .fontColor([$r('app.color.design_text_secondary')])
+        }
+        .layoutWeight(1)
+        .height(38)
+        .padding({ left: 8, right: 10 })
+        .borderRadius(14)
+        .backgroundColor($r('app.color.design_surface_solid'))
+        .border({ width: 1, color: $r('app.color.design_stroke') })
+        .alignItems(VerticalAlign.Center)
+        .onClick(() => {
+          this.closeFolderDrawer();
+          this.getUIContext().animateTo({ duration: 240, curve: Curve.Friction }, () => {
+            this.showVaultManager = true;
+          });
+        })
+
+        Stack() {
+          SymbolGlyph($r('sys.symbol.chevron_left'))
+            .fontSize(16)
+            .fontColor([$r('app.color.design_text_primary')])
+        }
+        .width(36)
+        .height(36)
+        .borderRadius(18)
+        .backgroundColor($r('app.color.design_surface_solid'))
+        .border({ width: 1, color: $r('app.color.design_stroke') })
+        .accessibilityText($r('app.string.drawer_close_a11y'))
+        .onClick(() => {
+          this.closeFolderDrawer();
+        })
+      }
+      .width('100%')
+      .alignItems(VerticalAlign.Center)
+
+      Scroll() {
+        Column({ space: 14 }) {
+          // 智能视图分组：全部笔记 / 收藏 / 最近删除
+          Column() {
+            this.drawerQuickRow(0)
+            Divider()
+              .color($r('app.color.design_divider'))
+              .margin({ left: 46, right: 12 })
+            this.drawerQuickRow(1)
+            Divider()
+              .color($r('app.color.design_divider'))
+              .margin({ left: 46, right: 12 })
+            this.drawerQuickRow(2)
+          }
+          .width('100%')
+          .padding(6)
+          .borderRadius(18)
+          .backgroundColor($r('app.color.design_surface_solid'))
+          .border({ width: 1, color: $r('app.color.design_stroke') })
+
+          // 文件夹目录树
+          Column({ space: 8 }) {
+            Row() {
+              Text($r('app.string.drawer_folders'))
+                .fontSize(12)
+                .fontWeight(FontWeight.Medium)
+                .fontColor($r('app.color.design_text_secondary'))
+                .layoutWeight(1)
+              Text(`${this.drawerFolders.length}`)
+                .fontSize(11)
+                .fontColor($r('app.color.design_text_secondary'))
+            }
+            .width('100%')
+            .padding({ left: 4, right: 4 })
+
+            Column({ space: 2 }) {
+              if (this.drawerFolders.length === 0) {
+                Text($r('app.string.drawer_empty_folders'))
+                  .fontSize(12.5)
+                  .fontColor($r('app.color.design_text_secondary'))
+                  .width('100%')
+                  .padding({ top: 18, bottom: 18, left: 12, right: 12 })
+                  .textAlign(TextAlign.Center)
+              } else {
+                ForEach(this.drawerFolders, (folder: DrawerFolderItem) => {
+                  this.drawerFolderRow(folder)
+                }, (folder: DrawerFolderItem) =>
+                  `${folder.path}_${folder.noteCount}_${this.isDrawerDirExpanded(folder.path)}_${this.filesSegment === 0 && this.currentFolderPath === folder.path}`)
+              }
+            }
+            .width('100%')
+            .padding(6)
+            .borderRadius(18)
+            .backgroundColor($r('app.color.design_surface_solid'))
+            .border({ width: 1, color: $r('app.color.design_stroke') })
+          }
+          .width('100%')
+        }
+        .width('100%')
+      }
+      .layoutWeight(1)
+      .align(Alignment.Top)
+      .scrollBar(BarState.Off)
+      .edgeEffect(EdgeEffect.Spring)
+      .margin({ bottom: 2 })
+
+      // 抽屉底部操作：新建文件夹
+      Row({ space: 8 }) {
+        SymbolGlyph($r('sys.symbol.plus'))
+          .fontSize(16)
+          .fontColor([$r('app.color.design_accent')])
+        Text($r('app.string.drawer_new_folder'))
+          .fontSize(14)
+          .fontWeight(FontWeight.Medium)
+          .fontColor($r('app.color.design_accent'))
+      }
+      .width('100%')
+      .height(44)
+      .justifyContent(FlexAlign.Center)
+      .alignItems(VerticalAlign.Center)
+      .borderRadius(22)
+      .backgroundColor($r('app.color.design_accent_weak'))
+      .border({ width: 1, color: $r('app.color.design_stroke') })
+      .onClick(() => {
+        this.vm.pendingFolderPrefix = '';
+        this.openHomeDialog(DesignDialogKind.NEW_FOLDER, '');
+      })
+    }
+    .width(this.drawerWidthVp)
+    .height('100%')
+    .padding({
+      top: this.topInset + 10,
+      bottom: Math.max(this.bottomInset, 14) + 10,
+      left: 14,
+      right: 14
+    })
+    .backgroundColor($r('app.color.design_bg'))
+    .border({ width: { right: 1 }, color: $r('app.color.design_divider') })
+    .translate({ x: -24 * (1 - this.drawerProgress) })
+    .opacity(0.4 + 0.6 * this.drawerProgress)
+    .hitTestBehavior(this.showFolderDrawer ? HitTestMode.Default : HitTestMode.None)
+  }
+
+  /** 抽屉顶部的智能筛选行（kind: 0 全部笔记 / 1 收藏 / 2 最近删除，直接读取响应式状态）。 */
+  @Builder
+  drawerQuickRow(kind: number) {
+    Row({ space: 10 }) {
+      Stack() {
+        SymbolGlyph(this.drawerQuickIcon(kind))
+          .fontSize(16)
+          .fontColor([this.drawerQuickSelected(kind) ?
+            $r('app.color.design_accent') : $r('app.color.design_text_secondary')])
+      }
+      .width(30)
+      .height(30)
+      .borderRadius(9)
+      .backgroundColor(this.drawerQuickSelected(kind) ?
+        $r('app.color.design_accent_weak') : $r('app.color.design_elevated'))
+
+      Text(this.drawerQuickLabel(kind))
+        .fontSize(14.5)
+        .fontWeight(this.drawerQuickSelected(kind) ? FontWeight.Bold : FontWeight.Medium)
+        .fontColor($r('app.color.design_text_primary'))
+        .layoutWeight(1)
+        .maxLines(1)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
+
+      if (kind !== 2) {
+        Text(`${kind === 0 ? this.allMarkdownCount : this.vm.bookmarks.length}`)
+          .fontSize(12)
+          .fontWeight(this.drawerQuickSelected(kind) ? FontWeight.Bold : FontWeight.Normal)
+          .fontColor(this.drawerQuickSelected(kind) ?
+            $r('app.color.design_accent') : $r('app.color.design_text_secondary'))
+      } else {
+        SymbolGlyph($r('sys.symbol.chevron_right'))
+          .fontSize(12)
+          .fontColor([$r('app.color.design_text_secondary')])
+          .opacity(0.6)
+      }
+    }
+    .width('100%')
+    .height(44)
+    .padding({ left: 8, right: 10 })
+    .borderRadius(12)
+    .backgroundColor(this.drawerQuickSelected(kind) ?
+      $r('app.color.design_accent_weak') : Color.Transparent)
+    .alignItems(VerticalAlign.Center)
+    .onClick(() => {
+      this.onDrawerQuickTap(kind);
+    })
+  }
+
+  private drawerQuickIcon(kind: number): Resource {
+    if (kind === 1) {
+      return $r('sys.symbol.star_fill');
+    }
+    if (kind === 2) {
+      return $r('sys.symbol.trash');
+    }
+    return $r('sys.symbol.doc_plaintext');
+  }
+
+  private drawerQuickLabel(kind: number): Resource {
+    if (kind === 1) {
+      return $r('app.string.drawer_bookmarks');
+    }
+    if (kind === 2) {
+      return $r('app.string.drawer_trash');
+    }
+    return $r('app.string.drawer_all_notes');
+  }
+
+  private drawerQuickSelected(kind: number): boolean {
+    if (kind === 0) {
+      return this.filesSegment === 0 && this.currentFolderPath.length === 0;
+    }
+    if (kind === 1) {
+      return this.filesSegment === 1;
+    }
+    return false;
+  }
+
+  private onDrawerQuickTap(kind: number): void {
+    if (kind === 0) {
+      this.selectFolderFilter('');
+      return;
+    }
+    if (kind === 1) {
+      this.closeFolderDrawer();
+      this.changeTab(0);
+      this.selectFilesSegment(1);
+      return;
+    }
+    this.closeFolderDrawer();
+    this.getUIContext().animateTo({ duration: 220, curve: Curve.Friction }, () => {
+      this.showHomeTrashSheet = true;
+    });
+  }
+
+  /** 抽屉内的文件夹条目（支持展开子目录、选中筛选、长按或右侧更多操作）。 */
+  @Builder
+  drawerFolderRow(folder: DrawerFolderItem) {
+    Row({ space: 6 }) {
+      if (folder.hasChildren) {
+        Stack() {
+          SymbolGlyph(this.isDrawerDirExpanded(folder.path) ?
+            $r('sys.symbol.chevron_down') : $r('sys.symbol.chevron_right'))
+            .fontSize(12)
+            .fontColor([$r('app.color.design_text_secondary')])
+        }
+        .width(22)
+        .height(28)
+        .alignContent(Alignment.Center)
+        .onClick(() => {
+          this.toggleDrawerDir(folder.path);
+        })
+      } else {
+        Row()
+          .width(22)
+      }
+
+      Stack() {
+        SymbolGlyph($r('sys.symbol.folder'))
+          .fontSize(15)
+          .fontColor([this.tintFgOf(folder.path)])
+      }
+      .width(28)
+      .height(28)
+      .borderRadius(8)
+      .backgroundColor(this.tintPillOf(folder.path))
+
+      Text(folder.name)
+        .fontSize(14.5)
+        .fontWeight(this.filesSegment === 0 && this.currentFolderPath === folder.path ?
+          FontWeight.Bold : FontWeight.Medium)
+        .fontColor($r('app.color.design_text_primary'))
+        .layoutWeight(1)
+        .maxLines(1)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
+
+      Text(`${folder.noteCount}`)
+        .fontSize(12)
+        .fontColor(this.filesSegment === 0 && this.currentFolderPath === folder.path ?
+          this.tintFgOf(folder.path) : $r('app.color.design_text_secondary'))
+
+      this.itemMoreButton(folder.path, true, this.tintFgOf(folder.path), true)
+    }
+    .width('100%')
+    .height(44)
+    .padding({ left: 6 + folder.depth * 14, right: 6 })
+    .borderRadius(12)
+    .backgroundColor(this.filesSegment === 0 && this.currentFolderPath === folder.path ?
+      this.tintBgOf(folder.path) : Color.Transparent)
+    .border({
+      width: 0.8,
+      color: this.filesSegment === 0 && this.currentFolderPath === folder.path ?
+        this.tintPillOf(folder.path) : Color.Transparent
+    })
+    .alignItems(VerticalAlign.Center)
+    .gestureModifier(this.longPressFor(folder.path, true))
+    .onClick(() => {
+      this.handleCardTap(() => {
+        this.selectFolderFilter(folder.path);
+      });
     })
   }
 
@@ -763,6 +1198,7 @@ struct DesignIndex {
       .height('100%')
       .indicator(false)
       .loop(false)
+      .disableSwipe(this.showFolderDrawer || this.drawerDragDeltaVp !== 0)
       .onGestureSwipe((_index: number, extraInfo: SwiperAnimationEvent) => {
         // 手势滑动：滑块实时跟手并轻微收缩
         this.swipeOffsetVp = extraInfo.currentOffset;
@@ -920,81 +1356,137 @@ struct DesignIndex {
   @Builder
   filesPage() {
     Stack({ alignContent: Alignment.Top }) {
-      // 底层滚动内容区：向上滚动时直接穿过顶栏毛玻璃控件下方，实现实时动态色彩透射模糊
-      Scroll(this.filesScroller) {
-        Column({ space: 12 }) {
-          if (this.vm.vaults.length === 0) {
+      if (this.vm.vaults.length === 0) {
+        Scroll(this.filesScroller) {
+          Column({ space: 12 }) {
             this.onboardCard()
-          } else if (this.filesSegment === 0) {
-            this.shelfSegmentContent()
-          } else if (this.filesSegment === 1) {
-            this.bookmarkSegmentContent()
-          } else if (this.filesSegment === 2) {
-            this.timelineSegmentContent()
-          } else {
-            this.folderSegmentContent()
           }
+          .width('100%')
+          .padding({
+            left: BAR_SIDE_VP,
+            right: BAR_SIDE_VP,
+            top: this.topInset + 62,
+            bottom: CAPSULE_HEIGHT_VP + BAR_BOTTOM_VP + this.bottomInset + 24
+          })
         }
         .width('100%')
-        .padding({
-          left: BAR_SIDE_VP,
-          right: BAR_SIDE_VP,
-          top: this.topInset + (this.vm.vaults.length > 0 ? 108 : 62),
-          bottom: CAPSULE_HEIGHT_VP + BAR_BOTTOM_VP + this.bottomInset + 24
+        .height('100%')
+        .align(Alignment.Top)
+        .scrollBar(BarState.Off)
+        .edgeEffect(EdgeEffect.Spring)
+      } else {
+        // 内层子页签 Swiper（笔记 ↔ 收藏）：SELF_FIRST 保证先划完顶部子页签，再向右滑无缝切到底栏「搜索」
+        Swiper(this.filesSubSwiperController) {
+          Scroll(this.filesScroller) {
+            Column({ space: 10 }) {
+              this.notesSegmentContent()
+            }
+            .width('100%')
+            .padding({
+              left: BAR_SIDE_VP,
+              right: BAR_SIDE_VP,
+              top: this.topInset + 114,
+              bottom: CAPSULE_HEIGHT_VP + BAR_BOTTOM_VP + this.bottomInset + 24
+            })
+          }
+          .width('100%')
+          .height('100%')
+          .align(Alignment.Top)
+          .scrollBar(BarState.Off)
+          .edgeEffect(EdgeEffect.Spring)
+
+          Scroll(this.bookmarksScroller) {
+            Column({ space: 10 }) {
+              this.bookmarkSegmentContent()
+            }
+            .width('100%')
+            .padding({
+              left: BAR_SIDE_VP,
+              right: BAR_SIDE_VP,
+              top: this.topInset + 114,
+              bottom: CAPSULE_HEIGHT_VP + BAR_BOTTOM_VP + this.bottomInset + 24
+            })
+          }
+          .width('100%')
+          .height('100%')
+          .align(Alignment.Top)
+          .scrollBar(BarState.Off)
+          .edgeEffect(EdgeEffect.Spring)
+        }
+        .index(this.homeInitialSubTab)
+        .width('100%')
+        .height('100%')
+        .indicator(false)
+        .loop(false)
+        .effectMode(EdgeEffect.None)
+        .nestedScroll(SwiperNestedScrollMode.SELF_FIRST)
+        .disableSwipe(this.showFolderDrawer || this.drawerDragDeltaVp !== 0)
+        .onAreaChange((_oldArea: Area, newArea: Area) => {
+          const w: number = Number(newArea.width);
+          if (w > 0) {
+            this.subSwiperWidthVp = w;
+          }
+        })
+        .onGestureSwipe((_index: number, extraInfo: SwiperAnimationEvent) => {
+          this.subSwipeOffsetVp = extraInfo.currentOffset;
+        })
+        .onAnimationStart((_index: number, targetIndex: number, _extraInfo: SwiperAnimationEvent) => {
+          this.springSubSegmentTo(targetIndex);
+        })
+        .onChange((index: number) => {
+          if (index !== this.filesSegment) {
+            this.springSubSegmentTo(index);
+          }
         })
       }
-      .width('100%')
-      .height('100%')
-      .align(Alignment.Top)
-      .scrollBar(BarState.Off)
-      .edgeEffect(EdgeEffect.Spring)
 
-      // 悬浮顶栏与毛玻璃分段胶囊
+      // 悬浮顶栏（抽屉开关 + 作用域标题 + 日历/视图切换）与毛玻璃双子页签胶囊
       Column({ space: 10 }) {
-        // 顶栏：有仓库时显示切换器 + 日记/视图按钮；0 仓库时只显示应用标题，避免孤立下拉箭头与无用按钮
-        Row({ space: 8 }) {
+        Row({ space: 10 }) {
           if (this.vm.vaults.length > 0) {
-            Row({ space: 6 }) {
-              Text(this.vm.currentVault.name)
-                .fontSize(24)
-                .fontWeight(FontWeight.Bold)
-                .fontColor($r('app.color.design_text_primary'))
+            this.drawerMenuButton()
+
+            Column({ space: 1 }) {
+              Row({ space: 5 }) {
+                Text(this.currentFolderPath.length > 0 ?
+                  this.folderLeafName(this.currentFolderPath) : this.vm.currentVault.name)
+                  .fontSize(20)
+                  .fontWeight(FontWeight.Bold)
+                  .fontColor($r('app.color.design_text_primary'))
+                  .maxLines(1)
+                  .textOverflow({ overflow: TextOverflow.Ellipsis })
+                  .constraintSize({ maxWidth: 180 })
+                if (this.currentFolderPath.length === 0) {
+                  SymbolGlyph($r('sys.symbol.chevron_down'))
+                    .fontSize(12)
+                    .fontColor([$r('app.color.design_text_secondary')])
+                }
+              }
+              .alignItems(VerticalAlign.Center)
+
+              Text(this.currentFolderPath.length > 0 ?
+                `${this.vm.currentVault.name} · ${this.scopedNotes.length}` :
+                $r('app.string.drawer_note_count', this.scopedNotes.length))
+                .fontSize(11)
+                .fontColor($r('app.color.design_text_secondary'))
                 .maxLines(1)
                 .textOverflow({ overflow: TextOverflow.Ellipsis })
-                .constraintSize({ maxWidth: 200 })
-              Stack() {
-                SymbolGlyph($r('sys.symbol.chevron_down'))
-                  .fontSize(13)
-                  .fontColor([$r('app.color.design_text_secondary')])
-              }
-              .width(24)
-              .height(24)
-              .borderRadius(12)
-              .backgroundColor($r('app.color.design_glass_bg'))
-              .backgroundBlurStyle(BlurStyle.Thin)
-              .border({ width: 1, color: $r('app.color.design_glass_stroke') })
             }
-            .alignItems(VerticalAlign.Center)
+            .alignItems(HorizontalAlign.Start)
             .layoutWeight(1)
             .onClick(() => {
-              this.getUIContext().animateTo({ duration: 240, curve: Curve.Friction }, () => {
-                this.showVaultManager = true;
-              });
-            })
-
-            this.headerIconCircle($r('sys.symbol.calendar'), $r('app.string.design_more_daily'), (): void => {
-              this.openDailyAndJump();
-            })
-
-            this.headerIconCircle(
-              this.filesGridMode ? $r('sys.symbol.list_bullet') : $r('sys.symbol.square_grid_2x2'),
-              $r('app.string.files_view_grid'),
-              (): void => {
-                this.getUIContext().animateTo({ duration: 220, curve: Curve.Friction }, () => {
-                  this.filesGridMode = !this.filesGridMode;
+              if (this.currentFolderPath.length > 0) {
+                this.openFolderDrawer();
+              } else {
+                this.getUIContext().animateTo({ duration: 240, curve: Curve.Friction }, () => {
+                  this.showVaultManager = true;
                 });
               }
-            )
+            })
+
+            this.headerIconCircle(0)
+
+            this.headerIconCircle(1)
           } else {
             Text($r('app.string.app_title'))
               .fontSize(24)
@@ -1007,7 +1499,6 @@ struct DesignIndex {
         .alignItems(VerticalAlign.Center)
         .padding({ left: BAR_SIDE_VP, right: BAR_SIDE_VP })
 
-        // 分段胶囊切换栏（笔记 N | 收藏 N | 时间线 | 文件夹）
         if (this.vm.vaults.length > 0) {
           this.filesSegmentBar()
         }
@@ -1020,13 +1511,88 @@ struct DesignIndex {
     }
     .width('100%')
     .height('100%')
+    .parallelGesture(
+      PanGesture({ fingers: 1, direction: PanDirection.Right, distance: 14 })
+        .tag('drawer_open_pan')
+        .onActionUpdate((event: GestureEvent) => {
+          if (event.offsetX > 0 && !this.showFolderDrawer) {
+            this.drawerDragDeltaVp = Math.min(this.drawerWidthVp, event.offsetX);
+          }
+        })
+        .onActionEnd((event: GestureEvent) => {
+          if (this.showFolderDrawer) {
+            this.drawerDragDeltaVp = 0;
+            return;
+          }
+          if (event.offsetX >= 68 || event.velocityX >= 420) {
+            this.openFolderDrawer();
+          } else {
+            this.closeFolderDrawer();
+          }
+        })
+        .onActionCancel(() => {
+          if (!this.showFolderDrawer) {
+            this.closeFolderDrawer();
+          }
+        })
+    )
+    .onGestureJudgeBegin((gestureInfo: GestureInfo, event: BaseGestureEvent): GestureJudgeResult => {
+      if (gestureInfo.tag === 'drawer_open_pan') {
+        if (this.vm.vaults.length === 0 || this.currentTabIndex !== 0 ||
+          this.filesSegment !== 0 || this.showFolderDrawer) {
+          return GestureJudgeResult.REJECT;
+        }
+        if (event.fingerList.length > 0 && event.fingerList[0].globalX < 24) {
+          return GestureJudgeResult.REJECT;
+        }
+      }
+      return GestureJudgeResult.CONTINUE;
+    })
   }
 
-  /** 顶栏右侧 38vp 透明毛玻璃圆形图标按钮（随底层滚动内容实时变色模糊）。 */
+  /** 左上角抽屉开关圆形毛玻璃按钮（三道圆角横线）。 */
   @Builder
-  headerIconCircle(icon: Resource, a11y: Resource, action: () => void) {
+  drawerMenuButton() {
     Stack() {
-      SymbolGlyph(icon)
+      Column({ space: 4 }) {
+        Row()
+          .width(16)
+          .height(2)
+          .borderRadius(1)
+          .backgroundColor($r('app.color.design_text_primary'))
+        Row()
+          .width(12)
+          .height(2)
+          .borderRadius(1)
+          .backgroundColor($r('app.color.design_text_primary'))
+        Row()
+          .width(16)
+          .height(2)
+          .borderRadius(1)
+          .backgroundColor($r('app.color.design_text_primary'))
+      }
+      .alignItems(HorizontalAlign.Start)
+    }
+    .width(38)
+    .height(38)
+    .borderRadius(19)
+    .backgroundColor($r('app.color.design_glass_bg'))
+    .backgroundBlurStyle(BlurStyle.Thin)
+    .border({ width: 1, color: $r('app.color.design_glass_stroke') })
+    .shadow({ radius: 10, color: $r('app.color.design_shadow'), offsetY: 3 })
+    .accessibilityText($r('app.string.drawer_open_a11y'))
+    .onClick(() => {
+      this.openFolderDrawer();
+    })
+  }
+
+  /** 顶栏右侧 38vp 透明毛玻璃圆形图标按钮（kind: 0 日记 / 1 视图模式切换，直接读状态确保 V2 响应式刷新）。 */
+  @Builder
+  headerIconCircle(kind: number) {
+    Stack() {
+      SymbolGlyph(kind === 0 ? $r('sys.symbol.calendar') :
+        (this.filesViewMode === 1 ? $r('sys.symbol.clock') :
+          (this.filesViewMode === 2 ? $r('sys.symbol.square_grid_2x2') : $r('sys.symbol.list_bullet'))))
         .fontSize(17)
         .fontColor([$r('app.color.design_text_primary')])
     }
@@ -1037,105 +1603,73 @@ struct DesignIndex {
     .backgroundBlurStyle(BlurStyle.Thin)
     .border({ width: 1, color: $r('app.color.design_glass_stroke') })
     .shadow({ radius: 10, color: $r('app.color.design_shadow'), offsetY: 3 })
-    .accessibilityText(a11y)
+    .accessibilityText(kind === 0 ?
+      $r('app.string.design_more_daily') : $r('app.string.files_view_mode_a11y'))
     .onClick(() => {
-      action();
+      if (kind === 0) {
+        this.openDailyAndJump();
+      } else {
+        this.cycleFilesViewMode();
+      }
     })
   }
 
-  /** 笔记页分段胶囊切换栏（未选中项采用透明毛玻璃模糊，随背景动态变化）。 */
+  /** 笔记页双子页签胶囊切换栏（笔记 | 收藏，滑块跟手滑动）。 */
   @Builder
   filesSegmentBar() {
-    Row() {
-      Stack() {
-        Text($r('app.string.files_seg_shelf', this.vm.vaultFiles.length))
-          .fontSize(13)
-          .fontWeight(this.filesSegment === 0 ? FontWeight.Bold : FontWeight.Medium)
-          .fontColor(this.filesSegment === 0 ?
-            $r('app.color.design_surface_solid') : $r('app.color.design_text_primary'))
-          .maxLines(1)
-      }
-      .layoutWeight(1)
-      .height(36)
-      .borderRadius(18)
-      .backgroundColor(this.filesSegment === 0 ?
-        $r('app.color.design_text_primary') : $r('app.color.design_glass_bg'))
-      .backgroundBlurStyle(this.filesSegment === 0 ? BlurStyle.NONE : BlurStyle.Thin)
-      .border({
-        width: 1,
-        color: this.filesSegment === 0 ? $r('app.color.design_stroke') : $r('app.color.design_glass_stroke')
-      })
-      .onClick(() => {
-        this.selectFilesSegment(0);
-      })
+    Column() {
+      Stack({ alignContent: Alignment.Start }) {
+        Stack()
+          .width(this.subSegmentPillWidthVp)
+          .height(32)
+          .borderRadius(16)
+          .backgroundColor($r('app.color.design_text_primary'))
+          .translate({ x: this.subSegmentSliderXVp })
 
-      Stack() {
-        Text($r('app.string.files_seg_bookmarks', this.vm.bookmarks.length))
-          .fontSize(13)
-          .fontWeight(this.filesSegment === 1 ? FontWeight.Bold : FontWeight.Medium)
-          .fontColor(this.filesSegment === 1 ?
-            $r('app.color.design_surface_solid') : $r('app.color.design_text_primary'))
-          .maxLines(1)
-      }
-      .layoutWeight(1)
-      .height(36)
-      .borderRadius(18)
-      .backgroundColor(this.filesSegment === 1 ?
-        $r('app.color.design_text_primary') : $r('app.color.design_glass_bg'))
-      .backgroundBlurStyle(this.filesSegment === 1 ? BlurStyle.NONE : BlurStyle.Thin)
-      .border({
-        width: 1,
-        color: this.filesSegment === 1 ? $r('app.color.design_stroke') : $r('app.color.design_glass_stroke')
-      })
-      .margin({ left: 6 })
-      .onClick(() => {
-        this.selectFilesSegment(1);
-      })
+        Row() {
+          Stack() {
+            Text($r('app.string.files_seg_shelf', this.scopedNotes.length))
+              .fontSize(13)
+              .fontWeight(this.filesSegment === 0 ? FontWeight.Bold : FontWeight.Medium)
+              .fontColor(this.filesSegment === 0 ?
+                $r('app.color.design_surface_solid') : $r('app.color.design_text_primary'))
+              .maxLines(1)
+          }
+          .layoutWeight(1)
+          .height('100%')
+          .onClick(() => {
+            this.selectFilesSegment(0);
+          })
 
-      Stack() {
-        Text($r('app.string.files_seg_timeline'))
-          .fontSize(13)
-          .fontWeight(this.filesSegment === 2 ? FontWeight.Bold : FontWeight.Medium)
-          .fontColor(this.filesSegment === 2 ?
-            $r('app.color.design_surface_solid') : $r('app.color.design_text_primary'))
-          .maxLines(1)
+          Stack() {
+            Text($r('app.string.files_seg_bookmarks', this.vm.bookmarks.length))
+              .fontSize(13)
+              .fontWeight(this.filesSegment === 1 ? FontWeight.Bold : FontWeight.Medium)
+              .fontColor(this.filesSegment === 1 ?
+                $r('app.color.design_surface_solid') : $r('app.color.design_text_primary'))
+              .maxLines(1)
+          }
+          .layoutWeight(1)
+          .height('100%')
+          .onClick(() => {
+            this.selectFilesSegment(1);
+          })
+        }
+        .width('100%')
+        .height('100%')
       }
-      .layoutWeight(1)
-      .height(36)
-      .borderRadius(18)
-      .backgroundColor(this.filesSegment === 2 ?
-        $r('app.color.design_text_primary') : $r('app.color.design_glass_bg'))
-      .backgroundBlurStyle(this.filesSegment === 2 ? BlurStyle.NONE : BlurStyle.Thin)
-      .border({
-        width: 1,
-        color: this.filesSegment === 2 ? $r('app.color.design_stroke') : $r('app.color.design_glass_stroke')
-      })
-      .margin({ left: 6 })
-      .onClick(() => {
-        this.selectFilesSegment(2);
-      })
-
-      Stack() {
-        Text($r('app.string.files_seg_folders'))
-          .fontSize(13)
-          .fontWeight(this.filesSegment === 3 ? FontWeight.Bold : FontWeight.Medium)
-          .fontColor(this.filesSegment === 3 ?
-            $r('app.color.design_surface_solid') : $r('app.color.design_text_primary'))
-          .maxLines(1)
-      }
-      .layoutWeight(1)
-      .height(36)
-      .borderRadius(18)
-      .backgroundColor(this.filesSegment === 3 ?
-        $r('app.color.design_text_primary') : $r('app.color.design_glass_bg'))
-      .backgroundBlurStyle(this.filesSegment === 3 ? BlurStyle.NONE : BlurStyle.Thin)
-      .border({
-        width: 1,
-        color: this.filesSegment === 3 ? $r('app.color.design_stroke') : $r('app.color.design_glass_stroke')
-      })
-      .margin({ left: 6 })
-      .onClick(() => {
-        this.selectFilesSegment(3);
+      .width('100%')
+      .height(38)
+      .padding(3)
+      .borderRadius(19)
+      .backgroundColor($r('app.color.design_glass_bg'))
+      .backgroundBlurStyle(BlurStyle.Thin)
+      .border({ width: 1, color: $r('app.color.design_glass_stroke') })
+      .onAreaChange((_oldArea: Area, newArea: Area) => {
+        const w: number = Number(newArea.width);
+        if (w > 0) {
+          this.segBarWidthVp = w;
+        }
       })
     }
     .width('100%')
@@ -1143,14 +1677,29 @@ struct DesignIndex {
   }
 
   private selectFilesSegment(seg: number): void {
-    this.getUIContext().animateTo({ duration: 220, curve: Curve.Friction }, () => {
-      this.filesSegment = seg;
-      this.currentFolderPath = '';
-    });
-    this.filesScroller.scrollEdge(Edge.Top);
+    const clamped: number = Math.max(0, Math.min(1, seg));
+    if (this.vm.vaults.length > 0) {
+      this.filesSubSwiperController.changeIndex(clamped, true);
+    }
+    this.springSubSegmentTo(clamped);
+    if (clamped === 0) {
+      this.filesScroller.scrollEdge(Edge.Top);
+    } else {
+      this.bookmarksScroller.scrollEdge(Edge.Top);
+    }
   }
 
-  /** 收藏/文件夹页签的笔记排序切换胶囊行（默认 / 最近修改 / 文件名）。 */
+  /** 子页签滑块弹性归位。 */
+  private springSubSegmentTo(targetIndex: number): void {
+    const clamped: number = Math.max(0, Math.min(1, targetIndex));
+    this.getUIContext().animateTo({ curve: curves.springMotion(0.35, 0.85) }, () => {
+      this.filesSegment = clamped;
+      this.subSwipeOffsetVp = 0;
+    });
+    this.homeInitialSubTab = clamped;
+  }
+
+  /** 笔记排序切换胶囊行（默认 / 最近修改 / 文件名）。 */
   @Builder
   filesSortChips() {
     Row({ space: 6 }) {
@@ -1161,8 +1710,6 @@ struct DesignIndex {
       this.sortChip(1, $r('app.string.files_sort_mtime'))
       this.sortChip(2, $r('app.string.files_sort_name'))
     }
-    .width('100%')
-    .justifyContent(FlexAlign.End)
     .alignItems(VerticalAlign.Center)
   }
 
@@ -1193,59 +1740,60 @@ struct DesignIndex {
       })
   }
 
-  /** 分段 0：全部笔记视图（支持便签卡片宫格 / 经典列表双模式，目录点击原地穿透浏览）。 */
+  /** 分段 0：纯笔记视图（去除冗余文件夹/收藏堆叠，仅随抽屉所选文件夹或全部笔记呈现）。 */
   @Builder
-  shelfSegmentContent() {
-    Column({ space: 12 }) {
-      if (this.currentFolderPath.length > 0) {
-        this.folderBrowserContent()
-      } else if (this.filesGridMode) {
-        this.bookshelfGridView(true, false)
-      } else if (this.vm.rootFolders.length === 0 && this.vm.bookmarks.length === 0 && this.shelfNotes.length === 0) {
-        Text($r('app.string.design_files_empty'))
+  notesSegmentContent() {
+    Column({ space: 10 }) {
+      if (this.scopedNotes.length > 0 || this.currentFolderPath.length > 0) {
+        Row({ space: 8 }) {
+          if (this.currentFolderPath.length > 0) {
+            Row({ space: 5 }) {
+              SymbolGlyph($r('sys.symbol.folder'))
+                .fontSize(12)
+                .fontColor([this.tintFgOf(this.currentFolderPath)])
+              Text(this.folderLeafName(this.currentFolderPath))
+                .fontSize(11.5)
+                .fontWeight(FontWeight.Medium)
+                .fontColor(this.tintFgOf(this.currentFolderPath))
+                .maxLines(1)
+                .textOverflow({ overflow: TextOverflow.Ellipsis })
+              SymbolGlyph($r('sys.symbol.xmark'))
+                .fontSize(10)
+                .fontColor([this.tintFgOf(this.currentFolderPath)])
+            }
+            .padding({ left: 9, right: 8, top: 4, bottom: 4 })
+            .borderRadius(12)
+            .backgroundColor(this.tintPillOf(this.currentFolderPath))
+            .constraintSize({ maxWidth: 140 })
+            .onClick(() => {
+              this.selectFolderFilter('');
+            })
+          }
+          Blank()
+          this.filesSortChips()
+        }
+        .width('100%')
+        .alignItems(VerticalAlign.Center)
+      }
+
+      if (this.scopedNotes.length === 0) {
+        Text(this.currentFolderPath.length > 0 ?
+          $r('app.string.files_folder_empty') : $r('app.string.design_files_empty'))
           .fontSize(13)
           .fontColor($r('app.color.design_text_secondary'))
           .width('100%')
-          .padding({ top: 32, bottom: 32, left: 20, right: 20 })
+          .padding({ top: 36, bottom: 36, left: 20, right: 20 })
           .textAlign(TextAlign.Center)
+      } else if (this.filesViewMode === 2) {
+        this.bookshelfGridView(this.currentFolderPath.length === 0, false)
+      } else if (this.filesViewMode === 1) {
+        ForEach(this.scopedNotes, (item: RecentNoteItem, index: number) => {
+          this.timelineNoteRow(item, index)
+        }, (item: RecentNoteItem) => `tl_${this.currentFolderPath}_${this.filesSortMode}_${item.path}`)
       } else {
-        if (this.vm.rootFolders.length > 0) {
-          Column({ space: 8 }) {
-            ForEach(this.vm.rootFolders, (folder: RootFolderSummary) => {
-              this.folderRow(folder)
-            }, (folder: RootFolderSummary) => folder.path)
-          }
-          .width('100%')
-        }
-        if (this.vm.bookmarks.length > 0) {
-          Row({ space: 6 }) {
-            SymbolGlyph($r('sys.symbol.star_fill'))
-              .fontSize(13)
-              .fontColor([$r('app.color.design_accent')])
-            Text($r('app.string.bookmark_section'))
-              .fontSize(13)
-              .fontWeight(FontWeight.Medium)
-              .fontColor($r('app.color.design_text_secondary'))
-          }
-          .width('100%')
-          .margin({ top: 4 })
-
-          ForEach(this.vm.bookmarks, (path: string) => {
-            this.bookmarkNoteCard(path)
-          }, (path: string) => path)
-        }
-        if (this.shelfNotes.length > 0) {
-          Text($r('app.string.design_files_recent'))
-            .fontSize(13)
-            .fontWeight(FontWeight.Medium)
-            .fontColor($r('app.color.design_text_secondary'))
-            .width('100%')
-            .margin({ top: 4 })
-
-          ForEach(this.shelfNotes, (item: RecentNoteItem) => {
-            this.recentNoteCard(item)
-          }, (item: RecentNoteItem) => item.path)
-        }
+        ForEach(this.scopedNotes, (item: RecentNoteItem) => {
+          this.recentNoteCard(item)
+        }, (item: RecentNoteItem) => `note_${this.currentFolderPath}_${this.filesSortMode}_${item.path}`)
       }
     }
     .width('100%')
@@ -1260,244 +1808,29 @@ struct DesignIndex {
           .fontSize(13)
           .fontColor($r('app.color.design_text_secondary'))
           .width('100%')
-          .padding({ top: 32, bottom: 32, left: 20, right: 20 })
+          .padding({ top: 36, bottom: 36, left: 20, right: 20 })
           .textAlign(TextAlign.Center)
       } else {
-        this.filesSortChips()
+        Row() {
+          Blank()
+          this.filesSortChips()
+        }
+        .width('100%')
 
-        if (this.filesGridMode) {
+        if (this.filesViewMode === 2) {
           this.bookshelfGridView(false, true)
+        } else if (this.filesViewMode === 1) {
+          ForEach(this.bookmarkNotes, (item: RecentNoteItem, index: number) => {
+            this.timelineNoteRow(item, index)
+          }, (item: RecentNoteItem) => `bmtl_${this.filesSortMode}_${item.path}`)
         } else {
           ForEach(this.bookmarkNotes, (item: RecentNoteItem) => {
             this.bookmarkNoteCard(item.path)
-          }, (item: RecentNoteItem) => item.path)
+          }, (item: RecentNoteItem) => `bm_${this.filesSortMode}_${item.path}`)
         }
       }
     }
     .width('100%')
-  }
-
-  /** 分段 2：时间线笔记流（左真实日期/编号字牌 + 右素雅柔彩笔记卡）。 */
-  @Builder
-  timelineSegmentContent() {
-    Column({ space: 12 }) {
-      if (this.shelfNotes.length === 0) {
-        Text($r('app.string.design_files_empty'))
-          .fontSize(13)
-          .fontColor($r('app.color.design_text_secondary'))
-          .width('100%')
-          .padding({ top: 24, bottom: 24 })
-          .textAlign(TextAlign.Center)
-      } else {
-        ForEach(this.shelfNotes, (item: RecentNoteItem, index: number) => {
-          this.timelineNoteRow(item, index)
-        }, (item: RecentNoteItem) => item.path)
-      }
-    }
-    .width('100%')
-  }
-
-  /** 分段 3：文件夹与根目录笔记列表（支持原地逐级展开子目录与直属笔记，不跳转工作台）。 */
-  @Builder
-  folderSegmentContent() {
-    Column({ space: 10 }) {
-      if (this.currentFolderPath.length > 0) {
-        this.folderBrowserContent()
-      } else if (this.vm.rootFolders.length === 0 && this.rootNotes.length === 0) {
-        Text($r('app.string.files_folder_empty'))
-          .fontSize(13)
-          .fontColor($r('app.color.design_text_secondary'))
-          .width('100%')
-          .padding({ top: 32, bottom: 32, left: 20, right: 20 })
-          .textAlign(TextAlign.Center)
-      } else {
-        if (this.vm.rootFolders.length > 0) {
-          ForEach(this.vm.rootFolders, (folder: RootFolderSummary) => {
-            this.folderRow(folder)
-          }, (folder: RootFolderSummary) => folder.path)
-        }
-
-        if (this.rootNotes.length > 0) {
-          this.filesSortChips()
-
-          Text($r('app.string.files_root_notes_header', this.rootNotes.length))
-            .fontSize(12)
-            .fontWeight(FontWeight.Medium)
-            .fontColor($r('app.color.design_text_secondary'))
-            .width('100%')
-            .margin({ top: 4 })
-
-          if (this.filesGridMode) {
-            this.noteGridThreeCol(3, 0)
-          } else {
-            ForEach(this.rootNotes, (item: RecentNoteItem) => {
-              this.recentNoteCard(item)
-            }, (item: RecentNoteItem) => `root_${item.path}`)
-          }
-        }
-      }
-    }
-    .width('100%')
-  }
-
-  /** 原地目录浏览器：统一莫兰迪柔彩列表/宫格风格，支持多级子目录逐层进入与面包屑返回。 */
-  @Builder
-  folderBrowserContent() {
-    Column({ space: 10 }) {
-      this.folderBreadcrumbCard()
-
-      if (this.activeSubFolders.length === 0 && this.activeFolderNotes.length === 0) {
-        Text($r('app.string.files_folder_empty'))
-          .fontSize(13)
-          .fontColor($r('app.color.design_text_secondary'))
-          .width('100%')
-          .padding({ top: 32, bottom: 32, left: 20, right: 20 })
-          .textAlign(TextAlign.Center)
-      } else {
-        if (this.activeSubFolders.length > 0) {
-          ForEach(this.activeSubFolders, (folder: RootFolderSummary) => {
-            this.folderRow(folder)
-          }, (folder: RootFolderSummary) => folder.path)
-        }
-
-        if (this.activeFolderNotes.length > 0) {
-          this.filesSortChips()
-
-          if (this.activeSubFolders.length > 0) {
-            Text($r('app.string.files_folder_section_notes', this.activeFolderNotes.length))
-              .fontSize(12)
-              .fontWeight(FontWeight.Medium)
-              .fontColor($r('app.color.design_text_secondary'))
-              .width('100%')
-              .margin({ top: 4 })
-          }
-
-          if (this.filesGridMode) {
-            this.noteGridThreeCol(2, 0)
-          } else {
-            ForEach(this.activeFolderNotes, (item: RecentNoteItem) => {
-              this.recentNoteCard(item)
-            }, (item: RecentNoteItem) => `${this.currentFolderPath}_${item.path}`)
-          }
-        }
-      }
-    }
-    .width('100%')
-  }
-
-  /** 目录导航面包屑卡：继承当前文件夹低饱和纸色，提供返回上级与可点击祖先路径。 */
-  @Builder
-  folderBreadcrumbCard() {
-    Column({ space: 10 }) {
-      Row({ space: 10 }) {
-        Stack() {
-          SymbolGlyph($r('sys.symbol.chevron_left'))
-            .fontSize(16)
-            .fontColor([this.tintFgOf(this.currentFolderPath)])
-        }
-        .width(34)
-        .height(34)
-        .borderRadius(11)
-        .backgroundColor(this.tintPillOf(this.currentFolderPath))
-        .accessibilityText($r('app.string.files_folder_up'))
-        .onClick(() => {
-          this.navigateFolderUp();
-        })
-
-        Column({ space: 2 }) {
-          Text(this.folderLeafName(this.currentFolderPath))
-            .fontSize(16.5)
-            .fontWeight(FontWeight.Bold)
-            .fontColor($r('app.color.design_text_primary'))
-            .maxLines(1)
-            .textOverflow({ overflow: TextOverflow.Ellipsis })
-          if (this.activeSubFolders.length > 0 && this.activeFolderNotes.length > 0) {
-            Text($r('app.string.files_folder_summary', this.activeSubFolders.length, this.activeFolderNotes.length))
-              .fontSize(12)
-              .fontColor(this.tintFgOf(this.currentFolderPath))
-          } else if (this.activeSubFolders.length > 0) {
-            Text($r('app.string.files_folder_sub_count', this.activeSubFolders.length))
-              .fontSize(12)
-              .fontColor(this.tintFgOf(this.currentFolderPath))
-          } else {
-            Text($r('app.string.design_files_folder_count', this.activeFolderNotes.length))
-              .fontSize(12)
-              .fontColor(this.tintFgOf(this.currentFolderPath))
-          }
-        }
-        .alignItems(HorizontalAlign.Start)
-        .layoutWeight(1)
-
-        Stack() {
-          ThreeDotsIcon(3.2, 2.8, this.tintFgOf(this.currentFolderPath), 0.9)
-        }
-        .width(34)
-        .height(34)
-        .borderRadius(11)
-        .backgroundColor(this.tintPillOf(this.currentFolderPath))
-        .accessibilityText($r('app.string.files_folder_actions'))
-        .onClick(() => {
-          this.handleCardTap(() => {
-            this.openItemMenu(this.currentFolderPath, true);
-          });
-        })
-      }
-      .width('100%')
-      .alignItems(VerticalAlign.Center)
-
-      Scroll() {
-        Row({ space: 4 }) {
-          Text($r('app.string.files_folder_root'))
-            .fontSize(12)
-            .fontWeight(FontWeight.Medium)
-            .fontColor($r('app.color.design_text_secondary'))
-            .padding({ left: 9, right: 9, top: 4, bottom: 4 })
-            .borderRadius(9)
-            .backgroundColor($r('app.color.design_glass_bg'))
-            .border({ width: 0.8, color: $r('app.color.design_glass_stroke') })
-            .onClick(() => {
-              this.enterFolder('');
-            })
-
-          ForEach(this.folderBreadcrumbSegments(), (segPath: string) => {
-            Row({ space: 4 }) {
-              SymbolGlyph($r('sys.symbol.chevron_right'))
-                .fontSize(11)
-                .fontColor([$r('app.color.design_text_secondary')])
-                .opacity(0.6)
-              Text(this.folderLeafName(segPath))
-                .fontSize(12)
-                .fontWeight(segPath === this.currentFolderPath ? FontWeight.Bold : FontWeight.Medium)
-                .fontColor(segPath === this.currentFolderPath ?
-                  this.tintFgOf(this.currentFolderPath) : $r('app.color.design_text_secondary'))
-                .padding({ left: 9, right: 9, top: 4, bottom: 4 })
-                .borderRadius(9)
-                .backgroundColor(segPath === this.currentFolderPath ?
-                  this.tintPillOf(this.currentFolderPath) : $r('app.color.design_glass_bg'))
-                .border({
-                  width: 0.8,
-                  color: segPath === this.currentFolderPath ?
-                    this.tintPillOf(this.currentFolderPath) : $r('app.color.design_glass_stroke')
-                })
-                .maxLines(1)
-                .onClick(() => {
-                  this.enterFolder(segPath);
-                })
-            }
-            .alignItems(VerticalAlign.Center)
-          }, (segPath: string) => `${segPath}_${segPath === this.currentFolderPath}`)
-        }
-      }
-      .scrollable(ScrollDirection.Horizontal)
-      .scrollBar(BarState.Off)
-      .align(Alignment.Start)
-      .width('100%')
-    }
-    .width('100%')
-    .padding(12)
-    .borderRadius(18)
-    .backgroundColor(this.tintBgOf(this.currentFolderPath))
-    .border({ width: 0.8, color: this.tintPillOf(this.currentFolderPath) })
   }
 
   /**
@@ -1541,28 +1874,29 @@ struct DesignIndex {
     .width('100%')
   }
 
-  /** 共用三列莫兰迪便签卡片宫格（source: 0 全部 / 1 收藏 / 2 当前目录 / 3 根目录）。 */
+  /** 共用三列莫兰迪便签卡片宫格（source: 0 全部 / 1 收藏）。 */
   @Builder
   noteGridThreeCol(source: number, startFrom: number) {
     Column({ space: 16 }) {
-      ForEach(this.gridRowIndices(this.gridNotesForSource(source).length, startFrom),
-        (startIdx: number) => {
-          Row({ space: 12 }) {
-            ForEach([0, 1, 2], (colOffset: number) => {
-              if (startIdx + colOffset < this.gridNotesForSource(source).length) {
-                Column() {
-                  this.bookCoverCard(this.gridNotesForSource(source)[startIdx + colOffset], 130)
-                }
-                .layoutWeight(1)
-              } else {
-                Blank()
-                  .layoutWeight(1)
+      ForEach(this.gridNoteRows(source, startFrom), (row: RecentNoteItem[]) => {
+        Row({ space: 12 }) {
+          ForEach([0, 1, 2], (colOffset: number) => {
+            if (colOffset < row.length) {
+              Column() {
+                this.bookCoverCard(row[colOffset], 130)
               }
-            }, (colOffset: number) => `col_${source}_${startIdx}_${colOffset}`)
-          }
-          .width('100%')
-          .alignItems(VerticalAlign.Top)
-        }, (startIdx: number) => `row_${source}_${this.currentFolderPath}_${startIdx}`)
+              .layoutWeight(1)
+            } else {
+              Blank()
+                .layoutWeight(1)
+            }
+          }, (colOffset: number) =>
+            `col_${source}_${colOffset}_${colOffset < row.length ? row[colOffset].path : 'empty'}`)
+        }
+        .width('100%')
+        .alignItems(VerticalAlign.Top)
+      }, (row: RecentNoteItem[]) =>
+        `row_${source}_${this.currentFolderPath}_${this.filesSortMode}_${row.map((n: RecentNoteItem) => n.path).join('|')}`)
     }
     .width('100%')
   }
@@ -1886,7 +2220,7 @@ struct DesignIndex {
     .border({ width: 1, color: $r('app.color.design_stroke') })
   }
 
-  /** 汇总展示笔记列表（优先最近访问，不足时以仓库内笔记补足至最多 18 篇）。 */
+  /** 汇总展示笔记列表（供「更多 → 最近笔记」卡片使用）。 */
   @Computed
   get shelfNotes(): RecentNoteItem[] {
     const result: RecentNoteItem[] = [];
@@ -1902,7 +2236,7 @@ struct DesignIndex {
       if (result.length >= 18) {
         break;
       }
-      if (path.endsWith('.md') && !seen.has(path)) {
+      if (path.toLowerCase().endsWith('.md') && !seen.has(path)) {
         seen.add(path);
         result.push({
           path: path,
@@ -1914,27 +2248,58 @@ struct DesignIndex {
     return result;
   }
 
-  /** 根目录直属笔记列表（用于「文件夹」页签展示，按当前排序模式整理）。 */
+  /** 仓库内全部 Markdown 笔记数。 */
   @Computed
-  get rootNotes(): RecentNoteItem[] {
-    const result: RecentNoteItem[] = [];
+  get allMarkdownCount(): number {
+    let count: number = 0;
     for (const path of this.vm.vaultFiles) {
-      if (path.endsWith('.md') && path.indexOf('/') < 0) {
-        result.push({
-          path: path,
-          title: this.noteTitleFromPath(path),
-          openedAt: 0
-        });
+      if (path.toLowerCase().endsWith('.md')) {
+        count++;
       }
     }
-    return this.sortNoteList(result);
+    return count;
   }
 
-  /** 收藏笔记转为 RecentNoteItem 列表（按当前排序模式整理）。 */
+  /** 左侧抽屉选定范围（全部笔记 或 指定文件夹及其子目录）下的完整笔记列表（按排序模式整理）。 */
   @Computed
-  get bookmarkNotes(): RecentNoteItem[] {
+  get scopedNotes(): RecentNoteItem[] {
+    const recentTimeByPath: Map<string, number> = new Map<string, number>();
+    const recentOrder: string[] = [];
+    for (const recent of this.vm.recentNotes) {
+      if (!recentTimeByPath.has(recent.path)) {
+        recentTimeByPath.set(recent.path, recent.openedAt);
+        recentOrder.push(recent.path);
+      }
+    }
+    const prefix: string = this.currentFolderPath.length > 0 ? `${this.currentFolderPath}/` : '';
+    const allowed: Set<string> = new Set<string>();
+    for (const path of this.vm.vaultFiles) {
+      if (!path.toLowerCase().endsWith('.md')) {
+        continue;
+      }
+      if (prefix.length === 0 || path.startsWith(prefix)) {
+        allowed.add(path);
+      }
+    }
     const result: RecentNoteItem[] = [];
-    for (const path of this.vm.bookmarks) {
+    const seen: Set<string> = new Set<string>();
+    for (const path of recentOrder) {
+      if (!allowed.has(path)) {
+        continue;
+      }
+      seen.add(path);
+      const openedAt: number | undefined = recentTimeByPath.get(path);
+      result.push({
+        path: path,
+        title: this.noteTitleFromPath(path),
+        openedAt: openedAt !== undefined ? openedAt : 0
+      });
+    }
+    for (const path of allowed) {
+      if (seen.has(path)) {
+        continue;
+      }
+      seen.add(path);
       result.push({
         path: path,
         title: this.noteTitleFromPath(path),
@@ -1944,40 +2309,69 @@ struct DesignIndex {
     return this.sortNoteList(result);
   }
 
-  /** 当前浏览目录的直接子目录摘要（按当前仓库目录树计算）。 */
+  /** 左侧抽屉文件夹目录树平铺列表（随文件树与展开状态实时响应）。 */
   @Computed
-  get activeSubFolders(): RootFolderSummary[] {
-    if (this.vm.vaultFiles.length === 0 && this.vm.rootFolders.length === 0) {
+  get drawerFolders(): DrawerFolderItem[] {
+    if (this.vm.vaultFiles.length === 0 && this.vm.rootFolders.length === 0 &&
+      this.vm.treeItems.length === 0) {
       return [];
     }
-    return this.vm.listSubFolders(this.currentFolderPath);
+    return this.vm.listDrawerFolders(this.expandedDrawerDirs);
   }
 
-  /** 当前浏览目录的直属 Markdown 笔记列表（保留最近访问时间戳）。 */
+  /** 左侧抽屉宽度（窄屏占约 78%，折叠屏/平板封顶 304vp）。 */
   @Computed
-  get activeFolderNotes(): RecentNoteItem[] {
+  get drawerWidthVp(): number {
+    const candidate: number = Math.round(this.screenWidthVp * 0.78);
+    return Math.min(304, Math.max(240, candidate));
+  }
+
+  /** 主内容区随抽屉开关/拖动实时向右推开的水平位移（vp）。 */
+  @Computed
+  get drawerOffsetVp(): number {
+    const base: number = this.showFolderDrawer ? this.drawerWidthVp : 0;
+    const raw: number = base + this.drawerDragDeltaVp;
+    return Math.max(0, Math.min(this.drawerWidthVp, raw));
+  }
+
+  /** 抽屉展开进度（0..1，用于联动透明遮罩、微缩圆角与左侧视差）。 */
+  @Computed
+  get drawerProgress(): number {
+    if (this.drawerWidthVp <= 0) {
+      return 0;
+    }
+    return Math.max(0, Math.min(1, this.drawerOffsetVp / this.drawerWidthVp));
+  }
+
+  /** 顶部双子页签滑块宽度（vp）。 */
+  @Computed
+  get subSegmentPillWidthVp(): number {
+    const inner: number = Math.max(0, this.segBarWidthVp - 6);
+    return inner > 0 ? inner / 2 : 0;
+  }
+
+  /** 顶部双子页签滑块水平位移（vp，随子 Swiper 滑动跟手）。 */
+  @Computed
+  get subSegmentSliderXVp(): number {
+    const slotVp: number = this.subSegmentPillWidthVp;
+    if (slotVp <= 0) {
+      return 0;
+    }
+    const dragFrac: number = this.subSwiperWidthVp > 0 ?
+      (-this.subSwipeOffsetVp / this.subSwiperWidthVp) * slotVp : 0;
+    const raw: number = this.filesSegment * slotVp + dragFrac;
+    return Math.max(0, Math.min(slotVp, raw));
+  }
+
+  /** 收藏笔记转为 RecentNoteItem 列表（按当前排序模式整理）。 */
+  @Computed
+  get bookmarkNotes(): RecentNoteItem[] {
     const recentTimeByPath: Map<string, number> = new Map<string, number>();
     for (const recent of this.vm.recentNotes) {
       recentTimeByPath.set(recent.path, recent.openedAt);
     }
-    const prefix: string = this.currentFolderPath.length > 0 ? `${this.currentFolderPath}/` : '';
     const result: RecentNoteItem[] = [];
-    for (const path of this.vm.vaultFiles) {
-      if (!path.toLowerCase().endsWith('.md')) {
-        continue;
-      }
-      if (prefix.length === 0) {
-        if (path.indexOf('/') >= 0) {
-          continue;
-        }
-      } else {
-        if (!path.startsWith(prefix)) {
-          continue;
-        }
-        if (path.substring(prefix.length).indexOf('/') >= 0) {
-          continue;
-        }
-      }
+    for (const path of this.vm.bookmarks) {
       const openedAt: number | undefined = recentTimeByPath.get(path);
       result.push({
         path: path,
@@ -2016,52 +2410,61 @@ struct DesignIndex {
     if (source === 1) {
       return this.bookmarkNotes;
     }
-    if (source === 2) {
-      return this.activeFolderNotes;
-    }
-    if (source === 3) {
-      return this.rootNotes;
-    }
-    return this.shelfNotes;
+    return this.scopedNotes;
   }
 
-  /** 在首页目录树内原地进入子目录（不跳转工作台、不自动打开文件）。 */
-  private enterFolder(folderPath: string): void {
-    if (folderPath === this.currentFolderPath) {
-      return;
-    }
-    this.getUIContext().animateTo({ duration: 220, curve: Curve.Friction }, () => {
-      this.currentFolderPath = folderPath;
+  /** 展开左侧文件夹抽屉（弹性曲线）。 */
+  private openFolderDrawer(): void {
+    this.getUIContext().animateTo({ curve: curves.springMotion(0.38, 0.88) }, () => {
+      this.showFolderDrawer = true;
+      this.drawerDragDeltaVp = 0;
     });
+  }
+
+  /** 收起左侧文件夹抽屉（弹性曲线）。 */
+  private closeFolderDrawer(): void {
+    this.getUIContext().animateTo({ curve: curves.springMotion(0.38, 0.88) }, () => {
+      this.showFolderDrawer = false;
+      this.drawerDragDeltaVp = 0;
+    });
+  }
+
+  /** 在抽屉或菜单中选定文件夹筛选范围并回到「笔记」列表。 */
+  private selectFolderFilter(folderPath: string): void {
+    this.currentFolderPath = folderPath;
+    this.closeFolderDrawer();
+    this.changeTab(0);
+    this.selectFilesSegment(0);
     this.filesScroller.scrollEdge(Edge.Top);
   }
 
-  /** 目录浏览器返回上一级（已在根目录时不变）。 */
-  private navigateFolderUp(): void {
-    if (this.currentFolderPath.length === 0) {
-      return;
+  /** 切换抽屉内目录节点的子目录展开状态。 */
+  private toggleDrawerDir(path: string): void {
+    const idx: number = this.expandedDrawerDirs.indexOf(path);
+    const next: string[] = this.expandedDrawerDirs.slice();
+    if (idx >= 0) {
+      next.splice(idx, 1);
+    } else {
+      next.push(path);
     }
-    const lastSlash: number = this.currentFolderPath.lastIndexOf('/');
-    const parentPath: string = lastSlash > 0 ? this.currentFolderPath.substring(0, lastSlash) : '';
-    this.enterFolder(parentPath);
+    this.getUIContext().animateTo({ duration: 200, curve: Curve.Friction }, () => {
+      this.expandedDrawerDirs = next;
+    });
   }
 
-  /** 将当前浏览路径拆分为逐级可点击的累积路径列表。 */
-  private folderBreadcrumbSegments(): string[] {
-    if (this.currentFolderPath.length === 0) {
-      return [];
-    }
-    const parts: string[] = this.currentFolderPath.split('/');
-    const paths: string[] = [];
-    let acc: string = '';
-    for (const part of parts) {
-      if (part.length === 0) {
-        continue;
-      }
-      acc = acc.length === 0 ? part : `${acc}/${part}`;
-      paths.push(acc);
-    }
-    return paths;
+  private isDrawerDirExpanded(path: string): boolean {
+    return this.expandedDrawerDirs.includes(path);
+  }
+
+  /** 循环切换视图样式：素雅列表 → 时间线流 → 书架宫格。 */
+  private cycleFilesViewMode(): void {
+    const next: number = (this.filesViewMode + 1) % 3;
+    this.getUIContext().animateTo({ duration: 220, curve: Curve.Friction }, () => {
+      this.filesViewMode = next;
+    });
+    const label: Resource = next === 0 ? $r('app.string.files_view_list_label') :
+      (next === 1 ? $r('app.string.files_view_timeline_label') : $r('app.string.files_view_grid_label'));
+    this.toast(label);
   }
 
   private folderLeafName(folderPath: string): string {
@@ -2070,12 +2473,13 @@ struct DesignIndex {
   }
 
   /** 三列宫格每行起始下标。 */
-  private gridRowIndices(total: number, startFrom: number): number[] {
-    const indices: number[] = [];
-    for (let i: number = startFrom; i < total; i += 3) {
-      indices.push(i);
+  private gridNoteRows(source: number, startFrom: number): RecentNoteItem[][] {
+    const items: RecentNoteItem[] = this.gridNotesForSource(source);
+    const rows: RecentNoteItem[][] = [];
+    for (let i: number = startFrom; i < items.length; i += 3) {
+      rows.push(items.slice(i, i + 3));
     }
-    return indices;
+    return rows;
   }
 
   /** 按路径哈希稳定选取 5 款素雅低饱和纸色索引。 */
@@ -2200,47 +2604,31 @@ struct DesignIndex {
     .margin({ top: 24 })
   }
 
+  /** 搜索页标签排序切换胶囊（按数量从多到少 / 按名称）。 */
   @Builder
-  folderRow(folder: RootFolderSummary) {
-    Row({ space: 12 }) {
-      Stack() {
-        SymbolGlyph($r('sys.symbol.folder'))
-          .fontSize(17)
-          .fontColor([this.tintFgOf(folder.path)])
-      }
-      .width(34)
-      .height(34)
-      .borderRadius(10)
-      .backgroundColor(this.tintPillOf(folder.path))
-
-      Text(folder.name)
-        .fontSize(15)
-        .fontWeight(FontWeight.Medium)
-        .fontColor($r('app.color.design_text_primary'))
-        .layoutWeight(1)
-        .maxLines(1)
-        .textOverflow({ overflow: TextOverflow.Ellipsis })
-      Text($r('app.string.design_files_folder_count', folder.noteCount))
-        .fontSize(12)
-        .fontWeight(FontWeight.Medium)
-        .fontColor(this.tintFgOf(folder.path))
-        .padding({ left: 9, right: 9, top: 3, bottom: 3 })
-        .borderRadius(10)
-        .backgroundColor(this.tintPillOf(folder.path))
-      this.itemMoreButton(folder.path, true, this.tintFgOf(folder.path), false)
-    }
-    .width('100%')
-    .height(58)
-    .padding({ left: 12, right: 10 })
-    .borderRadius(16)
-    .backgroundColor(this.tintBgOf(folder.path))
-    .border({ width: 0.8, color: this.tintPillOf(folder.path) })
-    .gestureModifier(this.longPressFor(folder.path, true))
-    .onClick(() => {
-      this.handleCardTap(() => {
-        this.enterFolder(folder.path);
-      });
-    })
+  tagSortPill(mode: number, label: Resource) {
+    Text(label)
+      .fontSize(11)
+      .fontWeight(this.searchVm.tagSortMode === mode ? FontWeight.Bold : FontWeight.Medium)
+      .fontColor(this.searchVm.tagSortMode === mode ?
+        $r('app.color.design_surface_solid') : $r('app.color.design_text_secondary'))
+      .padding({ left: 9, right: 9, top: 4, bottom: 4 })
+      .borderRadius(11)
+      .backgroundColor(this.searchVm.tagSortMode === mode ?
+        $r('app.color.design_text_primary') : $r('app.color.design_elevated'))
+      .border({
+        width: 1,
+        color: this.searchVm.tagSortMode === mode ?
+          $r('app.color.design_stroke') : $r('app.color.design_stroke')
+      })
+      .onClick(() => {
+        if (this.searchVm.tagSortMode === mode) {
+          return;
+        }
+        this.getUIContext().animateTo({ duration: 180, curve: Curve.Friction }, () => {
+          this.searchVm.setTagSortMode(mode);
+        });
+      })
   }
 
   @Builder
@@ -2452,6 +2840,15 @@ struct DesignIndex {
                       .fontWeight(FontWeight.Bold)
                       .fontColor($r('app.color.design_text_primary'))
                       .layoutWeight(1)
+                    Row({ space: 4 }) {
+                      this.tagSortPill(TagSortMode.COUNT_DESC, $r('app.string.search_tags_sort_count'))
+                      this.tagSortPill(TagSortMode.NAME_ASC, $r('app.string.search_tags_sort_name'))
+                    }
+                  }
+                  .width('100%')
+                  .alignItems(VerticalAlign.Center)
+
+                  Row({ space: 8 }) {
                     if (this.searchVm.activeTag.length > 0) {
                       Row({ space: 4 }) {
                         Text($r('app.string.search_tags_clear_filter', this.searchVm.activeTag))
@@ -2508,7 +2905,8 @@ struct DesignIndex {
                       .onClick(() => {
                         this.selectTagChip(chip.tag);
                       })
-                    }, (chip: TagRef) => `${chip.tag}_${chip.count}_${chip.tag === this.searchVm.activeTag}`)
+                    }, (chip: TagRef) =>
+                      `${this.searchVm.tagSortMode}_${chip.tag}_${chip.count}_${chip.tag === this.searchVm.activeTag}`)
                   }
                   .width('100%')
                 }
@@ -2992,7 +3390,7 @@ struct DesignIndex {
       .layoutWeight(1)
       .alignItems(HorizontalAlign.Center)
       .onClick(() => {
-        this.filesSegment = 0;
+        this.selectFilesSegment(0);
         this.changeTab(0);
       })
 
@@ -3012,7 +3410,7 @@ struct DesignIndex {
       .layoutWeight(1)
       .alignItems(HorizontalAlign.Center)
       .onClick(() => {
-        this.filesSegment = 1;
+        this.selectFilesSegment(1);
         this.changeTab(0);
       })
 
@@ -3078,8 +3476,8 @@ struct DesignIndex {
       .width('100%')
       .alignItems(VerticalAlign.Center)
       .onClick(() => {
-        this.filesSegment = 2;
-        this.changeTab(0);
+        this.filesViewMode = 1;
+        this.selectFolderFilter('');
       })
 
       ForEach(this.shelfNotes.slice(0, 3), (item: RecentNoteItem) => {
@@ -3530,6 +3928,8 @@ struct DesignIndex {
 
   /** 打开页内工作台子视图：处理携带参数后切换 viewMode（无 router 跳转）。 */
   private openWorkspace(params: Record<string, Object>): void {
+    this.showFolderDrawer = false;
+    this.drawerDragDeltaVp = 0;
     const openPathRaw: Object | undefined = params['openPath'];
     const openPath: string = typeof openPathRaw === 'string' ? openPathRaw : '';
     if (openPath.length > 0) {
@@ -3548,6 +3948,7 @@ struct DesignIndex {
     this.setEditorKeyboardMode(false);
     this.workspaceLaunchAction = '';
     this.homeInitialTabIndex = this.currentTabIndex;
+    this.homeInitialSubTab = this.filesSegment;
     this.getUIContext().animateTo({ duration: 260, curve: Curve.Friction }, () => {
       this.viewMode = DesignViewMode.HOME;
     });
@@ -3598,7 +3999,8 @@ struct DesignIndex {
     const expandPathRaw: Object | undefined = params['expandPath'];
     const expandPath: string = typeof expandPathRaw === 'string' ? expandPathRaw : '';
     if (expandPath.length > 0) {
-      this.filesSegment = 3;
+      this.filesSegment = 0;
+      this.homeInitialSubTab = 0;
       this.currentFolderPath = expandPath;
       return;
     }

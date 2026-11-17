@@ -1,5 +1,7 @@
 import { describe, it, expect } from '@ohos/hypium';
+import { TagRef } from '@ohos/domain';
 import { CompletionCandidate, EditorTextUtils, ListContinuation } from '../main/ets/viewmodel/EditorTextUtils';
+import { SearchViewModel, TagSortMode } from '../main/ets/viewmodel/SearchViewModel';
 import { noteTitleFromPath } from '../main/ets/view/design/NoteActionHelper';
 
 export default function editorTextUtilsTest() {
@@ -130,6 +132,33 @@ export default function editorTextUtilsTest() {
       expect(noteTitleFromPath('Note.MD')).assertEqual('Note');
       expect(noteTitleFromPath('日记/2026-11')).assertEqual('2026-11');
       expect(noteTitleFromPath('')).assertEqual('');
+    });
+
+    it('sortsTagsByCountDescendingThenName', 0, () => {
+      const makeTag = (tag: string, count: number): TagRef => {
+        const ref: TagRef = new TagRef();
+        ref.tag = tag;
+        ref.count = count;
+        return ref;
+      };
+      const items: TagRef[] = [
+        makeTag('delta', 1),
+        makeTag('beta', 2),
+        makeTag('gamma', 5),
+        makeTag('alpha', 2)
+      ];
+      const byCount: TagRef[] = SearchViewModel.sortTags(items, TagSortMode.COUNT_DESC);
+      expect(byCount[0].tag).assertEqual('gamma');
+      expect(byCount[0].count).assertEqual(5);
+      expect(byCount[1].tag).assertEqual('alpha');
+      expect(byCount[2].tag).assertEqual('beta');
+      expect(byCount[3].tag).assertEqual('delta');
+
+      const byName: TagRef[] = SearchViewModel.sortTags(items, TagSortMode.NAME_ASC);
+      expect(byName[0].tag).assertEqual('alpha');
+      expect(byName[1].tag).assertEqual('beta');
+      expect(byName[2].tag).assertEqual('delta');
+      expect(byName[3].tag).assertEqual('gamma');
     });
   });
 }

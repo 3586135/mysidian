@@ -12,32 +12,53 @@ export struct MdInlineText {
   @Event onOpenLink: (target: string, kind: string) => void =
     (target: string, kind: string): void => {};
   @Event onOpenTag: (tag: string) => void = (tag: string): void => {};
+  @Event onSelectionChange: (active: boolean) => void = (_active: boolean): void => {};
 
   build() {
     Text() {
       ForEach(this.segments, (segment: MdInlineSegment, index: number) => {
-        Span(segment.text)
-          .fontSize(segment.code ? this.fontSize - 1 : this.fontSize)
-          .fontWeight(segment.bold || this.forceBold ? FontWeight.Bold : FontWeight.Normal)
-          .fontStyle(segment.italic ? FontStyle.Italic : FontStyle.Normal)
-          .fontColor(this.segmentColor(segment))
-          .fontFamily(segment.code ? 'monospace' : 'HarmonyOS Sans')
-          .textBackgroundStyle(segment.highlight
-            ? { color: $r('app.color.md_highlight_bg'), radius: 4 }
-            : { color: Color.Transparent, radius: 0 })
-          .decoration({
-            type: segment.strike ? TextDecorationType.LineThrough : TextDecorationType.None,
-            color: $r('app.color.md_text_primary')
-          })
-          .onClick(() => {
-            this.handleClick(segment);
-          })
+        if (segment.linkKind.length > 0 || segment.tag.length > 0) {
+          Span(segment.text)
+            .fontSize(segment.code ? this.fontSize - 1 : this.fontSize)
+            .fontWeight(segment.bold || this.forceBold ? FontWeight.Bold : FontWeight.Normal)
+            .fontStyle(segment.italic ? FontStyle.Italic : FontStyle.Normal)
+            .fontColor(this.segmentColor(segment))
+            .fontFamily(segment.code ? 'monospace' : 'HarmonyOS Sans')
+            .textBackgroundStyle(segment.highlight
+              ? { color: $r('app.color.md_highlight_bg'), radius: 4 }
+              : { color: Color.Transparent, radius: 0 })
+            .decoration({
+              type: segment.strike ? TextDecorationType.LineThrough : TextDecorationType.None,
+              color: $r('app.color.md_text_primary')
+            })
+            .onClick(() => {
+              this.handleClick(segment);
+            })
+        } else {
+          Span(segment.text)
+            .fontSize(segment.code ? this.fontSize - 1 : this.fontSize)
+            .fontWeight(segment.bold || this.forceBold ? FontWeight.Bold : FontWeight.Normal)
+            .fontStyle(segment.italic ? FontStyle.Italic : FontStyle.Normal)
+            .fontColor(this.segmentColor(segment))
+            .fontFamily(segment.code ? 'monospace' : 'HarmonyOS Sans')
+            .textBackgroundStyle(segment.highlight
+              ? { color: $r('app.color.md_highlight_bg'), radius: 4 }
+              : { color: Color.Transparent, radius: 0 })
+            .decoration({
+              type: segment.strike ? TextDecorationType.LineThrough : TextDecorationType.None,
+              color: $r('app.color.md_text_primary')
+            })
+        }
       }, (segment: MdInlineSegment, index: number): string => `${index}_${segment.text}`)
     }
     .width('100%')
     .fontSize(this.fontSize)
     .textAlign(this.textAlignment)
     .fontColor($r('app.color.md_text_primary'))
+    .copyOption(CopyOptions.LocalDevice)
+    .onTextSelectionChange((selectionStart: number, selectionEnd: number) => {
+      this.onSelectionChange(selectionEnd > selectionStart);
+    })
   }
 
   private segmentColor(segment: MdInlineSegment): ResourceColor {

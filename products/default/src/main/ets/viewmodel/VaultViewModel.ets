@@ -39,6 +39,15 @@ export class RootFolderSummary {
   noteCount: number = 0;
 }
 
+/** 左侧抽屉目录树平铺条目（支持多级展开与笔记计数）。 */
+export class DrawerFolderItem {
+  name: string = '';
+  path: string = '';
+  depth: number = 0;
+  noteCount: number = 0;
+  hasChildren: boolean = false;
+}
+
 /**
  * 仓库视图模型：负责仓库列表、文件树、笔记读取编辑、索引与信息面板。
  */
@@ -1934,6 +1943,41 @@ export class VaultViewModel {
       folders.push(summary);
     }
     return folders;
+  }
+
+  /** 将当前仓库目录树按给定展开路径集合平铺为左侧抽屉目录列表。 */
+  public listDrawerFolders(expandedPaths: string[]): DrawerFolderItem[] {
+    const output: DrawerFolderItem[] = [];
+    this.collectDrawerFolders(this.tree, 0, expandedPaths, output);
+    return output;
+  }
+
+  private collectDrawerFolders(nodes: FileNode[], depth: number, expandedPaths: string[],
+    output: DrawerFolderItem[]): void {
+    for (const node of nodes) {
+      if (!node.isDir) {
+        continue;
+      }
+      const item: DrawerFolderItem = new DrawerFolderItem();
+      item.name = node.name;
+      item.path = node.path;
+      item.depth = depth;
+      item.noteCount = this.countMarkdownFilesUnder(`${node.path}/`);
+      item.hasChildren = this.nodeHasChildDir(node);
+      output.push(item);
+      if (item.hasChildren && expandedPaths.includes(node.path)) {
+        this.collectDrawerFolders(node.children, depth + 1, expandedPaths, output);
+      }
+    }
+  }
+
+  private nodeHasChildDir(dirNode: FileNode): boolean {
+    for (const child of dirNode.children) {
+      if (child.isDir) {
+        return true;
+      }
+    }
+    return false;
   }
 
   private findDirNode(nodes: FileNode[], targetPath: string): FileNode | null {

@@ -34,6 +34,8 @@ export struct MdDocumentView {
     (target: string, onResult: (uri: string) => void): void => {};
   /** 点击图片全屏预览。 */
   @Event onPreviewImage: (uri: string) => void = (_uri: string): void => {};
+  /** 阅读态正文是否处于长按划词选中状态（用于避免父容器抢占拖动手势）。 */
+  @Event onSelectionChange: (active: boolean) => void = (_active: boolean): void => {};
   private scroller: Scroller = new Scroller();
 
   aboutToAppear(): void {
@@ -87,6 +89,9 @@ export struct MdDocumentView {
             },
             onPreviewImage: (uri: string): void => {
               this.onPreviewImage(uri);
+            },
+            onSelectionChange: (active: boolean): void => {
+              this.onSelectionChange(active);
             }
           })
         }

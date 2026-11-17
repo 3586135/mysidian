@@ -24,8 +24,8 @@ export default function externalOpenTest() {
 
       const tags: string[] = IndexPipeline.collectTags(doc);
       expect(tags.includes('外部打开')).assertTrue();
-      expect(tags.includes('HarmonyOS')).assertTrue();
-      expect(tags.includes('Markdown')).assertTrue();
+      expect(tags.includes('harmonyos')).assertTrue();
+      expect(tags.includes('markdown')).assertTrue();
       expect(tags.includes('待办')).assertTrue();
     });
   });

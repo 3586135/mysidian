@@ -1,6 +1,6 @@
 import { SearchHit, TagRef } from '@ohos/domain';
 import { VaultViewModel } from '../../viewmodel/VaultViewModel';
-import { SearchViewModel } from '../../viewmodel/SearchViewModel';
+import { SearchViewModel, TagSortMode } from '../../viewmodel/SearchViewModel';
 
 /**
  * Material 3 全文搜索浮层：支持全文 / 标签 / 属性（frontmatter）三种模式。
@@ -141,6 +141,10 @@ export struct SearchOverlay {
             .fontWeight(FontWeight.Bold)
             .fontColor($r('app.color.design_text_primary'))
             .layoutWeight(1)
+          Row({ space: 4 }) {
+            this.tagSortChip(TagSortMode.COUNT_DESC, $r('app.string.search_tags_sort_count'))
+            this.tagSortChip(TagSortMode.NAME_ASC, $r('app.string.search_tags_sort_name'))
+          }
           if (this.searchVm.activeTag.length > 0) {
             Row({ space: 4 }) {
               Text($r('app.string.search_tags_clear_filter', this.searchVm.activeTag))
@@ -177,7 +181,8 @@ export struct SearchOverlay {
               .onClick(() => {
                 this.selectTag(ref.tag);
               })
-          }, (ref: TagRef): string => `tag_${ref.tag}_${ref.count}_${this.searchVm.activeTag === ref.tag}`)
+          }, (ref: TagRef): string =>
+            `tag_${this.searchVm.tagSortMode}_${ref.tag}_${ref.count}_${this.searchVm.activeTag === ref.tag}`)
         }
         .width('100%')
         .padding({ left: 16, right: 16 })
@@ -306,5 +311,22 @@ export struct SearchOverlay {
   /** 选中一个标签，展示该标签下的笔记。 */
   private selectTag(tag: string): void {
     this.searchVm.selectTag(this.vm.currentVault.id, tag);
+  }
+
+  /** 标签排序切换胶囊。 */
+  @Builder
+  tagSortChip(mode: number, label: Resource) {
+    Text(label)
+      .fontSize(11)
+      .fontWeight(this.searchVm.tagSortMode === mode ? FontWeight.Bold : FontWeight.Medium)
+      .fontColor(this.searchVm.tagSortMode === mode ?
+        $r('app.color.design_surface_solid') : $r('app.color.design_text_secondary'))
+      .padding({ left: 8, right: 8, top: 3, bottom: 3 })
+      .borderRadius(10)
+      .backgroundColor(this.searchVm.tagSortMode === mode ?
+        $r('app.color.design_text_primary') : $r('app.color.design_elevated'))
+      .onClick(() => {
+        this.searchVm.setTagSortMode(mode);
+      })
   }
 }

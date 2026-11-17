@@ -41,7 +41,7 @@ export class TagDao {
     const args: Array<relationalStore.ValueType> = [vaultId];
     const result = await store.querySql(
       'SELECT t.tag, COUNT(*) FROM tag t JOIN note n ON n.id = t.note_id ' +
-      'WHERE n.vault_id = ? GROUP BY t.tag ORDER BY t.tag ASC', args);
+      'WHERE n.vault_id = ? GROUP BY t.tag ORDER BY COUNT(*) DESC, t.tag ASC', args);
     const tags: TagRef[] = [];
     if (result.goToFirstRow()) {
       do {

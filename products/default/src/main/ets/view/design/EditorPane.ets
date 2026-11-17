@@ -62,6 +62,8 @@ export struct EditorPane {
   @Local showFind: boolean = false;
   @Local findMatches: number[] = [];
   @Local findIndex: number = -1;
+  /** 阅读态当前是否有选中文本（有选区时屏蔽横向翻页手势，确保拖动手柄顺滑）。 */
+  @Local readingSelecting: boolean = false;
 
   /** 编辑器控制器：用于工具栏在光标处插入语法。 */
   private textEditorController: TextAreaController = new TextAreaController();
@@ -109,6 +111,7 @@ export struct EditorPane {
     this.redoDepth = 0;
     this.showCompletion = false;
     this.completionItems = [];
+    this.readingSelecting = false;
     this.closeFind();
   }
 
@@ -270,11 +273,20 @@ export struct EditorPane {
             },
             onPreviewImage: (uri: string): void => {
               this.onPreviewImage(uri);
+            },
+            onSelectionChange: (active: boolean): void => {
+              this.readingSelecting = active;
             }
           })
           .layoutWeight(1)
           .padding({ left: 20, right: 20 })
           .gesture(this.contentPanGesture())
+          .onGestureJudgeBegin((gestureInfo: GestureInfo, _event: BaseGestureEvent): GestureJudgeResult => {
+            if (gestureInfo.tag === 'reading_pan' && this.readingSelecting) {
+              return GestureJudgeResult.REJECT;
+            }
+            return GestureJudgeResult.CONTINUE;
+          })
           .onTouch((event: TouchEvent) => {
             this.onContentTouch(event);
           })
@@ -583,11 +595,12 @@ export struct EditorPane {
    */
   private contentPanGesture(): GestureType {
     return PanGesture({ fingers: 1, direction: PanDirection.Horizontal })
+      .tag('reading_pan')
       .onActionStart((event: GestureEvent) => {
         this.swipeStartX = event.fingerList.length > 0 ? event.fingerList[0].globalX : -1;
       })
       .onActionEnd((event: GestureEvent) => {
-        if (this.isEdgeSwipe()) {
+        if (this.readingSelecting || this.isEdgeSwipe()) {
           return;
         }
         this.handleContentSwipe(event.offsetX);
