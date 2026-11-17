@@ -1,9 +1,9 @@
 import { DataViewEntry, DataViewResult, DataViewTask, MdBlock, MdBlockType, MdInlineSegment,
   MdListItem } from '@ohos/domain';
 import { BusinessError, pasteboard } from '@kit.BasicServicesKit';
-import { BlockParser } from '../parser/BlockParser';
 import { DataViewQuery } from '../parser/DataViewQuery';
 import { InlineParser } from '../parser/InlineParser';
+import { MarkdownParser } from '../parser/MarkdownParser';
 import { CodeHighlighter, CodeToken, CodeTokenKind } from './CodeHighlighter';
 import { MathRenderer } from './MathRenderer';
 import { MdInlineFlattener } from './MdInlineFlattener';
@@ -72,7 +72,7 @@ export struct MdBlockView {
       });
     } else if (this.block.type === MdBlockType.EMBED) {
       this.onLoadEmbed(this.block.target, (text: string): void => {
-        this.embedBlocks = new BlockParser().parse(text.split('\n'));
+        this.embedBlocks = MarkdownParser.parse(text).blocks;
         this.embedReady = true;
       });
     }

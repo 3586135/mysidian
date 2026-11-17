@@ -83,7 +83,6 @@ export class DataViewQuery {
       if (line.length === 0) {
         continue;
       }
-      const upper: string = line.toUpperCase();
       if (query.type.length === 0) {
         const firstWord: RegExpExecArray | null = /^([A-Za-z]+)\b/.exec(line);
         if (firstWord !== null) {
@@ -92,23 +91,23 @@ export class DataViewQuery {
         }
         continue;
       }
-      if (upper.startsWith('FROM')) {
+      if (/^FROM(\s|$)/i.test(line)) {
         DataViewQuery.parseFrom(line.substring(4).trim(), query);
         continue;
       }
-      if (upper.startsWith('WHERE')) {
+      if (/^WHERE(\s|$)/i.test(line)) {
         DataViewQuery.parseWhere(line.substring(5), query);
         continue;
       }
-      if (upper.startsWith('GROUP BY')) {
+      if (/^GROUP BY(\s|$)/i.test(line)) {
         query.groupByFile = true;
         continue;
       }
-      if (upper.startsWith('SORT')) {
+      if (/^SORT(\s|$)/i.test(line)) {
         DataViewQuery.parseSort(line.substring(4).trim(), query);
         continue;
       }
-      if (upper.startsWith('LIMIT')) {
+      if (/^LIMIT(\s|$)/i.test(line)) {
         const limitText: string = line.substring(5).trim();
         const limitValue: number = Number(limitText);
         if (!Number.isNaN(limitValue) && limitValue > 0) {
@@ -243,7 +242,7 @@ export class DataViewQuery {
 
   /** 解析 WHERE 子句（按 AND 拆分，未识别谓词忽略）。 */
   private static parseWhere(clause: string, query: DataViewQuery): void {
-    const parts: string[] = clause.split(' AND ');
+    const parts: string[] = clause.split(/ AND /i);
     for (let index = 0; index < parts.length; index++) {
       const part: string = parts[index].trim();
       if (part.length === 0) {

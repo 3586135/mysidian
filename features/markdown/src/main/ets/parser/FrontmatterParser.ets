@@ -83,8 +83,13 @@ export class FrontmatterParser {
         property.type = MdPropType.LIST;
         property.listValue = FrontmatterParser.splitInlineList(value);
       } else {
-        property.type = FrontmatterParser.detectType(value);
-        property.value = value;
+        let scalar: string = value;
+        if (scalar.length >= 2 && ((scalar.startsWith('"') && scalar.endsWith('"')) ||
+          (scalar.startsWith("'") && scalar.endsWith("'")))) {
+          scalar = scalar.substring(1, scalar.length - 1);
+        }
+        property.type = FrontmatterParser.detectType(scalar);
+        property.value = scalar;
       }
       frontmatter.properties.push(property);
       if (key.toLowerCase() === 'tags') {

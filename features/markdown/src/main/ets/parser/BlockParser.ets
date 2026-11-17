@@ -50,7 +50,7 @@ export class BlockParser {
       if (heading !== null) {
         const block: MdBlock = new MdBlock();
         block.type = MdBlockType.HEADING;
-        block.level = trimmed.substring(0, trimmed.indexOf(' ')).length;
+        block.level = trimmed.length - trimmed.replace(/^#{1,6}/, '').length;
         block.inlines = this.inlineParser.parse(heading[1].trim());
         blocks.push(block);
         index++;
@@ -81,17 +81,22 @@ export class BlockParser {
         index = result.next;
         continue;
       }
-      if (trimmed.startsWith('<')) {
+      if (trimmed.startsWith('<') && (/^<\/?[A-Za-z]/.test(trimmed) || trimmed.startsWith('<!--') ||
+        /^<!DOCTYPE/i.test(trimmed))) {
         const result: BlockParseResult = this.parseHtml(lines, index);
         blocks.push(result.block);
         index = result.next;
         continue;
       }
-      if (trimmed.includes('|') && this.isTableDelimiter(this.nextNonEmptyLine(lines, index + 1))) {
-        const result: BlockParseResult = this.parseTable(lines, index);
-        blocks.push(result.block);
-        index = result.next;
-        continue;
+      if (trimmed.includes('|')) {
+        const delimiterLine: string = this.nextNonEmptyLine(lines, index + 1);
+        if (this.isTableDelimiter(delimiterLine) &&
+          this.splitTableRow(trimmed).length === this.splitTableRow(delimiterLine).length) {
+          const result: BlockParseResult = this.parseTable(lines, index);
+          blocks.push(result.block);
+          index = result.next;
+          continue;
+        }
       }
       const result: BlockParseResult = this.parseParagraph(lines, index);
       blocks.push(result.block);
@@ -150,6 +155,7 @@ export class BlockParser {
       index++;
     }
     let content: string = body.join('\n');
+    let inlineContent: string = content;
     const callout: RegExpExecArray | null =
       /^\[!([A-Za-z]+)\]([+-]?)\s*(.*)$/.exec(body.length > 0 ? body[0] : '');
     if (callout !== null) {
@@ -166,18 +172,19 @@ export class BlockParser {
         rest.push(body[i]);
       }
       content = rest.join('\n');
+      inlineContent = body.slice(1).join('\n');
     } else {
       block.type = MdBlockType.QUOTE;
     }
     block.rawContent = content;
-    block.inlines = this.inlineParser.parse(content);
+    block.inlines = this.inlineParser.parse(inlineContent);
     result.block = block;
     result.next = index;
     return result;
   }
 
   /** 列表（有序 / 无序 / 任务列表）。 */
-  private parseList(lines: string[], start: number): BlockParseResult {
+  private parseList(lines: string[], start: number, depth: number = 0): BlockParseResult {
     const result: BlockParseResult = new BlockParseResult();
     const block: MdBlock = new MdBlock();
     block.type = MdBlockType.LIST;
@@ -203,8 +210,8 @@ export class BlockParser {
         baseIndent = indent;
         block.ordered = /\d/.test(match[1]);
       }
-      if (indent > baseIndent) {
-        const nested: BlockParseResult = this.parseList(lines, index);
+      if (indent > baseIndent && depth <= 32) {
+        const nested: BlockParseResult = this.parseList(lines, index, depth + 1);
         if (block.items.length > 0) {
           const parent: MdListItem = block.items[block.items.length - 1];
           for (const child of nested.block.items) {
@@ -229,7 +236,8 @@ export class BlockParser {
       item.lineNumber = this.lineOffset + index;
       item.rawLine = raw;
       let content: string = match[2];
-      if (content.startsWith('[ ] ') || content.startsWith('[x] ') || content.startsWith('[X] ')) {
+      if (content.startsWith('[ ] ') || content.startsWith('[x] ') || content.startsWith('[X] ') ||
+        content === '[ ]' || content === '[x]' || content === '[X]') {
         item.isTask = true;
         item.checked = content.charAt(1) === 'x' || content.charAt(1) === 'X';
         content = content.substring(4);

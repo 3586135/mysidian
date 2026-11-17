@@ -13,10 +13,20 @@ export class InlineParseResult {
 export class InlineParser {
   /** 解析一段文本为行内节点列表。 */
   public parse(text: string): MdInline[] {
-    return this.parseRange(text, 0, text.length);
+    return this.parseRange(text, 0, text.length, 0);
   }
 
-  private parseRange(text: string, start: number, end: number): MdInline[] {
+  private parseRange(text: string, start: number, end: number, depth: number): MdInline[] {
+    if (depth > 32) {
+      const capped: MdInline[] = [];
+      if (end > start) {
+        const node: MdInline = new MdInline();
+        node.type = MdInlineType.TEXT;
+        node.text = text.substring(start, end);
+        capped.push(node);
+      }
+      return capped;
+    }
     const nodes: MdInline[] = [];
     let buffer: string = '';
     let index: number = start;
@@ -61,7 +71,7 @@ export class InlineParser {
           index = embedded.next;
           continue;
         }
-        const image: InlineParseResult | null = this.parseBracket(text, index, end, true);
+        const image: InlineParseResult | null = this.parseBracket(text, index, end, true, depth);
         if (image !== null) {
           this.flush(nodes, buffer);
           buffer = '';
@@ -83,7 +93,7 @@ export class InlineParser {
       }
 
       if (ch === '[') {
-        const link: InlineParseResult | null = this.parseBracket(text, index, end, false);
+        const link: InlineParseResult | null = this.parseBracket(text, index, end, false, depth);
         if (link !== null) {
           this.flush(nodes, buffer);
           buffer = '';
@@ -94,7 +104,7 @@ export class InlineParser {
       }
 
       if (ch === '*' || ch === '_') {
-        const emphasis: InlineParseResult | null = this.parseEmphasis(text, index, end, ch);
+        const emphasis: InlineParseResult | null = this.parseEmphasis(text, index, end, ch, depth);
         if (emphasis !== null) {
           this.flush(nodes, buffer);
           buffer = '';
@@ -112,7 +122,7 @@ export class InlineParser {
           buffer = '';
           const node: MdInline = new MdInline();
           node.type = MdInlineType.STRIKETHROUGH;
-          node.children = this.parseRange(text, index + 2, close);
+          node.children = this.parseRange(text, index + 2, close, depth + 1);
           nodes.push(node);
           index = close + 2;
           continue;
@@ -127,7 +137,7 @@ export class InlineParser {
           buffer = '';
           const node: MdInline = new MdInline();
           node.type = MdInlineType.HIGHLIGHT;
-          node.children = this.parseRange(text, index + 2, close);
+          node.children = this.parseRange(text, index + 2, close, depth + 1);
           nodes.push(node);
           index = close + 2;
           continue;
@@ -226,9 +236,9 @@ export class InlineParser {
   }
 
   /** 解析 [文本](链接) 与 ![说明](图片)。 */
-  private parseBracket(text: string, start: number, end: number, isImage: boolean):
-    InlineParseResult | null {
-    let depth: number = 0;
+  private parseBracket(text: string, start: number, end: number, isImage: boolean,
+    depth: number): InlineParseResult | null {
+    let bracketDepth: number = 0;
     let close: number = -1;
     let index: number = start;
     while (index < end) {
@@ -238,10 +248,10 @@ export class InlineParser {
         continue;
       }
       if (ch === '[') {
-        depth++;
+        bracketDepth++;
       } else if (ch === ']') {
-        depth--;
-        if (depth === 0) {
+        bracketDepth--;
+        if (bracketDepth === 0) {
           close = index;
           break;
         }
@@ -267,7 +277,7 @@ export class InlineParser {
     } else {
       node.type = MdInlineType.LINK;
       node.url = text.substring(close + 2, urlEnd).trim();
-      node.children = this.parseRange(text, start + 1, close);
+      node.children = this.parseRange(text, start + 1, close, depth + 1);
     }
     result.node = node;
     result.next = urlEnd + 1;
@@ -275,8 +285,8 @@ export class InlineParser {
   }
 
   /** 解析 *斜体* / **粗体** / ***粗斜体*** / _斜体_ / __粗体__。 */
-  private parseEmphasis(text: string, start: number, end: number, marker: string):
-    InlineParseResult | null {
+  private parseEmphasis(text: string, start: number, end: number, marker: string,
+    depth: number): InlineParseResult | null {
     if (marker === '_') {
       const previous: string = start > 0 ? text.charAt(start - 1) : ' ';
       if (this.isWordChar(previous)) {
@@ -307,11 +317,11 @@ export class InlineParser {
       node.type = MdInlineType.STRONG;
       const inner: MdInline = new MdInline();
       inner.type = MdInlineType.EMPHASIS;
-      inner.children = this.parseRange(text, contentStart, close);
+      inner.children = this.parseRange(text, contentStart, close, depth + 1);
       node.children.push(inner);
     } else {
       node.type = runLength === 2 ? MdInlineType.STRONG : MdInlineType.EMPHASIS;
-      node.children = this.parseRange(text, contentStart, close);
+      node.children = this.parseRange(text, contentStart, close, depth + 1);
     }
     result.node = node;
     result.next = close + runLength;

@@ -203,7 +203,7 @@ export class MermaidFlow {
       depthMap[node.id] = 0;
     }
     // 迭代松弛：最多 nodeCount 轮，确保最长路径层级正确。
-    const rounds: number = Math.min(graph.nodes.length, 64);
+    const rounds: number = graph.nodes.length;
     for (let round = 0; round < rounds; round++) {
       let changed: boolean = false;
       for (const edge of graph.edges) {
