@@ -160,6 +160,9 @@ export class SyncEngine {
           `downloads=${this.status.pendingDownloads}, trashed=${this.status.pendingTrashed}, ` +
           `skippedDel=${this.status.skippedRemoteDeletes}, conflicts=${this.conflicts.length}`);
       } else {
+        // 上传阶段致命失败时 executeConflicts 被整体跳过，预载的冲突
+        // 临时文件无人清理；此清理幂等（字段清空后不再重复删除）。
+        SyncEngine.cleanupTempBinaryPaths(plan.conflicts);
         if (progress.hasAnyProgress() || plan.keptLocalDeleted.length > 0) {
           await this.persistPartialCheckpoint(provider, vault, context, plan, progress);
         }
@@ -459,8 +462,10 @@ export class SyncEngine {
         const msg: string = SyncEngine.errorMessageOf(error);
         LOG.warn(`sync conflict backup failed (${item.local.path}): ${msg}`);
         if (SyncEngine.isFatalSyncError(msg)) {
+          // 不立即 return：让循环继续走到顶部 fatalError 分支，
+          // 逐项清理剩余条目预载的冲突临时文件，避免遗留 conflicts/.tmp_*。
           progress.fatalError = msg;
-          return;
+          continue;
         }
         progress.itemErrors.push(`${item.local.path}: ${msg}`);
       }

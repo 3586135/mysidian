@@ -30,7 +30,7 @@ export class ConflictResolver {
   public static async saveCopy(vault: VaultInfo, remotePath: string,
     remoteContent: string): Promise<string> {
     const folder: string = ConflictResolver.ensureFolder(vault);
-    const name: string = ConflictResolver.baseNameOf(remotePath);
+    const name: string = ConflictResolver.copyNameOf(remotePath);
     const existing: string | null = ConflictResolver.findMatchingTextCopy(folder, name, remoteContent);
     if (existing !== null) {
       return existing;
@@ -52,7 +52,7 @@ export class ConflictResolver {
   /** 为临时下载二进制远端副本分配临时绝对路径（调用方下载后交给 commitBinaryCopy 去重转正）。 */
   public static prepareBinaryTempPath(vault: VaultInfo, remotePath: string): string {
     const folder: string = ConflictResolver.ensureFolder(vault);
-    const name: string = ConflictResolver.baseNameOf(remotePath);
+    const name: string = ConflictResolver.copyNameOf(remotePath);
     return `${folder}/.tmp_${ConflictResolver.timestamp()}_${name}`;
   }
 
@@ -63,7 +63,7 @@ export class ConflictResolver {
   public static async commitBinaryCopy(vault: VaultInfo, remotePath: string,
     tempAbsPath: string): Promise<string> {
     const folder: string = ConflictResolver.ensureFolder(vault);
-    const name: string = ConflictResolver.baseNameOf(remotePath);
+    const name: string = ConflictResolver.copyNameOf(remotePath);
     const tempHash: string = await hash.hash(tempAbsPath, 'sha256');
     const existing: string | null = await ConflictResolver.findMatchingBinaryCopy(
       folder, name, tempHash);
@@ -82,9 +82,19 @@ export class ConflictResolver {
     return relative;
   }
 
-  private static baseNameOf(remotePath: string): string {
+  /**
+   * 副本文件名：目录限定 + 基础名（如 a/note.md -> a_note.md）。
+   * 不同目录下同名同内容的两份冲突若只用基础名去重会共享同一个
+   * conflictPath，解决其一会误删/误移除其二；目录限定后天然区分。
+   */
+  private static copyNameOf(remotePath: string): string {
     const idx: number = remotePath.lastIndexOf('/');
-    return idx < 0 ? remotePath : remotePath.substring(idx + 1);
+    const base: string = idx < 0 ? remotePath : remotePath.substring(idx + 1);
+    if (idx <= 0) {
+      return base;
+    }
+    const dir: string = remotePath.substring(0, idx).replace(/\/+/g, '_');
+    return `${dir}_${base}`;
   }
 
   private static findMatchingTextCopy(folder: string, name: string,

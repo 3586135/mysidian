@@ -346,8 +346,11 @@ export class WebDavProvider implements SyncProvider {
       return RemoteTrashStatus.UNSUPPORTED;
     } catch (error) {
       const err = error as BusinessError;
-      LOG.warn(`webdav MOVE unavailable, keeping remote file (${path}): ${err.message}`);
-      return RemoteTrashStatus.UNSUPPORTED;
+      // 不能把瞬时故障（401/403 中途封禁、超时、MKCOL 失败）吞成 UNSUPPORTED：
+      // UNSUPPORTED 会写永久 local_deleted 墓碑，导致删除永不被重试、
+      // 且远端后续修改会把已删文件复活。向上抛出由引擎按可重试错误处理。
+      LOG.warn(`webdav MOVE failed, rethrowing for retry (${path}): ${err.message}`);
+      throw error as Error;
     }
   }
 
@@ -599,7 +602,10 @@ export class WebDavProvider implements SyncProvider {
   private async propfindOneDir(item: PropfindQueueDir): Promise<PropfindDirResult> {
     const result: PropfindDirResult = new PropfindDirResult();
     if (item.depth > WebDavProvider.MAX_PROPFIND_DEPTH) {
-      return result;
+      // 不能静默返回空结果：超出深度上限的文件会从远端清单中消失，
+      // 本地同名文件会被误判为新增而盲推送覆盖远端。向上抛出中止本轮
+      // 同步，由上层按同步失败处理（与"枚举失败必须中止"的策略一致）。
+      throw new Error(`webdav bfs depth exceeded (${item.depth} > ${WebDavProvider.MAX_PROPFIND_DEPTH}): ${item.dir}`);
     }
     const url: string = item.dir.length === 0 ? this.baseUrl
       : `${this.baseUrl}/${WebDavProvider.encodePath(item.dir)}`;
@@ -730,28 +736,30 @@ export class WebDavProvider implements SyncProvider {
       const rootName: string = this.config.remoteRoot.trim();
       const rootSegs: string[] = rootName.split('/').filter(
         (seg: string): boolean => seg.length > 0);
-      if (rootSegs.length === 0) {
-        return null;
-      }
-      const segs: string[] = path.split('/');
-      let found: number = -1;
-      for (let i = segs.length - rootSegs.length; i >= 0; i--) {
-        let matched: boolean = true;
-        for (let k = 0; k < rootSegs.length; k++) {
-          if (segs[i + k] !== rootSegs[k]) {
-            matched = false;
+      if (rootSegs.length > 0) {
+        const segs: string[] = path.split('/');
+        let found: number = -1;
+        for (let i = segs.length - rootSegs.length; i >= 0; i--) {
+          let matched: boolean = true;
+          for (let k = 0; k < rootSegs.length; k++) {
+            if (segs[i + k] !== rootSegs[k]) {
+              matched = false;
+              break;
+            }
+          }
+          if (matched) {
+            found = i;
             break;
           }
         }
-        if (matched) {
-          found = i;
-          break;
+        if (found < 0) {
+          return null;
         }
+        path = segs.slice(found + rootSegs.length).join('/');
       }
-      if (found < 0) {
-        return null;
-      }
-      path = segs.slice(found + rootSegs.length).join('/');
+      // rootSegs 为空：远端根即服务器根，href 路径本身就是相对路径，
+      // 直接走下方去斜杠与安全校验（此前返回 null 会把整个远端判空，
+      // 触发全量盲推送覆盖远端文件）。
     }
     while (path.startsWith('/')) {
       path = path.substring(1);
@@ -1051,7 +1059,9 @@ export class WebDavProvider implements SyncProvider {
       throw new Error(`服务器地址无效：请以 http:// 或 https:// 开头，` +
         `如 https://dav.jianguoyun.com/dav（当前填写 "${serverUrl.trim()}"）`);
     }
-    const root: string = remoteRoot.trim();
+    // 去掉根目录首尾斜杠（remoteRoot="/" 归一为空，避免拼出 "//" 请求路径）。
+    const root: string = WebDavProvider.trimTrailingSlashes(
+      remoteRoot.trim().replace(/^\/+/, ''));
     if (root.length === 0) {
       return trimmed;
     }
@@ -1133,9 +1143,12 @@ export class WebDavProvider implements SyncProvider {
     try {
       fileIo.writeSync(file.fd, content);
       fileIo.fsyncSync(file.fd);
-    } finally {
+    } catch (error) {
       fileIo.closeSync(file);
+      WebDavProvider.removeTempFileSafe(tempPath);
+      throw error as Error;
     }
+    fileIo.closeSync(file);
     fileIo.renameSync(tempPath, path);
   }
 
@@ -1147,10 +1160,24 @@ export class WebDavProvider implements SyncProvider {
     try {
       fileIo.writeSync(file.fd, data);
       fileIo.fsyncSync(file.fd);
-    } finally {
+    } catch (error) {
       fileIo.closeSync(file);
+      WebDavProvider.removeTempFileSafe(tempPath);
+      throw error as Error;
     }
+    fileIo.closeSync(file);
     fileIo.renameSync(tempPath, path);
+  }
+
+  /** 删除遗留临时文件（写失败时清理，存在才删，删除失败不掩盖原异常）。 */
+  private static removeTempFileSafe(path: string): void {
+    try {
+      if (fileIo.accessSync(path)) {
+        fileIo.unlinkSync(path);
+      }
+    } catch (error) {
+      LOG.warn(`remove temp file failed: ${path}`);
+    }
   }
 
   /** 读取沙箱文件的二进制内容。 */

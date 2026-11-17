@@ -333,7 +333,10 @@ export class SyncViewModel {
 
   /** 用户确认安全提示后继续执行同步；卡片刚渲染的武装期内忽略，防穿透点击误确认。 */
   public async confirmPendingSync(vault: VaultInfo): Promise<void> {
-    if (Date.now() - this.confirmArmedAt < SyncViewModel.CONFIRM_ARM_DELAY_MS) {
+    // 未武装（初始或已取消后 confirmArmedAt=0）视为武装期未过：fail-closed，
+    // 防止取消后 Date.now()-0 恒大于延迟而放行无确认意图的空跑。
+    if (this.confirmArmedAt === 0 ||
+      Date.now() - this.confirmArmedAt < SyncViewModel.CONFIRM_ARM_DELAY_MS) {
       LOG.warn('sync confirm ignored: within arm delay (likely tap-through)');
       return;
     }
@@ -421,6 +424,12 @@ export class SyncViewModel {
     if (context === null || vault.rootPath.length === 0) {
       return false;
     }
+    // 同步进行中禁止解决冲突：并发 sync 的 replaceAll/putManifest 会覆盖
+    // 刚写入的基线与清单，导致冲突复活、重复推送。仅拒绝本次操作。
+    if (this.syncing) {
+      LOG.warn('resolve conflict rejected: sync in progress');
+      return false;
+    }
     try {
       await this.engine.pushConflictKeepLocal(vault, this.buildConfig(), conflict, context);
       const remoteAbs: string = `${vault.rootPath}/${conflict.conflictPath}`;
@@ -440,6 +449,11 @@ export class SyncViewModel {
     conflict: SyncConflict): Promise<boolean> {
     const context: common.Context | null = this.context;
     if (context === null || vault.rootPath.length === 0) {
+      return false;
+    }
+    // 同步进行中禁止解决冲突，理由同 resolveConflictKeepLocal。
+    if (this.syncing) {
+      LOG.warn('resolve conflict rejected: sync in progress');
       return false;
     }
     try {
@@ -498,8 +512,10 @@ export class SyncViewModel {
   }
 
   private removeConflictItem(target: SyncConflict): void {
+    // 按笔记自身 path 过滤而非 conflictPath：不同目录同名同内容的两份冲突
+    // 可能共享同一 conflictPath，按 conflictPath 过滤会一次移除多条。
     this.conflicts = this.conflicts.filter((item: SyncConflict): boolean =>
-      item.conflictPath !== target.conflictPath);
+      item.path !== target.path);
     if (this.conflicts.length === 0 && this.status.state === SyncState.CONFLICT) {
       const next: SyncStatus = new SyncStatus();
       next.state = SyncState.SUCCESS;
