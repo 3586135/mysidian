@@ -318,15 +318,21 @@ export class WysiwygCodec {
     const clampedSrc: number = Math.max(0, Math.min(markdown.length, sourceCaret));
     let bestPara: number = 0;
     let bestParaSrcStart: number = 0;
-    for (let i: number = 0; i < doc.paragraphs.length; i++) {
-      const pSrcStart: number = WysiwygCodec.sourceOffsetFromWysiwyg(doc, i, 0);
+    // 段落行首源码偏移随段号单调不减：二分定位最后一个 lineStartOffset <= clampedSrc 的段落，
+    // 把逐段线性扫描的 O(k²) 降为 O(k·log k)（超大笔记「源码->所见」切换光标映射）。
+    let lo: number = 0;
+    let hi: number = doc.paragraphs.length - 1;
+    while (lo <= hi) {
+      const mid: number = Math.floor((lo + hi) / 2);
+      const pSrcStart: number = WysiwygCodec.sourceOffsetFromWysiwyg(doc, mid, 0);
       const lineStartOffset: number = pSrcStart - WysiwygCodec.blockPrefixLengthInSource(
-        doc.paragraphs[i], i === 0 || doc.paragraphs[i - 1].kind !== doc.paragraphs[i].kind);
+        doc.paragraphs[mid], mid === 0 || doc.paragraphs[mid - 1].kind !== doc.paragraphs[mid].kind);
       if (lineStartOffset <= clampedSrc) {
-        bestPara = i;
+        bestPara = mid;
         bestParaSrcStart = pSrcStart;
+        lo = mid + 1;
       } else {
-        break;
+        hi = mid - 1;
       }
     }
     let wysiwygStart: number = 0;

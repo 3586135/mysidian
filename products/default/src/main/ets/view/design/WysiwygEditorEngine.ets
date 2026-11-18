@@ -119,6 +119,10 @@ export class WysiwygEditorEngine {
   private activeWikiOpenCaret: number = -1;
   private lastCaretOffset: number = 0;
 
+  /** prevPlainText 行起始偏移索引缓存：同一字符串直接命中，热路径查找全部 O(log n)。 */
+  private lineStarts: number[] = [0];
+  private lineIndexText: string | null = null;
+
   private readonly imageMap: Map<string, WysiwygImageRecord> = new Map<string, WysiwygImageRecord>();
   private readonly tablePixelMaps: Map<number, PixelMap> = new Map<number, PixelMap>();
   private nextTableId: number = 1;
@@ -409,7 +413,7 @@ export class WysiwygEditorEngine {
     const curText: string = this.prevPlainText;
     this.syncMetaCountToPlainText(curText);
     const offset: number = Math.max(0, Math.min(curText.length, value.insertOffset));
-    const pIdx: number = WysiwygTriggers.countNewlines(curText, 0, offset);
+    const pIdx: number = this.lineIndexAt(curText, offset);
     if (pIdx >= 0 && pIdx < this.metas.length && this.metas[pIdx].kind === WysiwygBlockKind.HR) {
       return false;
     }
@@ -422,7 +426,7 @@ export class WysiwygEditorEngine {
 
     // 光标处于 [[...|]] 右括号左侧时，用户手输 ']' 自动越过已补全的 ']]' 并闭合为双链，避免打出 ]]]]。
     if (value.insertValue === ']' && curText.charAt(offset) === ']') {
-      const range: [number, number] = WysiwygTriggers.lineRange(curText, pIdx);
+      const range: [number, number] = this.lineRangeAt(curText, pIdx);
       const beforeInLine: string = curText.substring(range[0], offset);
       const lastOpen: number = beforeInLine.lastIndexOf('[[');
       if (lastOpen >= 0 && !beforeInLine.substring(lastOpen + 2).includes(']]')) {
@@ -466,9 +470,9 @@ export class WysiwygEditorEngine {
       return false;
     }
 
-    const pIdx: number = WysiwygTriggers.countNewlines(curText, 0, caret);
+    const pIdx: number = this.lineIndexAt(curText, caret);
     if (pIdx >= 0 && pIdx < this.metas.length) {
-      const range: [number, number] = WysiwygTriggers.lineRange(curText, pIdx);
+      const range: [number, number] = this.lineRangeAt(curText, pIdx);
       const atLineStart: boolean = caret === range[0] ||
         (range[0] > 0 && value.offset === range[0] - 1 && value.length === 1);
       const pKind: WysiwygBlockKind = this.metas[pIdx].kind;
@@ -534,14 +538,14 @@ export class WysiwygEditorEngine {
       this.expectedProgrammaticText = null;
     }
 
-    const startLine: number = WysiwygTriggers.countNewlines(oldText, 0, rbStart);
-    const endLine: number = WysiwygTriggers.countNewlines(oldText, 0, rbEnd);
+    const startLine: number = this.lineIndexAt(oldText, rbStart);
+    const endLine: number = this.lineIndexAt(oldText, rbEnd);
     const oldSpanLines: number = Math.max(1, endLine - startLine + 1);
     const newSpanLines: number = WysiwygTriggers.countNewlines(newText, raStart, raEnd) + 1;
 
     let forcedWikiCaret: number = -1;
     if (oldSpanLines === 1 && newSpanLines === 1) {
-      const prevLineRange: [number, number] = WysiwygTriggers.lineRange(oldText, startLine);
+      const prevLineRange: [number, number] = this.lineRangeAt(oldText, startLine);
       const wasEmptyLine: boolean = prevLineRange[0] === prevLineRange[1];
       this.prevPlainText = newText;
       if (startLine < this.metas.length && this.metas[startLine].kind === WysiwygBlockKind.TABLE) {
@@ -552,7 +556,7 @@ export class WysiwygEditorEngine {
         this.tryLiveMarkdownTriggers(startLine, raStart, raEnd, this.prevPlainText);
         if (wasEmptyLine && startLine < this.metas.length &&
           this.metas[startLine].kind !== WysiwygBlockKind.PARAGRAPH) {
-          const curRange: [number, number] = WysiwygTriggers.lineRange(this.prevPlainText, startLine);
+          const curRange: [number, number] = this.lineRangeAt(this.prevPlainText, startLine);
           if (curRange[1] > curRange[0]) {
             this.applyParagraphVisualStyle(startLine, this.prevPlainText);
           }
@@ -601,7 +605,7 @@ export class WysiwygEditorEngine {
     }
 
     this.lastCaretOffset = startPos;
-    const pIdx: number = WysiwygTriggers.countNewlines(text, 0, startPos);
+    const pIdx: number = this.lineIndexAt(text, startPos);
 
     if (startPos === endPos) {
       if (this.typingOverrideActive &&
@@ -1223,6 +1227,7 @@ export class WysiwygEditorEngine {
       this.expectedProgrammaticText = nextFullPlain;
       this.lastSyncedMarkdown = targetMd;
       this.dirtyForSync = false;
+      this.releaseStaleTablePixelMaps();
 
       const clampedCaret: number = Math.max(0, Math.min(nextFullPlain.length, restoreCaret));
       this.lastCaretOffset = clampedCaret;
@@ -1568,7 +1573,7 @@ export class WysiwygEditorEngine {
       return;
     }
 
-    const lineRange: [number, number] = WysiwygTriggers.lineRange(curText, lineIdx);
+    const lineRange: [number, number] = this.lineRangeAt(curText, lineIdx);
     const caret: number = Math.max(lineRange[0], Math.min(lineRange[1], raEnd));
     const prefix: string = curText.substring(lineRange[0], caret);
 
@@ -1782,7 +1787,10 @@ export class WysiwygEditorEngine {
         }
         if (enterTrig.kind === WysiwygBlockKind.HR) {
           oldMeta.kind = WysiwygBlockKind.HR;
-          this.metas.splice(lineIdx + 1, 0, new WysiwygParagraph());
+          const hrNext: WysiwygParagraph = new WysiwygParagraph();
+          hrNext.tightBreakAfter = oldMeta.tightBreakAfter;
+          oldMeta.tightBreakAfter = true;
+          this.metas.splice(lineIdx + 1, 0, hrNext);
           const colors: WysiwygThemeColors = WysiwygStyleHelper.resolveThemeColors(this.resMgr);
           const nextText: string = `${newText.substring(0, oldRange[0])}${WysiwygTriggers.HR_DISPLAY}${newText.substring(oldRange[1])}`;
           this.expectedProgrammaticText = nextText;
@@ -1800,7 +1808,10 @@ export class WysiwygEditorEngine {
           return;
         }
       }
-      this.metas.splice(lineIdx + 1, 0, new WysiwygParagraph());
+      const paraNext: WysiwygParagraph = new WysiwygParagraph();
+      paraNext.tightBreakAfter = oldMeta.tightBreakAfter;
+      oldMeta.tightBreakAfter = true;
+      this.metas.splice(lineIdx + 1, 0, paraNext);
       this.prevPlainText = newText;
       this.applyParagraphVisualStyle(lineIdx + 1, newText);
       const nextCaret: number = this.safeCaret();
@@ -1839,6 +1850,7 @@ export class WysiwygEditorEngine {
         const cloned: WysiwygParagraph = oldMeta.clone();
         oldMeta.kind = WysiwygBlockKind.PARAGRAPH;
         oldMeta.level = 0;
+        oldMeta.tightBreakAfter = true;
         this.metas.splice(lineIdx + 1, 0, cloned);
         this.prevPlainText = newText;
         this.applyParagraphVisualStyle(lineIdx, newText);
@@ -1846,6 +1858,8 @@ export class WysiwygEditorEngine {
         this.applyTypingStyleForCaret(lineIdx + 1, this.safeCaret(), newText);
       } else {
         const plain: WysiwygParagraph = new WysiwygParagraph();
+        plain.tightBreakAfter = oldMeta.tightBreakAfter;
+        oldMeta.tightBreakAfter = true;
         this.metas.splice(lineIdx + 1, 0, plain);
         this.prevPlainText = newText;
         this.applyParagraphVisualStyle(lineIdx + 1, newText);
@@ -1874,6 +1888,7 @@ export class WysiwygEditorEngine {
         return;
       }
       const nextItem: WysiwygParagraph = oldMeta.clone();
+      oldMeta.tightBreakAfter = true;
       if (nextItem.kind === WysiwygBlockKind.TASK) {
         nextItem.checked = false;
       } else if (nextItem.kind === WysiwygBlockKind.ORDERED) {
@@ -1903,7 +1918,10 @@ export class WysiwygEditorEngine {
       return;
     }
 
-    this.metas.splice(lineIdx + 1, 0, new WysiwygParagraph());
+    const tailPara: WysiwygParagraph = new WysiwygParagraph();
+    tailPara.tightBreakAfter = oldMeta.tightBreakAfter;
+    oldMeta.tightBreakAfter = true;
+    this.metas.splice(lineIdx + 1, 0, tailPara);
     this.prevPlainText = newText;
     this.applyParagraphVisualStyle(lineIdx + 1, newText);
     const tailCaret: number = this.safeCaret();
@@ -1913,6 +1931,10 @@ export class WysiwygEditorEngine {
   private spliceMetasMultiLine(startLine: number, oldCount: number, newCount: number, oldText: string,
     newText: string): void {
     const replacements: WysiwygParagraph[] = [];
+    // 被替换区域旧尾行与后文之间的紧凑关系，迁移到新序列最后一行，保持块边界不变。
+    const oldTailIdx: number = startLine + oldCount - 1;
+    const boundaryTight: boolean = oldTailIdx >= 0 && oldTailIdx < this.metas.length
+      ? this.metas[oldTailIdx].tightBreakAfter : false;
     let lead: WysiwygParagraph = startLine < this.metas.length
       ? this.metas[startLine].clone() : new WysiwygParagraph();
     if (newCount === 1 && oldCount >= 2 && startLine + oldCount - 1 < this.metas.length) {
@@ -1921,9 +1943,15 @@ export class WysiwygEditorEngine {
         lead = this.metas[startLine + oldCount - 1].clone();
       }
     }
+    // 多行粘贴/变更的内部行间必须 tight，否则导出时每行之间都会被插入空行（数据损坏）。
+    lead.tightBreakAfter = newCount > 1 ? true : boundaryTight;
     replacements.push(lead);
     for (let i: number = 1; i < newCount; i++) {
-      replacements.push(lead.kind === WysiwygBlockKind.CODE ? lead.clone() : new WysiwygParagraph());
+      const isLast: boolean = i === newCount - 1;
+      const item: WysiwygParagraph = lead.kind === WysiwygBlockKind.CODE
+        ? lead.clone() : new WysiwygParagraph();
+      item.tightBreakAfter = isLast ? boundaryTight : true;
+      replacements.push(item);
     }
     this.metas.splice(startLine, oldCount, ...replacements);
     this.prevPlainText = newText;
@@ -2193,7 +2221,7 @@ export class WysiwygEditorEngine {
   }
 
   private emitFormatStateAtCaret(caret: number, curText: string): void {
-    const pIdx: number = WysiwygTriggers.countNewlines(curText, 0, Math.min(curText.length, caret));
+    const pIdx: number = this.lineIndexAt(curText, Math.min(curText.length, caret));
     const meta: WysiwygParagraph = pIdx >= 0 && pIdx < this.metas.length ? this.metas[pIdx] : new WysiwygParagraph();
     const overrideMatchesCaret: boolean = this.typingOverrideActive &&
       pIdx === this.typingOverrideLine &&
@@ -2593,6 +2621,32 @@ export class WysiwygEditorEngine {
     this.tablePixelMaps.clear();
   }
 
+  /** 释放不再被任何表格段引用的可视化表格位图，防止撤销/重做增量补丁累积泄漏 PixelMap。 */
+  private releaseStaleTablePixelMaps(): void {
+    if (this.tablePixelMaps.size === 0) {
+      return;
+    }
+    const usedIds: Set<number> = new Set<number>();
+    for (const meta of this.metas) {
+      if (meta.kind === WysiwygBlockKind.TABLE && meta.blockGroupId > 0) {
+        usedIds.add(meta.blockGroupId);
+      }
+    }
+    const staleIds: number[] = [];
+    this.tablePixelMaps.forEach((_pm: PixelMap, id: number): void => {
+      if (!usedIds.has(id)) {
+        staleIds.push(id);
+      }
+    });
+    for (const id of staleIds) {
+      const pm: PixelMap | undefined = this.tablePixelMaps.get(id);
+      this.tablePixelMaps.delete(id);
+      if (pm !== undefined) {
+        pm.release();
+      }
+    }
+  }
+
   private refreshRenderedTables(): void {
     if (!this.ready || this.isLoadingDocument) {
       return;
@@ -2851,7 +2905,7 @@ export class WysiwygEditorEngine {
   }
 
   private syncMetaCountToPlainText(text: string): void {
-    const lineCount: number = text.split('\n').length;
+    const lineCount: number = this.ensureLineIndex(text);
     while (this.metas.length < lineCount) {
       this.metas.push(new WysiwygParagraph());
     }
@@ -2860,12 +2914,62 @@ export class WysiwygEditorEngine {
     }
   }
 
+  /**
+   * 惰性构建并缓存 text 的行起始偏移索引，返回行数。
+   * 同一字符串（引用/值相等）直接命中缓存，避免每按键多次 split('\n') 全篇扫描与分配。
+   */
+  private ensureLineIndex(text: string): number {
+    if (this.lineIndexText === text && this.lineStarts.length > 0) {
+      return this.lineStarts.length;
+    }
+    const starts: number[] = [0];
+    for (let i: number = 0; i < text.length; i++) {
+      if (text.charCodeAt(i) === 10) {
+        starts.push(i + 1);
+      }
+    }
+    this.lineStarts = starts;
+    this.lineIndexText = text;
+    return starts.length;
+  }
+
+  /** 等价于 WysiwygTriggers.countNewlines(text, 0, offset)，走行索引二分 O(log n)。 */
+  private lineIndexAt(text: string, offset: number): number {
+    this.ensureLineIndex(text);
+    const off: number = Math.max(0, Math.min(text.length, offset));
+    const starts: number[] = this.lineStarts;
+    let lo: number = 0;
+    let hi: number = starts.length - 1;
+    while (lo < hi) {
+      const mid: number = Math.floor((lo + hi + 1) / 2);
+      if (starts[mid] <= off) {
+        lo = mid;
+      } else {
+        hi = mid - 1;
+      }
+    }
+    return lo;
+  }
+
+  /** 等价于 WysiwygTriggers.lineRange(text, lineIndex)，走行索引 O(1) 定位。 */
+  private lineRangeAt(text: string, lineIndex: number): [number, number] {
+    this.ensureLineIndex(text);
+    const starts: number[] = this.lineStarts;
+    const idx: number = Math.max(0, lineIndex);
+    if (idx >= starts.length) {
+      return [text.length, text.length];
+    }
+    const start: number = starts[idx];
+    const end: number = idx + 1 < starts.length ? starts[idx + 1] - 1 : text.length;
+    return [start, end];
+  }
+
   private buildCompletionQuery(text: string, caretHint: number = -1): WysiwygCompletionQuery | null {
     const caret: number = caretHint >= 0
       ? Math.max(0, Math.min(text.length, caretHint))
       : Math.max(0, Math.min(text.length, this.safeCaret()));
-    const pIdx: number = WysiwygTriggers.countNewlines(text, 0, caret);
-    const range: [number, number] = WysiwygTriggers.lineRange(text, pIdx);
+    const pIdx: number = this.lineIndexAt(text, caret);
+    const range: [number, number] = this.lineRangeAt(text, pIdx);
     const linePrefix: string = text.substring(range[0], caret);
     if (!linePrefix.includes('[[') && !linePrefix.includes('#')) {
       return null;
@@ -2961,7 +3065,7 @@ export class WysiwygEditorEngine {
 
   private emitActiveKind(): void {
     const text: string = this.prevPlainText;
-    const pIdx: number = WysiwygTriggers.countNewlines(text, 0, this.safeCaret());
+    const pIdx: number = this.lineIndexAt(text, this.safeCaret());
     if (pIdx >= 0 && pIdx < this.metas.length) {
       this.onActiveKindFn(this.metas[pIdx].kind, this.metas[pIdx].lang);
     }
