@@ -50,6 +50,12 @@ export class DrawerFolderItem {
   hasChildren: boolean = false;
 }
 
+/** 单个目录的计数统计（笔记/附件），由 vaultFiles 单遍派生。 */
+class FolderCount {
+  notes: number = 0;
+  attachments: number = 0;
+}
+
 /** 仓库内的非 Markdown 附件展示条目（图片/PDF/DOCX 等）。 */
 export class VaultAttachmentItem {
   name: string = '';
@@ -136,6 +142,8 @@ export class VaultViewModel {
   private dataViewCache: Map<string, DataViewResult> = new Map();
   /** 仓库内全部文件的相对路径（附件解析用）。 */
   @Trace vaultFiles: string[] = [];
+  /** 目录计数缓存（path -> 计数），vaultFiles 变化时置空惰性重建。 */
+  private folderCounts: Map<string, FolderCount> | null = null;
 
   /** 锚点跳转回调：由页面注入（负责滚动到目标标题块）。 */
   public onScrollToHeading: (heading: string) => void = (heading: string): void => {};
@@ -194,6 +202,13 @@ export class VaultViewModel {
 
   /** 恢复上次会话的仓库与笔记（首页从工作台返回时刷新状态）。 */
   public async restoreSession(): Promise<void> {
+    // 同仓库返回首页：树/索引/图谱仍在内存且未被销毁，跳过 selectVault
+    // 全链（全库 statSync 比对 + 索引同步），只刷新最近列表与收藏有效性。
+    if (this.currentVault.id > 0) {
+      await this.loadRecentNotes();
+      await this.loadBookmarks();
+      return;
+    }
     if (this.vaults.length === 0) {
       return;
     }
@@ -378,6 +393,8 @@ export class VaultViewModel {
     // 对缺失行强制重建，保证全文检索可命中全部笔记。
     const ftsReady: boolean = DbHelper.isFtsReady();
     const ftsIds: Set<number> = ftsReady ? await NoteDao.listFtsRowIds(context) : new Set<number>();
+    // 一次 GROUP BY 取全仓库块计数，替代逐篇 COUNT 的串行查询。
+    const blockCounts: Map<number, number> = await BlockDao.countsForVault(context, vault.id);
     let changed: number = 0;
     for (const path of files) {
       if (!path.toLowerCase().endsWith('.md')) {
@@ -393,7 +410,7 @@ export class VaultViewModel {
       if (stat === null) {
         continue;
       }
-      const blockCount: number = await BlockDao.countOfNote(context, row.id);
+      const blockCount: number = blockCounts.get(row.id) ?? 0;
       if (blockCount === 0 || stat.mtime !== row.mtime || stat.size !== row.size ||
         (ftsReady && !ftsIds.has(row.id))) {
         await this.indexNoteByPath(vault, path, resolver);
@@ -975,11 +992,13 @@ export class VaultViewModel {
     const raw: string = await this.readStringPref(
       context, `bookmarks_${this.currentVault.id}`, '[]');
     const loaded: string[] = [];
+    // Set 查找 O(1)，替代对全库文件列表逐项 includes 的 O(B×F) 扫描。
+    const fileSet: Set<string> = new Set<string>(this.vaultFiles);
     try {
       const arr: string[] = JSON.parse(raw) as string[];
       if (Array.isArray(arr)) {
         for (const el of arr) {
-          if (el.length > 0 && this.vaultFiles.includes(el) && !loaded.includes(el)) {
+          if (el.length > 0 && fileSet.has(el) && !loaded.includes(el)) {
             loaded.push(el);
           }
         }
@@ -2000,6 +2019,7 @@ export class VaultViewModel {
     this.mtimeByPath = VaultViewModel.buildMtimeMap(this.tree);
     this.refreshTreeItems();
     this.vaultFiles = await manager.listVaultFiles(this.currentVault);
+    this.folderCounts = null;
     this.refreshRootFolders();
     await this.refreshAllTags();
   }
@@ -2108,23 +2128,54 @@ export class VaultViewModel {
   }
 
   private countMarkdownFilesUnder(prefix: string): number {
-    let count: number = 0;
-    for (const file of this.vaultFiles) {
-      if (file.startsWith(prefix) && SyncFileFilter.isMarkdown(file)) {
-        count++;
-      }
-    }
-    return count;
+    const entry: FolderCount | undefined = this.folderCountOf(prefix);
+    return entry !== undefined ? entry.notes : 0;
   }
 
   private countAttachmentsUnder(prefix: string): number {
-    let count: number = 0;
+    const entry: FolderCount | undefined = this.folderCountOf(prefix);
+    return entry !== undefined ? entry.attachments : 0;
+  }
+
+  /** 按目录前缀取计数缓存（未命中返回 undefined；缓存随 refreshTree 失效并惰性重建）。 */
+  private folderCountOf(prefix: string): FolderCount | undefined {
+    const counts: Map<string, FolderCount> = this.ensureFolderCounts();
+    const dir: string = prefix.endsWith('/') ? prefix.substring(0, prefix.length - 1) : prefix;
+    return counts.get(dir);
+  }
+
+  private ensureFolderCounts(): Map<string, FolderCount> {
+    let counts: Map<string, FolderCount> | null = this.folderCounts;
+    if (counts === null) {
+      counts = this.rebuildFolderCounts();
+    }
+    return counts;
+  }
+
+  /** 由 vaultFiles 单遍派生各目录的笔记/附件计数，
+   *  替代抽屉/根目录每次求值对全库文件列表的 O(D×F) 反复扫描。 */
+  private rebuildFolderCounts(): Map<string, FolderCount> {
+    const counts: Map<string, FolderCount> = new Map<string, FolderCount>();
     for (const file of this.vaultFiles) {
-      if (file.startsWith(prefix) && !SyncFileFilter.isMarkdown(file)) {
-        count++;
+      const isMd: boolean = SyncFileFilter.isMarkdown(file);
+      let index: number = file.indexOf('/');
+      while (index >= 0) {
+        const dir: string = file.substring(0, index);
+        let entry: FolderCount | undefined = counts.get(dir);
+        if (entry === undefined) {
+          entry = new FolderCount();
+          counts.set(dir, entry);
+        }
+        if (isMd) {
+          entry.notes++;
+        } else {
+          entry.attachments++;
+        }
+        index = file.indexOf('/', index + 1);
       }
     }
-    return count;
+    this.folderCounts = counts;
+    return counts;
   }
 
   /** 汇总根级目录及各目录笔记数（首页文件页展示）。 */
@@ -2171,6 +2222,9 @@ export class VaultViewModel {
     if (manager === null || context === null) {
       return;
     }
+    // 解析表循环外构建一次传入 indexNote，避免每篇索引各自全表扫描。
+    const notes: NoteRow[] = await NoteDao.listByVault(context, this.currentVault.id);
+    const resolver: Map<string, string> = IndexPipeline.buildResolverFromNotes(notes);
     for (const path of paths) {
       const note: NoteRow | null = await NoteDao.findByPath(context, this.currentVault.id, path);
       if (note === null) {
@@ -2178,7 +2232,7 @@ export class VaultViewModel {
       }
       const content: string = await manager.readNote(this.currentVault, path);
       const document: MdDocument = MarkdownParser.parse(content);
-      await IndexPipeline.indexNote(context, note, document);
+      await IndexPipeline.indexNote(context, note, document, resolver);
     }
   }
 
@@ -2739,6 +2793,7 @@ export class VaultViewModel {
           // 文件/收藏/最近/标签仍可点击（点开会打开已删除的文件）。
           this.currentVault = new VaultInfo();
           this.vaultFiles = [];
+          this.folderCounts = null;
           this.rootFolders = [];
           this.recentNotes = [];
           this.bookmarks = [];
@@ -2780,21 +2835,42 @@ export class VaultViewModel {
       }
     }
     await this.refreshTree();
-    if (!this.editMode && this.selectedPath.length > 0) {
-      const stillExists: NoteRow | null = await NoteDao.findByPath(
-        context, this.currentVault.id, this.selectedPath);
-      if (stillExists !== null) {
-        const refreshed: string = await manager.readNote(this.currentVault, this.selectedPath);
-        if (refreshed !== this.noteContent) {
-          const parsed: MdDocument = MarkdownParser.parse(refreshed);
-          const title: string = parsed.title.length > 0 ?
-            parsed.title : VaultPath.basename(this.selectedPath);
-          this.applyDocument(this.selectedPath, refreshed, parsed, title);
-        }
-      }
-    }
+    await this.refreshOpenNoteFromDisk();
     await this.refreshNoteInfo();
     // 索引重建后链接关系可能变化，同步刷新整库图谱。
+    await this.loadVaultGraph();
+  }
+
+  /** 重新加载当前打开笔记的磁盘内容（仅在查看态且文件仍存在时静默替换）。 */
+  private async refreshOpenNoteFromDisk(): Promise<void> {
+    const manager: VaultManager | null = this.manager;
+    const context: common.Context | null = this.context;
+    if (manager === null || context === null || this.editMode || this.selectedPath.length === 0) {
+      return;
+    }
+    const stillExists: NoteRow | null = await NoteDao.findByPath(
+      context, this.currentVault.id, this.selectedPath);
+    if (stillExists !== null) {
+      const refreshed: string = await manager.readNote(this.currentVault, this.selectedPath);
+      if (refreshed !== this.noteContent) {
+        const parsed: MdDocument = MarkdownParser.parse(refreshed);
+        const title: string = parsed.title.length > 0 ?
+          parsed.title : VaultPath.basename(this.selectedPath);
+        this.applyDocument(this.selectedPath, refreshed, parsed, title);
+      }
+    }
+  }
+
+  /**
+   * 同步落盘后的轻量刷新：不再全量重建索引（rescanVault 十几秒），
+   * 只按 mtime+size 增量补建/重建变化笔记，再刷新树、最近、图谱与打开中的笔记。
+   */
+  public async refreshAfterSyncChanges(): Promise<void> {
+    await this.refreshTree();
+    await this.syncIndex(this.currentVault);
+    await this.refreshOpenNoteFromDisk();
+    await this.refreshNoteInfo();
+    await this.loadRecentNotes();
     await this.loadVaultGraph();
   }
 

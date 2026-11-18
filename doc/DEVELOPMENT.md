@@ -1,6 +1,6 @@
 # 开发状态与设计决策
 
-> 最后更新：2026-11-17。本文档记录各里程碑的功能实现、关键设计决策、验证状态与已知问题，供后续开发（含 AI 协作）快速接续。
+> 最后更新：2026-11-19。本文档记录各里程碑的功能实现、关键设计决策、验证状态与已知问题，供后续开发（含 AI 协作）快速接续。
 
 ## 里程碑历史（git 提交）
 
@@ -17,6 +17,37 @@
 | v0.5.0 | **安全、性能与生产力增强**：Asset Store 密码硬件级加密、DB v4 同步哈希缓存、冲突处理中心、FTS5 自愈 + BM25 排序、未链接提及 RDB 化、页内查找替换、文件树节点操作菜单、图片全屏缩放预览、应用内主题切换 |
 | v0.6.0 | **查询引擎 RDB 化、代码高亮、书签、本地快照备份与多端生态**：Dataview/日历 RDB 批量加速、列表项文本与标签入库、原生代码块语法着色、置顶书签、本地定时/一键快照备份恢复、2in1 键盘快捷键与桌面长按快捷方式 |
 | v1.0.0 | **全端质感打磨、同步安全无感化、系统打开方式与 1.0 正式发布**：首页默认素雅 5 色莫兰迪纸感列表与原地目录穿透面包屑、透明毛玻璃三页签底栏、按年月分卷日记（`日记/YYYY-MM/YYYY-MM-DD.md`）、自适应大纲浮层与多行编辑工具栏、WebDAV 干跑安全闸门/断点落盘/`.trash/` 软删与新建仓库自签名开关、系统 `.md`「打开方式」只读预览与一键导入、Ceramic Washi 分层应用图标、`md_*` 资源解耦与全模块单测通过 |
+
+## 近期变更（2026-11-19，v1.5.0 发布前对抗性审查：同步丢失类缺陷 / 首页热路径性能）
+
+三路对抗性审查（WYSIWYG / 同步引擎 / 首页索引性能）后的修复，同步侧与首页侧要点：
+
+- **A2 PULL_NEW 拉取文件不落盘基线与清单（丢失类）**：`persistSyncState` 只合并规划快照内的本地条目，远端新增（本地规划时不存在）的成功拉取文件被遗漏——全量覆写的远端 manifest 丢失这些条目、本地基线缺失，窗口期内远端删除该文件会被 `PUSH_NEW` 推回复活。修复：`succeededPulls` 命中但不在快照的落盘文件 stat+重哈希后并入 finalEntries（SyncEngine.ets）。
+- **A1 TRASH_LOCAL 跨同步目标误删本地文件（丢失类）**：`decideLocalEntry` 对「远端消失 + 基线 synced 未改」一律回收站本地，但基线 targetKey 为空（历史遗留）或属于其他服务器/目录时不能证明当前远端删过它——切换同步目标后远端暂缺的文件会被整批误判为「他端删除」。修复：新增 `currentTargetKey` 参数，TRASH_LOCAL 要求非空且 `baseline.targetKey === currentTargetKey`，否则 fail-safe 走 PUSH_NEW（一轮成功后基线自动补全 targetKey 自愈）；SyncEngine.test.ets 补 4 个守卫用例。
+- **A3 冲突「保留本地」静默覆盖远端并发修改（丢失类）**：`pushConflictKeepLocal` 推送前 `provider.stat()` 比对 ETag 与 `conflict.remoteServerTag`，不一致中止并保留冲突，交由下轮重新决策。
+- **B1/B2 错误分级过宽**：引擎 `isFatalSyncError` 移除 `(400)`、`SyncViewModel.isAuthOrConfigError` 移除 `(403)/(400)/无权限`——PROPFIND 已成功后这些只是文件级错误，不应中止整轮或把自动同步打入冷却期。
+- **B3/C1 同步文件体积上限**：新增 `MAX_SYNC_FILE_BYTES=64MB`，collectLocalEntries 超限跳过、executePulls 超限记 itemError 跳过，防单个超大文件拖死整库哈希/拉取。
+- **G1 423 Locked 入瞬态码**：`WebDavProvider.isTransientHttpCode` 加 423（部分服务器并发写入期短暂返回），不再被吞成永久跳过。
+- **F3 根级 conflicts/ 不入笔记索引**：`VaultManager.scanVault` 跳过 `conflicts/` 前缀，冲突副本不再混入列表/搜索/统计（trashFolder 与文件树不受影响）。
+- **Hot#1 同步后全量重建改增量刷新**：`onSyncComplete` 从 `rescanVault`（735 篇全量重建十几秒）改为新方法 `VaultViewModel.refreshAfterSyncChanges()`（refreshTree + syncIndex 增量 + 打开笔记刷新 + 最近 + 图谱）；rescanVault 中打开笔记刷新块提取为 `refreshOpenNoteFromDisk()` 复用。
+- **Hot#2 返回首页同仓库短路**：`restoreSession` 在 `currentVault.id > 0` 时只刷最近列表与收藏，跳过 selectVault 全链（全库 statSync 比对）。
+- **Hot#3 目录计数单遍缓存**：新增 `folderCounts`（vaultFiles 单遍派生 path→{notes,attachments}，refreshTree 置空惰性重建），`countMarkdownFilesUnder/countAttachmentsUnder` 从 O(F) 线性扫描降为 O(1) 查表——抽屉/根目录求值从 O(2×D×F) 降为 O(F) 一次性。
+- **syncIndex 批量块计数**：新增 `BlockDao.countsForVault`（一次 GROUP BY），替换逐篇 `countOfNote` 串行查询（735 次 → 1 次）。
+- **E1 reindexPaths 循环外建解析表**：`buildResolverFromNotes` 提到循环前一次传入 indexNote。
+- **loadBookmarks Set 化**：`vaultFiles.includes`（O(B×F)）改 Set 查找。
+- **首页 Repeat key 修正**：文件/书签/宫格三处列表 key 追加 `openedAt`（同路径重开后强制重建卡片）；标签 chip key 移除 `activeTag`（此前每次点选标签全网格销毁重建，滚动位置丢失——V2 细粒度更新可保证高亮刷新）。
+- **6 处 fire-and-forget 补 .catch**：DesignIndex loadVaultGraph×2 / createNote×2 / openDailyNote / restoreSession。
+- 验证：`devecocli check arkts`（10 文件）0 错误；`devecocli build` exitCode=0（签名构建成功）。
+
+## 近期变更（2026-11-19，WYSIWYG 编辑器 v1.4.0 评审修复：粘贴数据损坏 / 表格位图泄漏 / 按键全篇扫描）
+
+严格代码评审后修复 Top 3 缺陷（WysiwygEditorEngine.ets / WysiwygCodec.ets）：
+
+- **D1 粘贴/回车插入空行数据损坏**：运行时新建段落默认 `tightBreakAfter=false`，多行粘贴后导出时每行之间被插入空行（5000 行笔记粘贴即损坏）。修复：`spliceMetasMultiLine` 内部行强制 tight、旧尾行的块边界紧凑标志迁移到新序列末行；Enter 拆行各路径（HR/段落/标题/连续列表/通用）统一「新行继承旧行 gap、旧行变 tight」语义，列表内回车不再产生松散空行。
+- **M1 撤销/重做表格 PixelMap 泄漏**：`applySnapshotPatch` 增量补丁给重渲染表格分配新 `blockGroupId`，旧表格位图（2-6MB/张）在 Map 中永久滞留。修复：补丁完成后新增 `releaseStaleTablePixelMaps()`，比对当前 metas 引用的 tableId，释放并删除全部孤儿位图。
+- **P1 按键热路径 O(n) 全篇扫描**：`syncMetaCountToPlainText` 的 `split('\n')` 与 `countNewlines` 前缀字符循环每按键执行 6-8 次。修复：新增 `lineStarts` 行起始偏移索引缓存（`ensureLineIndex` 惰性构建、同一字符串引用 O(1) 命中），热路径 `lineIndexAt`（二分）/`lineRangeAt`（O(1)）替换 IME 输入前/删除前/变更/选区/格式态/补全查询等全部逐键调用点。
+- **P2 源码→所见切换光标映射 O(k²)**：`WysiwygCodec.wysiwygOffsetFromSource` 逐段线性调用 O(k) 的 `sourceOffsetFromWysiwyg`。修复：段行首源码偏移单调不减，改二分定位目标段落，降为 O(k·log k)。
+- 验证：`devecocli check arkts`（2 文件）0 错误；`devecocli build` exitCode=0（签名构建成功）。
 
 ## 近期变更（2026-11-17，搜索页标签面板改固定五行横向滑动网格）
 

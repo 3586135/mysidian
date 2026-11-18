@@ -633,6 +633,11 @@ export class VaultManager {
       if (!VaultPath.isMarkdown(relative)) {
         continue;
       }
+      // 根级 conflicts/ 是同步冲突副本专用目录：不进入笔记索引，
+      // 避免冲突副本作为独立笔记混入列表/搜索/统计。
+      if (relative === 'conflicts' || relative.startsWith('conflicts/')) {
+        continue;
+      }
       try {
         const absolute: string = VaultPath.absolute(vault.rootPath, relative);
         const stat = fileIo.statSync(absolute);

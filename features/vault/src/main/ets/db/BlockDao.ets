@@ -41,6 +41,25 @@ export class BlockDao {
     return count;
   }
 
+  /** 批量统计一个仓库下每篇笔记的块数量（noteId -> count），
+   *  一次 GROUP BY 替代逐篇 COUNT，供全库索引比对使用。 */
+  public static async countsForVault(context: common.Context,
+    vaultId: number): Promise<Map<number, number>> {
+    const store = await DbHelper.getStore();
+    const args: Array<relationalStore.ValueType> = [vaultId];
+    const result = await store.querySql(
+      'SELECT b.note_id, COUNT(*) FROM block b JOIN note n ON n.id = b.note_id ' +
+      'WHERE n.vault_id = ? GROUP BY b.note_id', args);
+    const map: Map<number, number> = new Map<number, number>();
+    if (result.goToFirstRow()) {
+      do {
+        map.set(result.getLong(0), result.getLong(1));
+      } while (result.goToNextRow());
+    }
+    result.close();
+    return map;
+  }
+
   /** 查询笔记的大纲（标题块）。 */
   public static async outline(context: common.Context, noteId: number): Promise<OutlineEntry[]> {
     const store = await DbHelper.getStore();

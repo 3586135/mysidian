@@ -333,10 +333,10 @@ struct DesignIndex {
       this.restartAutoSyncTimer();
       this.maybeTriggerLaunchSync();
     });
-    // 同步拉取了新文件后重建索引并刷新文件树，使新笔记可见。
+    // 同步拉取了新文件后做增量索引刷新（只重建变化笔记），并刷新树/最近/图谱。
     this.syncVm.onSyncComplete = (): void => {
-      this.vm.rescanVault().catch((error: BusinessError): void => {
-        LOG.error(`rescan vault after sync failed: ${error.message}`);
+      this.vm.refreshAfterSyncChanges().catch((error: BusinessError): void => {
+        LOG.error(`refresh after sync failed: ${error.message}`);
       });
     };
     this.syncVm.onNeedsConfirm = (): void => {
@@ -350,6 +350,8 @@ struct DesignIndex {
       this.maybeTriggerLaunchSync();
       this.vm.loadVaultGraph().then((): void => {
         this.rebuildGraphLayout();
+      }).catch((error: BusinessError): void => {
+        LOG.error(`load vault graph failed: ${error.message}`);
       });
     });
     AbilityContextHolder.onShortcutAction = (): void => {
@@ -666,6 +668,8 @@ struct DesignIndex {
             this.vm.createNote(folder).then((): void => {
               this.onHomeNoteMutated();
               this.openWorkspace({});
+            }).catch((error: BusinessError): void => {
+              LOG.error(`create note in folder failed: ${error.message}`);
             });
           },
           onNewSubfolder: (folder: string): void => {
@@ -1764,8 +1768,8 @@ struct DesignIndex {
           Repeat<RecentNoteItem>(this.scopedNotes)
             .virtualScroll({ totalCount: this.scopedNotes.length })
             .key((item: RecentNoteItem, _index: number) => this.filesViewMode === 1 ?
-              `tl_${this.currentFolderPath}_${this.filesSortMode}_${item.path}` :
-              `note_${this.currentFolderPath}_${this.filesSortMode}_${item.path}`)
+              `tl_${this.currentFolderPath}_${this.filesSortMode}_${item.path}_${item.openedAt}` :
+              `note_${this.currentFolderPath}_${this.filesSortMode}_${item.path}_${item.openedAt}`)
             .templateId((_item: RecentNoteItem, _index: number): string =>
               this.filesViewMode === 1 ? 'timeline' : 'list')
             .each((ri: RepeatItem<RecentNoteItem>) => {
@@ -1875,7 +1879,8 @@ struct DesignIndex {
           Repeat<RecentNoteItem>(this.bookmarkNotes)
             .virtualScroll({ totalCount: this.bookmarkNotes.length })
             .key((item: RecentNoteItem, _index: number) => this.filesViewMode === 1 ?
-              `bmtl_${this.filesSortMode}_${item.path}` : `bm_${this.filesSortMode}_${item.path}`)
+              `bmtl_${this.filesSortMode}_${item.path}_${item.openedAt}` :
+              `bm_${this.filesSortMode}_${item.path}_${item.openedAt}`)
             .templateId((_item: RecentNoteItem, _index: number): string =>
               this.filesViewMode === 1 ? 'timeline' : 'bookmark')
             .each((ri: RepeatItem<RecentNoteItem>) => {
@@ -1933,7 +1938,7 @@ struct DesignIndex {
       Repeat<RecentNoteItem>(this.gridNotesForSource(onlyBookmarks ? 1 : 0))
         .virtualScroll({ totalCount: this.gridNotesForSource(onlyBookmarks ? 1 : 0).length })
         .key((item: RecentNoteItem, index: number) =>
-          `grid_${onlyBookmarks ? 1 : 0}_${this.currentFolderPath}_${this.filesSortMode}_${item.path}`)
+          `grid_${onlyBookmarks ? 1 : 0}_${this.currentFolderPath}_${this.filesSortMode}_${item.path}_${item.openedAt}`)
         .templateId((item: RecentNoteItem, index: number): string =>
           (showFeatured && index === 0) ? 'featured' : 'cover')
         .each((ri: RepeatItem<RecentNoteItem>) => {
@@ -2543,7 +2548,7 @@ struct DesignIndex {
                     Repeat<TagRef>(this.searchVm.tagChips)
                       .virtualScroll({ totalCount: this.searchVm.tagChips.length })
                       .key((chip: TagRef) =>
-                        `${this.searchVm.tagSortMode}_${chip.tag}_${chip.count}_${chip.tag === this.searchVm.activeTag}`)
+                        `${this.searchVm.tagSortMode}_${chip.tag}_${chip.count}`)
                       .each((ri: RepeatItem<TagRef>) => {
                         GridItem() {
                           Row({ space: 6 }) {
@@ -3622,6 +3627,8 @@ struct DesignIndex {
         // createNote/openDailyNote 内部已完成打开并进入编辑，直接切换视图即可。
         this.openWorkspace({});
       }
+    }).catch((error: BusinessError): void => {
+      LOG.error(`open daily note failed: ${error.message}`);
     });
   }
 
@@ -3633,6 +3640,8 @@ struct DesignIndex {
     }
     this.vm.createNote().then((): void => {
       this.openWorkspace({});
+    }).catch((error: BusinessError): void => {
+      LOG.error(`create note failed: ${error.message}`);
     });
   }
 
@@ -3786,6 +3795,8 @@ struct DesignIndex {
   private refreshAfterReturn(): void {
     this.vm.restoreSession().then((): void => {
       this.refreshDerivedViews();
+    }).catch((error: BusinessError): void => {
+      LOG.error(`restore session failed: ${error.message}`);
     });
   }
 
@@ -3794,6 +3805,8 @@ struct DesignIndex {
     this.vm.loadVaultGraph().then((): void => {
       this.selectedGraphPath = '';
       this.rebuildGraphLayout();
+    }).catch((error: BusinessError): void => {
+      LOG.error(`load vault graph failed: ${error.message}`);
     });
     if (this.searchVm.searchMode === 1 ||
       this.searchKeyword.trim().length > 0 ||
