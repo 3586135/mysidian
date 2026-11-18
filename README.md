@@ -6,7 +6,7 @@
 
 **HarmonyOS NEXT 原生 · 本地优先 · 双链 Markdown 知识库应用**
 
-[![Version](https://img.shields.io/badge/version-v1.4.3-6F5BD6?style=flat-square)](AppScope/app.json5)
+[![Version](https://img.shields.io/badge/version-v1.5.0-6F5BD6?style=flat-square)](AppScope/app.json5)
 [![Platform](https://img.shields.io/badge/HarmonyOS-API%2024%2B%20(%E5%85%BC%E5%AE%B9%2026.0.0)-262321?style=flat-square)](#构建与运行)
 [![ArkTS](https://img.shields.io/badge/ArkTS-ComponentV2%20%2B%20Trace-556F5A?style=flat-square)](#技术架构与模块结构)
 [![Local-First](https://img.shields.io/badge/Storage-Local--First%20%2B%20WebDAV-7A6842?style=flat-square)](#五webdav-安全同步与本地快照备份)
@@ -24,7 +24,7 @@
 
 | 项目 | 说明 |
 |---|---|
-| **发布版本** | `v1.4.3`（`versionCode: 1000603`） |
+| **发布版本** | `v1.5.0`（`versionCode: 1000700`） |
 | **应用包名** | `com.mrs.mysidian` |
 | **入口与扩展能力** | `DefaultAbility`、桌面服务卡片（`FormExtensionAbility`）、系统文本分享与「打开方式」（`ShareExtensionAbility` / `skills`）、备份恢复（`DefaultBackupAbility`） |
 | **适配设备形态** | 手机（Phone）、折叠屏 / 阔直屏（Foldable）、平板（Tablet）与 PC / 2in1 键盘操作 |
@@ -215,7 +215,7 @@ products/default (UI · ViewModel · 能力扩展)
 <summary><b>展开查看完整工程目录树</b></summary>
 
 ```text
-AppScope/                         应用级配置与版本信息（v1.4.3, versionCode: 1000603）
+AppScope/                         应用级配置与版本信息（v1.5.0, versionCode: 1000700）
 common/                           HAR：通用基础组件与系统能力封装
   constants/                      公共常量（CommonConstants）
   ui/                             EmptyState、FileTreeView、FileTreeDataSource
@@ -289,7 +289,7 @@ hdc install -r products/default/build/default/outputs/default/default-default-si
 hdc shell aa start -a DefaultAbility -b com.mrs.mysidian
 ```
 
-> Release 分发仅提供未签名包 `mysidian-1.4.3-unsigned.hap`（不分发开发者调试签名证书产物）；如需自行安装，请在 DevEco Studio 中配置个人签名证书重签安装，或直接从源码构建运行。
+> Release 分发仅提供未签名包 `mysidian-1.5.0-unsigned.hap`（不分发开发者调试签名证书产物）；如需自行安装，请在 DevEco Studio 中配置个人签名证书重签安装，或直接从源码构建运行。
 
 ---
 
@@ -297,6 +297,7 @@ hdc shell aa start -a DefaultAbility -b com.mrs.mysidian
 
 | 版本 | 核心里程碑 |
 |---|---|
+| **`v1.5.0`** | **发布前对抗性审查：同步丢失类缺陷修复与首页热路径性能**：`SyncEngine` 修复 PULL_NEW 拉取文件不落盘基线/清单（manifest 丢条目与删除复活）、TRASH_LOCAL 增加 `targetKey` 守卫防切换同步目标后整批误删本地文件、「保留本地」冲突解决前 stat 比对 ETag 防覆盖远端并发修改，新增 64MB 单文件同步上限与 423 瞬态码；`WYSIWYG` 修复多行粘贴空行数据损坏、撤销/重做表格位图泄漏与按键热路径 $O(n)$ 全篇扫描（行偏移索引 + 二分降至 $O(\log n)$）；首页同步完成后改增量刷新（只重建变化笔记）替代 735 篇全量重建，返回首页同仓库短路跳过全链比对，抽屉目录计数单遍缓存 $O(2{\times}D{\times}F) \to O(1)$ 查表，`syncIndex` 批量块计数 735 次查询归一，标签网格不再随选中态整格销毁重建。 |
 | **`v1.4.3`** | **WebDAV 同步防丢失、Markdown 解析往返修正与全库索引 $O(N)$ 优化**：`SyncEngine` 复用规划阶段快照跳过成功轮二次全库 SHA-256 并防止同步途中编辑被误标已同步丢失；`SyncViewModel` 在冲突解决期加锁阻止并发同步覆盖基线；`WebDavProvider` 瞬时故障（401/403/408/429/5xx）抛错重试防止删库跳过、`PROPFIND` 尾斜杠仅在 `207/200` 采纳；`WysiwygCodec` 修复显式空行倍增损坏；`InlineParser` 修复多反引号代码、图片 `alt` 提取与嵌套/词内下划线强调边界；`IndexPipeline` 与 `VaultViewModel` 将整库索引重建优化至 $O(N)$、重命名同步刷新 FTS 标题并在切库/删库时清理返回栈与分屏状态；`WysiwygPropertiesCard` 属性改用 `@Computed` 缓存，清理 `129` 条废弃字符串资源与无用代码。 |
 | **`v1.4.2`** | **首页虚拟滚动列表复用重复渲染修复**：将笔记卡片、时间线行、收藏卡片与书架宫格卡片拆分为 `@ComponentV2` 独立子组件（`HomeNoteCards`），配合 `Repeat.virtualScroll` `.templateId` 独立复用池与 `ItemLongPressModifier` 动态路径解析，彻底修复从文件夹抽屉切换「全部笔记」并向下翻页时列表卡在虚拟复用池反复重复前十几条笔记的问题，确保列表、时间线与书架宫格三视图全量滑动均可正确刷新与长按操作。 |
 | **`v1.4.1`** | **所见有序列表递增修复与 PDF/DOCX 全类型附件同步预览**：修复所见模式输入 `1. ` 后连续回车编号固定停留在 `1.` 的问题，确保 `1. → 2. → 3.` 递增渲染与准确序列化；`SyncFileFilter` 扩展支持 PDF、DOCX/XLSX/PPTX、音视频与 Canvas/Excalidraw 二进制 WebDAV 双向同步；工具栏新增「附件」选择器并兼容复用 `attachments`/`attachment` 目录，抽屉角标与首页目录视图直接呈现图片缩略图及附件卡片，点击 `[[附件]]` 双链可预览图片或调用系统应用打开文档（不再误建 `.md`）。 |
