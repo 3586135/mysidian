@@ -18,6 +18,12 @@ const LOG: Logger = new Logger('MySidianSync');
 const PULL_CONCURRENCY: number = 1;
 
 /**
+ * 单文件参与同步的体积上限（64MB）：超限文件跳过同步并记录警告，
+ * 避免整库哈希/读写被单个超大文件拖死或撑爆内存。
+ */
+const MAX_SYNC_FILE_BYTES: number = 64 * 1024 * 1024;
+
+/**
  * 双向同步决策枚举。
  */
 export enum SyncDecision {
@@ -221,6 +227,16 @@ export class SyncEngine {
     const serverTagMap: Map<string, string> = new Map<string, string>();
     try {
       await provider.connect(config);
+      // 推送前校验远端自冲突发现以来未再变化（serverTag/ETag 比对）：
+      // 若其他端在用户决策前又改了远端文件，静默覆盖会丢失那一侧的修改，
+      // 此时中止并保留冲突，交由下一轮同步重新决策。
+      if (conflict.remoteServerTag.length > 0) {
+        const remoteNow: RemoteEntry | null = await provider.stat(conflict.path);
+        if (remoteNow !== null && remoteNow.serverTag.length > 0 &&
+          remoteNow.serverTag !== conflict.remoteServerTag) {
+          throw new Error(`远端文件在解决冲突期间发生了变化，已保留冲突: ${conflict.path}`);
+        }
+      }
       await this.pushEntry(provider, vault, localEntry, serverTagMap);
       await provider.patchManifestEntry(localEntry);
       const row: SyncBaselineRow = new SyncBaselineRow();
@@ -296,7 +312,7 @@ export class SyncEngine {
       const remote: RemoteEntry | undefined = remoteMap.get(local.path);
       const baseline: SyncBaseline | undefined = plan.baselines.get(local.path);
       const decision: SyncDecision = SyncEngine.decideLocalEntry(
-        local, remote, baseline, SyncFileFilter.isMarkdown(local.path));
+        local, remote, baseline, SyncFileFilter.isMarkdown(local.path), plan.targetKey);
       if (decision === SyncDecision.NONE) {
         continue;
       }
@@ -573,11 +589,21 @@ export class SyncEngine {
     if (pulls.length > 0) {
       LOG.info(`sync pull pending: ${pulls.length} files`);
     }
-    for (let i = 0; i < pulls.length; i += PULL_CONCURRENCY) {
+    // 超限文件单项跳过（不拉取也不计成功），下轮仍会重试判定，避免内存被单个超大文件撑爆。
+    const boundedPulls: RemoteEntry[] = [];
+    for (const remote of pulls) {
+      if (remote.size > 0 && remote.size > MAX_SYNC_FILE_BYTES) {
+        LOG.warn(`sync pull skip oversized file (${remote.size} bytes): ${remote.path}`);
+        progress.itemErrors.push(`${remote.path}: 文件超过同步上限 64MB，已跳过`);
+        continue;
+      }
+      boundedPulls.push(remote);
+    }
+    for (let i = 0; i < boundedPulls.length; i += PULL_CONCURRENCY) {
       if (progress.fatalError.length > 0) {
         return;
       }
-      const batch: RemoteEntry[] = pulls.slice(i, i + PULL_CONCURRENCY);
+      const batch: RemoteEntry[] = boundedPulls.slice(i, i + PULL_CONCURRENCY);
       const outcomes: Array<string | null> = await Promise.all(batch.map(
         (remote: RemoteEntry): Promise<string | null> => {
           return this.pullRemote(provider, vault, remote, context);
@@ -636,6 +662,30 @@ export class SyncEngine {
         continue;
       }
       finalEntries.push(entry);
+    }
+    // PULL_NEW（远端新增、规划时本地不存在）的文件不在快照中：成功落盘后必须
+    // 并入清单与基线，否则全量覆写的远端 manifest 丢失这些条目、本地基线缺失，
+    // 窗口期内远端一旦删除该文件，本地会按 PUSH_NEW 把它推回复活。
+    const snapshotPaths: Set<string> = new Set<string>();
+    for (const entry of plan.localEntries) {
+      snapshotPaths.add(entry.path);
+    }
+    for (const remote of plan.pulls) {
+      if (!progress.succeededPulls.has(remote.path) || snapshotPaths.has(remote.path)) {
+        continue;
+      }
+      const pulledAbs: string = `${vault.rootPath}/${remote.path}`;
+      if (!fileIo.accessSync(pulledAbs)) {
+        continue;
+      }
+      const pulledStat = fileIo.statSync(pulledAbs);
+      const pulledItem: RemoteEntry = new RemoteEntry();
+      pulledItem.path = remote.path;
+      pulledItem.size = pulledStat.size;
+      pulledItem.mtime = pulledStat.mtime;
+      pulledItem.etag = await hash.hash(pulledAbs, 'sha256');
+      pulledItem.isDir = false;
+      finalEntries.push(pulledItem);
     }
     const finalLocalMap: Set<string> = new Set<string>();
     const manifestEntries: RemoteEntry[] = [];
@@ -921,6 +971,10 @@ export class SyncEngine {
     for (const entry of entries) {
       const absolute: string = `${vault.rootPath}/${entry.path}`;
       const stat = fileIo.statSync(absolute);
+      if (stat.size > MAX_SYNC_FILE_BYTES) {
+        LOG.warn(`skip oversized file (${stat.size} bytes): ${entry.path}`);
+        continue;
+      }
       const item: RemoteEntry = new RemoteEntry();
       item.path = entry.path;
       item.size = stat.size;
@@ -956,12 +1010,17 @@ export class SyncEngine {
 
   /** 对单个本地条目的三方决策（本地 / 远端 / 上次同步基线）。 */
   public static decideLocalEntry(local: RemoteEntry, remote: RemoteEntry | undefined,
-    baseline: SyncBaseline | undefined, isMarkdown: boolean = true): SyncDecision {
+    baseline: SyncBaseline | undefined, isMarkdown: boolean = true,
+    currentTargetKey: string = ''): SyncDecision {
     if (remote === undefined) {
       // 远端已消失而本地仍是上次同步后的原样（基线 synced 且内容未变）：
       // 判定为其他端删除，传播到本地回收站，避免把删除的文件推回远端造成“删除后复活”。
+      // 墓碑只在基线确实属于当前同步目标时生效：targetKey 为空的历史基线或来自
+      // 其他服务器/目录的基线不能证明“当前远端删过它”，否则切换目标后远端暂缺
+      // 的文件会被整批误判为“他端删除”而移入回收站。
       if (baseline !== undefined && baseline.state === 'synced' &&
-        baseline.fileHash === local.etag) {
+        baseline.fileHash === local.etag &&
+        currentTargetKey.length > 0 && baseline.targetKey === currentTargetKey) {
         return SyncDecision.TRASH_LOCAL;
       }
       return SyncDecision.PUSH_NEW;
@@ -1163,8 +1222,10 @@ export class SyncEngine {
   }
 
   private static isFatalSyncError(message: string): boolean {
+    // 400 只可能出现在文件级请求（PROPFIND 已成功才会走到执行阶段），
+    // 属单项失败而非配置/认证错误，不应中止整轮同步。
     return message.includes('(401)') || message.includes('(403)') ||
-      message.includes('(400)') || message.includes('服务器地址') ||
+      message.includes('服务器地址') ||
       message.includes('认证失败') || message.includes('无权限');
   }
 

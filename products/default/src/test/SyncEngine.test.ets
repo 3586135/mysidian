@@ -78,6 +78,7 @@ export default function syncEngineTest() {
     });
 
     it('propagates remote deletion to local trash only with synced unchanged baseline', 0, () => {
+      const key: string = 'https://dav.example.com/dav|vault';
       const local: RemoteEntry = makeEntry('note.md', 'hash-a');
       const syncedBaseline: SyncBaseline = makeBaseline('hash-a', 'etag-1');
       const locallyModifiedBaseline: SyncBaseline = makeBaseline('hash-b', 'etag-1');
@@ -85,18 +86,31 @@ export default function syncEngineTest() {
         1000, 128, 1010000, 'conflict');
       const tombstoneBaseline: SyncBaseline = makeBaseline('hash-a', 'etag-1',
         1000, 128, 1010000, 'local_deleted');
-      // 远端消失 + 本地仍是上次同步原样：传播删除到本地回收站，绝不推回远端
-      expect(SyncEngine.decideLocalEntry(local, undefined, syncedBaseline))
+      const legacyBaseline: SyncBaseline = makeBaseline('hash-a', 'etag-1',
+        1000, 128, 1010000, 'synced', '');
+      const otherTargetBaseline: SyncBaseline = makeBaseline('hash-a', 'etag-1',
+        1000, 128, 1010000, 'synced', 'https://other/dav|vault');
+      // 远端消失 + 本地仍是上次同步原样 + 基线属于当前同步目标：传播删除到本地回收站
+      expect(SyncEngine.decideLocalEntry(local, undefined, syncedBaseline, true, key))
         .assertEqual(SyncDecision.TRASH_LOCAL);
+      // 基线 targetKey 为空（历史遗留）或属于其他同步目标：不能证明当前远端删过它，
+      // 绝不误删本地，保守重新推送
+      expect(SyncEngine.decideLocalEntry(local, undefined, legacyBaseline, true, key))
+        .assertEqual(SyncDecision.PUSH_NEW);
+      expect(SyncEngine.decideLocalEntry(local, undefined, otherTargetBaseline, true, key))
+        .assertEqual(SyncDecision.PUSH_NEW);
+      // 调用方未提供当前目标（targetKey 为空）：同样不触发删除
+      expect(SyncEngine.decideLocalEntry(local, undefined, syncedBaseline, true, ''))
+        .assertEqual(SyncDecision.PUSH_NEW);
       // 远端消失但本地已改 / 基线非 synced：保留本地并重新推送
-      expect(SyncEngine.decideLocalEntry(local, undefined, locallyModifiedBaseline))
+      expect(SyncEngine.decideLocalEntry(local, undefined, locallyModifiedBaseline, true, key))
         .assertEqual(SyncDecision.PUSH_NEW);
-      expect(SyncEngine.decideLocalEntry(local, undefined, conflictBaseline))
+      expect(SyncEngine.decideLocalEntry(local, undefined, conflictBaseline, true, key))
         .assertEqual(SyncDecision.PUSH_NEW);
-      expect(SyncEngine.decideLocalEntry(local, undefined, tombstoneBaseline))
+      expect(SyncEngine.decideLocalEntry(local, undefined, tombstoneBaseline, true, key))
         .assertEqual(SyncDecision.PUSH_NEW);
       // 无基线（新增文件）：照常推送
-      expect(SyncEngine.decideLocalEntry(local, undefined, undefined))
+      expect(SyncEngine.decideLocalEntry(local, undefined, undefined, true, key))
         .assertEqual(SyncDecision.PUSH_NEW);
     });
 

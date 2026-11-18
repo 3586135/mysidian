@@ -365,12 +365,13 @@ export class WebDavProvider implements SyncProvider {
   }
 
   /**
-   * 瞬时故障判定：认证过期/封禁（401/403/407）、超时（408）、限流（429）、
+   * 瞬时故障判定：认证过期/封禁（401/403/407）、超时（408）、资源被临时锁定（423，
+   * 部分服务器在并发写入/整理期间短暂返回）、限流（429）、
    * 服务端错误（5xx，501「未实现」除外）。此类失败应重试而非永久跳过。
    */
   private static isTransientHttpCode(code: number): boolean {
     return code === 401 || code === 403 || code === 407 || code === 408 ||
-      code === 429 || (code >= 500 && code !== 501);
+      code === 423 || code === 429 || (code >= 500 && code !== 501);
   }
 
   /** 兼容保留接口：生产同步路径禁用直接 HTTP DELETE，防止误删 Obsidian 远端文件。 */

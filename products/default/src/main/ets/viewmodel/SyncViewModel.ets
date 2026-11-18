@@ -245,10 +245,13 @@ export class SyncViewModel {
     }
   }
 
+  /** 认证/配置类失败：整库不可达，自动同步进入冷却期等待用户修复。
+   *  403/400/“无权限”通常只是单文件被服务器拒绝（PROPFIND 已成功），
+   *  按文件级错误走静默重试，不进入冷却。 */
   private static isAuthOrConfigError(message: string): boolean {
-    return message.includes('(401)') || message.includes('(403)') ||
-      message.includes('(400)') || message.includes('服务器地址') ||
-      message.includes('认证失败') || message.includes('无权限');
+    return message.includes('(401)') ||
+      message.includes('服务器地址') ||
+      message.includes('认证失败');
   }
 
   /** 执行一次同步（并发时自动合并补跑请求，绝不漏掉同步期间的新改动）。 */
