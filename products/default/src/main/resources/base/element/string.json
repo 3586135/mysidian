@@ -1209,6 +1209,26 @@
       "value": "确认执行同步"
     },
     {
+      "name": "sync_problem_title",
+      "value": "同步失败"
+    },
+    {
+      "name": "sync_problem_hint",
+      "value": "请检查网络连接与 WebDAV 配置（服务器地址、账号密码），修正后可在同步设置中手动重试；认证失败会进入 5 分钟冷却期，期间自动同步暂停。"
+    },
+    {
+      "name": "sync_conflict_alert_title",
+      "value": "发现同步冲突"
+    },
+    {
+      "name": "sync_conflict_alert_message",
+      "value": "有 %d 个文件本地与远端版本不一致，已保留双方内容。请到同步设置中对比并选择保留版本，避免覆盖丢失。"
+    },
+    {
+      "name": "sync_conflict_alert_go",
+      "value": "去处理"
+    },
+    {
       "name": "sync_conflict_binary_hint",
       "value": "二进制图片附件冲突，不支持文本逐行对比"
     },

@@ -47,6 +47,8 @@ export struct MdBlockView {
     (target: string, onResult: (uri: string) => void): void => {};
   /** 点击图片全屏预览。 */
   @Event onPreviewImage: (uri: string) => void = (_uri: string): void => {};
+  /** 点击文档附件（PDF 等）打开系统查看器。 */
+  @Event onOpenAttachment: (target: string) => void = (_target: string): void => {};
   /** 阅读态正文是否处于长按划词选中状态。 */
   @Event onSelectionChange: (active: boolean) => void = (_active: boolean): void => {};
   @Local dataTasks: DataViewTask[] = [];
@@ -207,6 +209,8 @@ export struct MdBlockView {
         .width('100%')
       } else if (this.block.type === MdBlockType.IMAGE) {
         this.imageView()
+      } else if (this.block.type === MdBlockType.ATTACHMENT) {
+        this.attachmentView()
       } else if (this.block.type === MdBlockType.EMBED) {
         this.embedView()
       } else {
@@ -925,10 +929,50 @@ export struct MdBlockView {
     .margin({ top: 6, bottom: 6 })
   }
 
+  /** 附件卡片（![[报告.pdf]] 等）：显示附件名，点击调用系统查看器打开。 */
+  @Builder
+  attachmentView() {
+    Row() {
+      SymbolGlyph($r('sys.symbol.doc_text_on_doc_text'))
+        .fontSize(24)
+        .fontColor([$r('app.color.md_accent')])
+        .width(30)
+      Column() {
+        Text(this.attachmentDisplayName())
+          .fontSize(this.fontSize - 1)
+          .fontColor($r('app.color.md_text_primary'))
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+        Text($r('app.string.md_attachment_open_hint'))
+          .fontSize(this.fontSize - 4)
+          .fontColor($r('app.color.md_text_secondary'))
+          .margin({ top: 2 })
+      }
+      .layoutWeight(1)
+      .alignItems(HorizontalAlign.Start)
+    }
+    .width('100%')
+    .padding(10)
+    .borderRadius(8)
+    .backgroundColor($r('app.color.md_card_bg'))
+    .margin({ top: 6, bottom: 6 })
+    .onClick(() => {
+      this.onOpenAttachment(this.block.target);
+    })
+  }
+
+  /** 附件显示名：优先别名，否则取目标最后一段。 */
+  private attachmentDisplayName(): string {
+    if (this.block.alt.length > 0) {
+      return this.block.alt;
+    }
+    const slash: number = this.block.target.lastIndexOf('/');
+    return slash >= 0 ? this.block.target.substring(slash + 1) : this.block.target;
+  }
+
   /** 嵌入块渲染：递归渲染目标笔记内容（只读，任务勾选不生效）。 */
   @Builder
-  embedView() {
-    Column() {
+  embedView() {    Column() {
       if (this.embedDepth >= MdBlockView.MAX_EMBED_DEPTH) {
         Text($r('app.string.md_embed_too_deep'))
           .fontSize(this.fontSize - 2)
@@ -963,6 +1007,9 @@ export struct MdBlockView {
             },
             onPreviewImage: (uri: string): void => {
               this.onPreviewImage(uri);
+            },
+            onOpenAttachment: (target: string): void => {
+              this.onOpenAttachment(target);
             },
             onSelectionChange: (active: boolean): void => {
               this.onSelectionChange(active);

@@ -1,4 +1,4 @@
-import { curves, KeyboardAvoidMode, mediaquery, promptAction, router, window } from '@kit.ArkUI';
+import { curves, KeyboardAvoidMode, mediaquery, window } from '@kit.ArkUI';
 import { ConfigurationConstant } from '@kit.AbilityKit';
 import { picker } from '@kit.CoreFileKit';
 import { BusinessError } from '@kit.BasicServicesKit';
@@ -341,6 +341,12 @@ struct DesignIndex {
     };
     this.syncVm.onNeedsConfirm = (): void => {
       this.showSyncSafetyConfirmDialog();
+    };
+    this.syncVm.onSyncProblem = (message: string): void => {
+      this.showSyncProblemDialog(message);
+    };
+    this.syncVm.onNewConflicts = (count: number): void => {
+      this.showSyncConflictAlertDialog(count);
     };
     this.vm.init(context).then((): void => {
       this.initReady = true;
@@ -3387,7 +3393,7 @@ struct DesignIndex {
       return;
     }
     const params: Record<string, Object> | undefined =
-      router.getParams() as Record<string, Object> | undefined;
+      this.getUIContext().getRouter().getParams() as Record<string, Object> | undefined;
     if (params === undefined) {
       return;
     }
@@ -3912,7 +3918,7 @@ struct DesignIndex {
 
   /** 首页确认将笔记移入回收站。 */
   private confirmTrashHomeNote(path: string): void {
-    confirmTrashNoteAction(this.vm, path, (): void => {
+    confirmTrashNoteAction(this.getUIContext(), this.vm, path, (): void => {
       this.toast($r('app.string.msg_trash_done'));
       this.onHomeNoteMutated();
     }, (msg: ResourceStr): void => {
@@ -3922,7 +3928,7 @@ struct DesignIndex {
 
   /** 首页确认将目录及其笔记移入回收站并删除空目录。 */
   private confirmTrashHomeFolder(dirPath: string): void {
-    confirmTrashFolderAction(this.vm, dirPath, (): void => {
+    confirmTrashFolderAction(this.getUIContext(), this.vm, dirPath, (): void => {
       if (this.currentFolderPath === dirPath || this.currentFolderPath.startsWith(`${dirPath}/`)) {
         const lastSlash: number = dirPath.lastIndexOf('/');
         this.currentFolderPath = lastSlash > 0 ? dirPath.substring(0, lastSlash) : '';
@@ -4354,7 +4360,7 @@ struct DesignIndex {
       }
       const ok: boolean = await this.syncVm.importCert(uris[0]);
       if (!ok) {
-        promptAction.showToast({ message: $r('app.string.msg_cert_import_failed') });
+        this.toast($r('app.string.msg_cert_import_failed'));
       }
     } catch (error) {
       const err = error as BusinessError;
@@ -4403,7 +4409,7 @@ struct DesignIndex {
 
   /** 安全闸门触发后弹出摘要确认框（切换远端目标 / 首次非空合并 / 批量移入回收站）。 */
   private showSyncSafetyConfirmDialog(): void {
-    AlertDialog.show({
+    this.getUIContext().showAlertDialog({
       title: $r('app.string.sync_confirm_title'),
       message: this.syncVm.safetyAlertMessage(),
       primaryButton: {
@@ -4417,6 +4423,52 @@ struct DesignIndex {
         fontColor: $r('app.color.design_accent'),
         action: (): void => {
           this.syncVm.confirmPendingSync(this.vm.currentVault);
+        }
+      },
+      alignment: DialogAlignment.Bottom
+    });
+  }
+
+  /** 关键同步失败弹窗提醒（静默重试耗尽/认证类失败时触发，手动同步始终提醒）。 */
+  private showSyncProblemDialog(message: string): void {
+    this.getUIContext().showAlertDialog({
+      title: $r('app.string.sync_problem_title'),
+      message: this.syncVm.problemAlertMessage(message),
+      primaryButton: {
+        value: $r('app.string.dialog_cancel'),
+        action: (): void => {
+        }
+      },
+      secondaryButton: {
+        value: $r('app.string.sync_conflict_alert_go'),
+        fontColor: $r('app.color.design_accent'),
+        action: (): void => {
+          this.getUIContext().animateTo({ duration: 240, curve: Curve.Friction }, () => {
+            this.showSyncPanel = true;
+          });
+        }
+      },
+      alignment: DialogAlignment.Bottom
+    });
+  }
+
+  /** 检测到新的未处理冲突：弹窗提醒并可直接打开同步设置处理。 */
+  private showSyncConflictAlertDialog(count: number): void {
+    this.getUIContext().showAlertDialog({
+      title: $r('app.string.sync_conflict_alert_title'),
+      message: this.syncVm.conflictAlertMessage(count),
+      primaryButton: {
+        value: $r('app.string.dialog_cancel'),
+        action: (): void => {
+        }
+      },
+      secondaryButton: {
+        value: $r('app.string.sync_conflict_alert_go'),
+        fontColor: $r('app.color.design_accent'),
+        action: (): void => {
+          this.getUIContext().animateTo({ duration: 240, curve: Curve.Friction }, () => {
+            this.showSyncPanel = true;
+          });
         }
       },
       alignment: DialogAlignment.Bottom

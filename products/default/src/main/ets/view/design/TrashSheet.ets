@@ -173,7 +173,7 @@ export struct TrashSheet {
 
   /** 确认清空回收站（AlertDialog 二次确认）。 */
   private confirmEmptyTrash(): void {
-    AlertDialog.show({
+    this.getUIContext().showAlertDialog({
       title: $r('app.string.dialog_empty_trash_title'),
       message: $r('app.string.dialog_empty_trash_msg'),
       primaryButton: {

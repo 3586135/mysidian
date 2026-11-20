@@ -60,7 +60,7 @@ export struct NoteInfoSheet {
 
   /** 删除属性前二次确认（属性删除立即落盘，不可撤销）。 */
   private confirmRemoveProperty(key: string): void {
-    AlertDialog.show({
+    this.getUIContext().showAlertDialog({
       title: $r('app.string.props_delete'),
       message: key,
       primaryButton: {

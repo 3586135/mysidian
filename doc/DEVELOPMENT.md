@@ -18,6 +18,17 @@
 | v0.6.0 | **查询引擎 RDB 化、代码高亮、书签、本地快照备份与多端生态**：Dataview/日历 RDB 批量加速、列表项文本与标签入库、原生代码块语法着色、置顶书签、本地定时/一键快照备份恢复、2in1 键盘快捷键与桌面长按快捷方式 |
 | v1.0.0 | **全端质感打磨、同步安全无感化、系统打开方式与 1.0 正式发布**：首页默认素雅 5 色莫兰迪纸感列表与原地目录穿透面包屑、透明毛玻璃三页签底栏、按年月分卷日记（`日记/YYYY-MM/YYYY-MM-DD.md`）、自适应大纲浮层与多行编辑工具栏、WebDAV 干跑安全闸门/断点落盘/`.trash/` 软删与新建仓库自签名开关、系统 `.md`「打开方式」只读预览与一键导入、Ceramic Washi 分层应用图标、`md_*` 资源解耦与全模块单测通过 |
 
+## 近期变更（2026-11-19，基线弃用 API 清零：showToast / AlertDialog / getParams / getStringSync / packing）
+
+清理构建输出中全部弃用警告（10 处，SDK `@deprecated`/`@useinstead` 逐一核对）：
+
+- **AlertDialog.show → UIContext.showAlertDialog**（7 处）：DesignIndex（同步安全确认）/ NoteActionHelper（笔记+目录移入回收站确认，导出函数新增 `ui: UIContext` 首参，调用方 DesignIndex/WorkspaceView 传 `this.getUIContext()`）/ NoteInfoSheet（删属性）/ TrashSheet（清空回收站）/ VaultManagerSheet（删仓库）。
+- **promptAction.showToast → this.toast()**（DesignIndex pickCertFile，复用既有 UIContext PromptAction 助手）；DesignIndex 顶部 `@kit.ArkUI` import 同步移除 `promptAction`/`router`。
+- **router.getParams() → this.getUIContext().getRouter().getParams()**（DesignIndex handleLaunchParams，弃用于 API 18，官方 useinstead UIContext Router；调用点在 `vm.init().then()` 异步回调，UI 上下文已就绪）。
+- **resourceManager.getStringSync(resource, ...args) → getStringSync(resource.id, ...args)**（SyncViewModel resText，Resource+args 重载弃用于 API 20，官方 useinstead resId+args 重载）。
+- **ImagePacker.packing → packToData**（HandwriteSheet exportImage，弃用于 API 13，同为 `Promise<ArrayBuffer>` 签名零语义差异）。
+- 验证：`devecocli check arkts`（8 文件）0 错误；`devecocli build` exitCode=0 且弃用警告清零。三台模拟器部署冒烟 PASS；5555 + 5557 实测长按笔记 → 移入回收站确认弹窗（新 showAlertDialog 路径）渲染/取消正常；5555 点「立即同步」后同步状态行「同步完成（上传 0 · 下载 0）」正常渲染（resText 新重载格式化输出）。
+
 ## 近期变更（2026-11-19，v1.5.0 发布前对抗性审查：同步丢失类缺陷 / 首页热路径性能）
 
 三路对抗性审查（WYSIWYG / 同步引擎 / 首页索引性能）后的修复，同步侧与首页侧要点：

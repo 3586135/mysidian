@@ -189,7 +189,7 @@ export struct HandwriteSheet {
         srcPixelFormat: image.PixelMapFormat.RGBA_8888
       }).then((pixelMap: image.PixelMap): Promise<ArrayBuffer> => {
         const packer: image.ImagePacker = image.createImagePacker();
-        return packer.packing(pixelMap, { format: 'image/png', quality: 100 });
+        return packer.packToData(pixelMap, { format: 'image/png', quality: 100 });
       }).then((packed: ArrayBuffer): void => {
         this.saving = false;
         this.onSave(packed);

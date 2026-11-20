@@ -15,6 +15,10 @@
     {
       "name": "md_embed_too_deep",
       "value": "[嵌入层数超限]"
+    },
+    {
+      "name": "md_attachment_open_hint",
+      "value": "文档附件 · 点击打开"
     }
   ]
 }

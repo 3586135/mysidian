@@ -293,6 +293,39 @@ export class SyncEngine {
     LOG.info(`sync plan: local=${localEntries.length}, remote=${remoteEntries.length}, ` +
       `targetChanged=${plan.targetChanged}`);
 
+    // 清单缺失兜底（如上一轮同步末尾写清单失败）：远端条目没有内容哈希时，
+    // 用本地基线里"已同步"行的已知哈希回填 etag，避免决策落入逐文件
+    // readRemote 内容探测。对 PUT 不回 ETag 的服务端（坚果云实测），若不
+    // 回填，基线 serverTag 为空的文件每轮都会探测一次，严格限流的服务端
+    // 会直接打爆配额形成死锁。仅在基线与远端 serverTag 不冲突且大小一致
+    // 时回填（防远端被外部改动后误判相同）；serverTag 为空时存在一轮盲区，
+    // 本轮结束后基线会补记真实 serverTag，后续轮次即可识别漂移。
+    let baselineEtagBackfilled = 0;
+    for (const remote of remoteEntries) {
+      if (remote.etag.length > 0) {
+        continue;
+      }
+      const baseline: SyncBaseline | undefined = plan.baselines.get(remote.path);
+      if (baseline === undefined || baseline.state !== 'synced' || baseline.fileHash.length === 0) {
+        continue;
+      }
+      if (baseline.targetKey.length > 0 && baseline.targetKey !== plan.targetKey) {
+        continue;
+      }
+      if (baseline.serverTag.length > 0 && remote.serverTag.length > 0 &&
+        baseline.serverTag !== remote.serverTag) {
+        continue;
+      }
+      if (remote.size > 0 && baseline.size > 0 && remote.size !== baseline.size) {
+        continue;
+      }
+      remote.etag = baseline.fileHash;
+      baselineEtagBackfilled++;
+    }
+    if (baselineEtagBackfilled > 0) {
+      LOG.info(`sync baseline etag backfill: ${baselineEtagBackfilled} entries`);
+    }
+
     const remoteMap: Map<string, RemoteEntry> = new Map<string, RemoteEntry>();
     for (const entry of remoteEntries) {
       if (SyncPathGuard.isIgnoredByRules(entry.path, plan.ignoreRules)) {
@@ -1162,9 +1195,21 @@ export class SyncEngine {
     }
     if (SyncFileFilter.isMarkdown(entry.path)) {
       await provider.pull(entry, absolute);
-      return;
+    } else {
+      await provider.pullBinary(entry, absolute);
     }
-    await provider.pullBinary(entry, absolute);
+    // 落盘后回写远端原始 mtime：临时文件 rename 的落盘时间是拉取时刻，
+    // 不回写会让「最近修改」排序与 mtime 变化检测丢失远端的历史状态。
+    // utimes 接口要求毫秒：PROPFIND 的 mtime 为毫秒可直接传入；
+    // PROPFIND 不可用服务器的清单回退路径 mtime 为秒（stat.mtime），
+    // 直接当毫秒会把时间错设到 1970 年附近，宁可不回写。
+    if (entry.mtime > 100000000000) {
+      try {
+        fileIo.utimes(absolute, entry.mtime);
+      } catch (error) {
+        LOG.warn(`sync pull utime failed: ${entry.path}`);
+      }
+    }
   }
 
   /**

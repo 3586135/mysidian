@@ -40,6 +40,8 @@ export class SyncViewModel {
   private lastPassiveTriggerAt: number = 0;
   private lastAuthFailAt: number = 0;
   private confirmArmedAt: number = 0;
+  private lastProblemAlertAt: number = 0;
+  private lastConflictSignature: string = '';
   private static readonly STORE: string = 'mysidian_sync';
   private static readonly EDIT_DEBOUNCE_MS: number = 1500;
   private static readonly PASSIVE_COOLDOWN_MS: number = 20000;
@@ -58,11 +60,20 @@ export class SyncViewModel {
    * 用户手动「立即同步」不受冷却期限制并会重置它。
    */
   private static readonly AUTH_FAIL_COOLDOWN_MS: number = 5 * 60 * 1000;
+  /**
+   * 后台同步失败弹窗冷却期：服务器故障/断网期间周期巡检会反复失败，
+   * 冷却期内不重复弹窗打扰；手动「立即同步」不受此限制。
+   */
+  private static readonly PROBLEM_ALERT_COOLDOWN_MS: number = 30 * 60 * 1000;
 
   /** 同步完成后回调（由界面层设置，用于重建索引与刷新文件树）。 */
   public onSyncComplete: (() => void) | null = null;
   /** 同步触发安全闸门暂停时回调（由界面层弹窗提示用户核对后决定是否继续）。 */
   public onNeedsConfirm: ((plan: SyncPlanSummary) => void) | null = null;
+  /** 同步失败（关键问题）回调：静默重试耗尽或不可重试时由界面层弹窗提醒。 */
+  public onSyncProblem: ((message: string) => void) | null = null;
+  /** 出现新的未处理冲突回调：由界面层弹窗提醒并可跳转同步设置处理。 */
+  public onNewConflicts: ((count: number) => void) | null = null;
 
   /** 初始化并读取已保存的配置。 */
   public async init(context: common.Context): Promise<void> {
@@ -285,7 +296,9 @@ export class SyncViewModel {
         this.pendingPlan = this.engine.getPendingPlan();
         this.awaitingConfirmation = true;
         this.confirmArmedAt = Date.now();
-        if (userInitiated && this.onNeedsConfirm !== null) {
+        // 后台同步触发安全暂停也必须提醒：否则自动同步会永远静默等待确认，
+        // 用户只感觉到「远端变更同步不过来」却看不到任何提示。
+        if (this.onNeedsConfirm !== null) {
           this.onNeedsConfirm(this.pendingPlan);
         }
         return;
@@ -317,6 +330,14 @@ export class SyncViewModel {
           this.retryTimer = -1;
           this.runSync(retryVault, false, false);
         }, SyncViewModel.SILENT_RETRY_MS);
+      }
+      // 关键同步问题弹窗提醒：静默重试已排期（retryTimer>=0）时先不打扰；
+      // 重试耗尽或不可重试（手动同步/认证类失败）才提醒，后台失败带冷却去重。
+      if (this.status.state === SyncState.FAILED && this.retryTimer < 0) {
+        this.notifySyncProblem(this.status.message, userInitiated);
+      }
+      if (this.status.state === SyncState.CONFLICT) {
+        this.notifyNewConflicts();
       }
     } finally {
       this.syncing = false;
@@ -355,6 +376,46 @@ export class SyncViewModel {
     if (this.status.state === SyncState.PAUSED) {
       this.status = new SyncStatus();
     }
+  }
+
+  /** 同步失败提醒：手动同步直接提醒；后台失败在冷却窗口内不重复弹窗。 */
+  private notifySyncProblem(message: string, userInitiated: boolean): void {
+    const now: number = Date.now();
+    if (!userInitiated && now - this.lastProblemAlertAt < SyncViewModel.PROBLEM_ALERT_COOLDOWN_MS) {
+      return;
+    }
+    this.lastProblemAlertAt = now;
+    if (this.onSyncProblem !== null) {
+      this.onSyncProblem(message);
+    }
+  }
+
+  /** 冲突提醒：冲突集合出现新条目时通知界面层，同一集合不重复提醒。 */
+  private notifyNewConflicts(): void {
+    const paths: string[] = [];
+    for (const conflict of this.conflicts) {
+      paths.push(conflict.path);
+    }
+    paths.sort();
+    const signature: string = paths.join('\n');
+    const changed: boolean = signature !== this.lastConflictSignature;
+    this.lastConflictSignature = signature;
+    if (this.conflicts.length > 0 && changed && this.onNewConflicts !== null) {
+      this.onNewConflicts(this.conflicts.length);
+    }
+  }
+
+  /** 同步失败弹窗正文：失败原因 + 处理建议。 */
+  public problemAlertMessage(message: string): string {
+    const reason: string = message.length > 0
+      ? this.resText($r('app.string.sync_status_failed'), message)
+      : this.resText($r('app.string.sync_status_failed_plain'));
+    return `${reason}\n\n${this.resText($r('app.string.sync_problem_hint'))}`;
+  }
+
+  /** 冲突提醒弹窗正文。 */
+  public conflictAlertMessage(count: number): string {
+    return this.resText($r('app.string.sync_conflict_alert_message'), count);
   }
 
   /** 从文件选择器 URI 导入 PEM 证书到应用沙箱。 */
@@ -604,7 +665,7 @@ export class SyncViewModel {
       return '';
     }
     try {
-      return context.resourceManager.getStringSync(resource, ...args);
+      return context.resourceManager.getStringSync(resource.id, ...args);
     } catch (error) {
       return '';
     }

@@ -1,3 +1,4 @@
+import { UIContext } from '@kit.ArkUI';
 import { VaultViewModel } from '../../viewmodel/VaultViewModel';
 
 /** 长按手势修饰器：为首页笔记/文件夹条目统一绑定长按弹出操作菜单，避免卡片重复代码；支持动态路径解析以适配虚拟滚动复用。 */
@@ -59,13 +60,13 @@ export function noteTitleFromPath(path: string): string {
 }
 
 /** 二次确认后将指定笔记移入回收站（首页与工作台共用）。 */
-export function confirmTrashNoteAction(vm: VaultViewModel, path: string,
+export function confirmTrashNoteAction(ui: UIContext, vm: VaultViewModel, path: string,
   onSuccess: () => void, onError: (msg: ResourceStr) => void): void {
   if (path.length === 0) {
     onError($r('app.string.msg_no_note_selected'));
     return;
   }
-  AlertDialog.show({
+  ui.showAlertDialog({
     title: $r('app.string.dialog_trash_title'),
     message: $r('app.string.dialog_trash_msg'),
     primaryButton: {
@@ -90,7 +91,7 @@ export function confirmTrashNoteAction(vm: VaultViewModel, path: string,
 }
 
 /** 二次确认后将指定文件夹及其内所有笔记移入回收站并删除目录（首页与工作台共用）。 */
-export function confirmTrashFolderAction(vm: VaultViewModel, dirPath: string,
+export function confirmTrashFolderAction(ui: UIContext, vm: VaultViewModel, dirPath: string,
   onSuccess: () => void, onError: (msg: ResourceStr) => void): void {
   if (dirPath.length === 0) {
     return;
@@ -101,7 +102,7 @@ export function confirmTrashFolderAction(vm: VaultViewModel, dirPath: string,
   const message: ResourceStr = noteCount > 0
     ? $r('app.string.dialog_trash_folder_msg_with_notes', leaf, noteCount)
     : $r('app.string.dialog_trash_folder_msg_empty', leaf);
-  AlertDialog.show({
+  ui.showAlertDialog({
     title: $r('app.string.dialog_trash_folder_title'),
     message: message,
     primaryButton: {

@@ -587,6 +587,9 @@ export class WebDavProvider implements SyncProvider {
    * Depth: infinity 单请求全库枚举（fnOS 实测支持，LAN 与中继均 207）。
    * 服务端明确拒绝 infinity（400/403/405/501/507）时返回 null 回退逐层 BFS；
    * 鉴权失败（401）等其他错误照常上抛，不额外消耗认证尝试。
+   * 部分服务端（坚果云实测）对 infinity 静默按 Depth:1 处理：仍返回 207，
+   * 但只含一级条目。若响应里出现子目录却没有任何嵌套文件，判定为降级，
+   * 返回 null 回退逐层 BFS；全空目录树的误判只会多做几次无害请求。
    */
   private async propfindRecursive(): Promise<RemoteEntry[] | null> {
     let response: http.HttpResponse = await this.sendPropfind(this.baseUrl, 'infinity');
@@ -609,10 +612,19 @@ export class WebDavProvider implements SyncProvider {
       response.result, 'propfind response is not text');
     const items: PropfindItem[] = WebDavProvider.parseMultistatus(payload);
     const files: RemoteEntry[] = [];
+    let sawDir = false;
+    let sawNestedFile = false;
     for (const it of items) {
       const rel: string | null = this.hrefToRelative(it.href);
-      if (rel === null || rel.length === 0 || it.isDir) {
+      if (rel === null || rel.length === 0) {
         continue;
+      }
+      if (it.isDir) {
+        sawDir = true;
+        continue;
+      }
+      if (rel.includes('/')) {
+        sawNestedFile = true;
       }
       if (WebDavProvider.hasIgnoredSegment(rel) ||
         rel === WebDavProvider.MANIFEST || rel === WebDavProvider.LEGACY_MANIFEST) {
@@ -630,6 +642,10 @@ export class WebDavProvider implements SyncProvider {
       entry.serverTag = it.etag.length > 0 ? it.etag : `${entry.mtime}~${entry.size}`;
       entry.isDir = false;
       files.push(entry);
+    }
+    if (sawDir && !sawNestedFile) {
+      LOG.info('propfind depth-infinity silently degraded (dirs present but no nested files), fallback to depth-1 bfs');
+      return null;
     }
     LOG.info(`propfind depth-infinity ok: ${items.length} responses, ${files.length} sync files`);
     return files;

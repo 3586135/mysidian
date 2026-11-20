@@ -1692,9 +1692,22 @@ export class VaultViewModel {
     }
   }
 
+  /** 打开阅读视图中的文档附件引用（![[报告.pdf]] 等）：解析仓库相对路径后调系统查看器。 */
+  public openAttachmentByTarget(target: string): boolean {
+    if (target.length === 0 || this.currentVault.rootPath.length === 0 ||
+      this.selectedPath.length === 0) {
+      return false;
+    }
+    const relative: string = AttachmentResolver.resolve(target, this.selectedPath, this.vaultFiles);
+    if (relative.length === 0) {
+      LOG.warn(`attachment target not found in vault: ${target}`);
+      return false;
+    }
+    return this.openAttachmentFile(relative);
+  }
+
   /** 解析图片目标为可加载的 file URI；未命中返回空串。 */
-  public resolveAsset(target: string): string {
-    if (this.selectedPath.length === 0) {
+  public resolveAsset(target: string): string {    if (this.selectedPath.length === 0) {
       if (target.startsWith('http://') || target.startsWith('https://') ||
         target.startsWith('file://')) {
         return target;

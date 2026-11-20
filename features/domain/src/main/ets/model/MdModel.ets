@@ -15,7 +15,8 @@ export enum MdBlockType {
   HTML = 'html',
   MATH = 'math',
   EMBED = 'embed',
-  IMAGE = 'image'
+  IMAGE = 'image',
+  ATTACHMENT = 'attachment'
 }
 
 export enum MdInlineType {

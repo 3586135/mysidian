@@ -247,6 +247,9 @@ export class BlockParser {
       block.items.push(item);
       index++;
     }
+    // 列表原始行参与 ForEach key 哈希：勾选任务后文档整体重解析，块序号与
+    // 类型不变，rawContent 为空会导致 key 恒定、框架复用旧节点（复选框不翻转）。
+    block.rawContent = lines.slice(start, index).join('\n');
     result.block = block;
     result.next = index;
     return result;
@@ -381,8 +384,8 @@ export class BlockParser {
   }
 
   /**
-   * 解析独占一行的图片 / 嵌入块：![[x.png]] / ![[笔记]] / ![说明](路径)。
-   * 图片按扩展名判定；其余 wiki 目标视为笔记嵌入。
+   * 解析独占一行的图片 / 附件 / 嵌入块：![[x.png]] / ![[报告.pdf]] / ![[笔记]] / ![说明](路径)。
+   * 图片与附件按扩展名判定；其余 wiki 目标视为笔记嵌入。
    */
   private static parseMediaBlock(spec: string): MdBlock {
     const block: MdBlock = new MdBlock();
@@ -395,6 +398,10 @@ export class BlockParser {
     }
     block.target = target;
     block.alt = alias;
+    if (BlockParser.isAttachmentTarget(target)) {
+      block.type = MdBlockType.ATTACHMENT;
+      return block;
+    }
     if (!BlockParser.isImageTarget(target)) {
       block.type = MdBlockType.EMBED;
       return block;
@@ -421,6 +428,19 @@ export class BlockParser {
     const ext: string = lower.substring(index + 1);
     return ext === 'png' || ext === 'jpg' || ext === 'jpeg' || ext === 'gif' ||
       ext === 'webp' || ext === 'bmp' || ext === 'svg';
+  }
+
+  /** 目标是否为文档附件（PDF / Office 等，按扩展名判定）。 */
+  private static isAttachmentTarget(target: string): boolean {
+    const lower: string = target.toLowerCase();
+    const index: number = lower.lastIndexOf('.');
+    if (index < 0) {
+      return false;
+    }
+    const ext: string = lower.substring(index + 1);
+    return ext === 'pdf' || ext === 'docx' || ext === 'doc' || ext === 'xlsx' || ext === 'xls' ||
+      ext === 'pptx' || ext === 'ppt' || ext === 'csv' || ext === 'tsv' || ext === 'epub' ||
+      ext === 'rtf' || ext === 'odt' || ext === 'txt';
   }
 
   private countFenceChars(text: string, fenceChar: string): number {

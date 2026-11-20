@@ -1031,6 +1031,9 @@ export struct WorkspaceView {
           this.animAssign((): void => {
             this.previewImageUri = uri;
           });
+        },
+        onOpenAttachment: (target: string): void => {
+          this.vm.openAttachmentByTarget(target);
         }
       })
       .layoutWeight(1)
@@ -1545,7 +1548,7 @@ export struct WorkspaceView {
   /** 确认把指定（或当前）笔记移入回收站。 */
   private confirmTrashNote(targetPath: string = ''): void {
     const path: string = targetPath.length > 0 ? targetPath : this.vm.selectedPath;
-    confirmTrashNoteAction(this.vm, path, (): void => {
+    confirmTrashNoteAction(this.getUIContext(), this.vm, path, (): void => {
       this.toast($r('app.string.msg_trash_done'));
       this.onNoteMutated();
       if (!this.isWide && this.vm.selectedPath.length === 0) {
@@ -1558,7 +1561,7 @@ export struct WorkspaceView {
 
   /** 确认删除文件夹并把其内容移入回收站。 */
   private confirmTrashFolder(dirPath: string): void {
-    confirmTrashFolderAction(this.vm, dirPath, (): void => {
+    confirmTrashFolderAction(this.getUIContext(), this.vm, dirPath, (): void => {
       this.toast($r('app.string.msg_trash_folder_done'));
       this.onNoteMutated();
       if (!this.isWide && this.vm.selectedPath.length === 0) {

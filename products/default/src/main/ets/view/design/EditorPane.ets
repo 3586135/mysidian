@@ -407,6 +407,9 @@ export struct EditorPane {
             onPreviewImage: (uri: string): void => {
               this.onPreviewImage(uri);
             },
+            onOpenAttachment: (target: string): void => {
+              this.vm.openAttachmentByTarget(target);
+            },
             onSelectionChange: (active: boolean): void => {
               this.readingSelecting = active;
             }

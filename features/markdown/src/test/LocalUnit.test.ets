@@ -201,6 +201,9 @@ export default function markdownParserTest() {
       expect(block.items[1].isTask).assertEqual(true);
       expect(block.items[1].checked).assertEqual(false);
       expect(block.items[2].checked).assertEqual(true);
+      // rawContent 记录列表原始行：勾选任务后 rawContent 变化，
+      // 参与阅读视图 ForEach key 哈希，防止块节点被复用停留在旧状态。
+      expect(block.rawContent).assertEqual('- first\n- [ ] todo\n- [x] done');
     });
 
     it('parsesCodeBlock', 0, () => {
@@ -298,6 +301,20 @@ export default function markdownParserTest() {
     it('parsesQuote', 0, () => {
       const document = MarkdownParser.parse('> quoted text');
       expect(document.blocks[0].type).assertEqual(MdBlockType.QUOTE);
+    });
+
+    it('parsesPdfAttachmentEmbed', 0, () => {
+      // ![[报告.pdf]]：文档附件嵌入渲染为附件卡片，而非笔记嵌入。
+      const document = MarkdownParser.parse('![[参考资料/年度报告.pdf]]');
+      const block = document.blocks[0];
+      expect(block.type).assertEqual(MdBlockType.ATTACHMENT);
+      expect(block.target).assertEqual('参考资料/年度报告.pdf');
+      // 图片嵌入不受附件判定影响。
+      const image = MarkdownParser.parse('![[照片.png]]');
+      expect(image.blocks[0].type).assertEqual(MdBlockType.IMAGE);
+      // 笔记嵌入不受附件判定影响。
+      const embed = MarkdownParser.parse('![[子笔记]]');
+      expect(embed.blocks[0].type).assertEqual(MdBlockType.EMBED);
     });
 
     it('parsesTable', 0, () => {

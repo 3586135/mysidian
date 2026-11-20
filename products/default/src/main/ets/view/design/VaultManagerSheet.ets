@@ -244,7 +244,7 @@ export struct VaultManagerSheet {
 
   /** 删除仓库二次确认。 */
   private confirmDeleteVault(vault: VaultInfo): void {
-    AlertDialog.show({
+    this.getUIContext().showAlertDialog({
       title: $r('app.string.dialog_delete_vault_title'),
       message: $r('app.string.dialog_delete_vault_msg'),
       primaryButton: {
