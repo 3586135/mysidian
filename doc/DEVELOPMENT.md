@@ -1,6 +1,6 @@
 # 开发状态与设计决策
 
-> 最后更新：2026-11-19。本文档记录各里程碑的功能实现、关键设计决策、验证状态与已知问题，供后续开发（含 AI 协作）快速接续。
+> 最后更新：2026-11-21。本文档记录各里程碑的功能实现、关键设计决策、验证状态与已知问题，供后续开发（含 AI 协作）快速接续。
 
 ## 里程碑历史（git 提交）
 
@@ -17,6 +17,19 @@
 | v0.5.0 | **安全、性能与生产力增强**：Asset Store 密码硬件级加密、DB v4 同步哈希缓存、冲突处理中心、FTS5 自愈 + BM25 排序、未链接提及 RDB 化、页内查找替换、文件树节点操作菜单、图片全屏缩放预览、应用内主题切换 |
 | v0.6.0 | **查询引擎 RDB 化、代码高亮、书签、本地快照备份与多端生态**：Dataview/日历 RDB 批量加速、列表项文本与标签入库、原生代码块语法着色、置顶书签、本地定时/一键快照备份恢复、2in1 键盘快捷键与桌面长按快捷方式 |
 | v1.0.0 | **全端质感打磨、同步安全无感化、系统打开方式与 1.0 正式发布**：首页默认素雅 5 色莫兰迪纸感列表与原地目录穿透面包屑、透明毛玻璃三页签底栏、按年月分卷日记（`日记/YYYY-MM/YYYY-MM-DD.md`）、自适应大纲浮层与多行编辑工具栏、WebDAV 干跑安全闸门/断点落盘/`.trash/` 软删与新建仓库自签名开关、系统 `.md`「打开方式」只读预览与一键导入、Ceramic Washi 分层应用图标、`md_*` 资源解耦与全模块单测通过 |
+
+## 近期变更（2026-11-21，v1.5.1：坚果云 WebDAV 实战兼容 + 同步可观测性）
+
+773 文件全库在坚果云（`dav.jianguoyun.com`）端到端实测暴露的兼容缺陷修复，全部实测验证：
+
+- **#7 depth-infinity 静默降级检测（WebDavProvider）**：坚果云对 `Depth: infinity` 仍返回 207 但只含 Depth:1 一级条目（20 个响应），引擎曾据此误判远端仅剩 5 个文件、规划 682 项批量删除（被 bulkTrash 闸门拦截）。修复：响应含子目录却无任何嵌套文件即判定降级返回 null，回退逐层 BFS 枚举（实测列全 687 文件）；全空目录树误判仅多几次无害请求。
+- **#8 基线 etag 回填（SyncEngine.buildExecutionPlan）**：坚果云 PUT 不返回 ETag，首传遇限流清单未写入时基线 serverTag 全空 → 每轮同步对全部文件逐个 `readRemote` GET 内容探测，严格限流服务端配额直接打爆死锁（探测炸在规划阶段连 plan 都出不来）。修复：远端条目无哈希时用本地已同步基线的 fileHash 回填 etag（基线 synced / targetKey 一致 / serverTag 不冲突 / size 一致四重防护）。实测：687 条回填 → 零探测 → 86 项补传一轮完成，773 文件全量同步成功。
+- **#2 拉取回写远端 mtime（SyncEngine）**：`downloadRemote` 落盘后 `fileIo.utimes` 回写 PROPFIND 原始毫秒 mtime，否则临时文件 rename 的落盘时间覆盖远端历史时间（「最近修改」排序与 mtime 检测失真）；秒级 mtime（清单回退路径）不回写防错设 1970。
+- **#6 同步失败/冲突主动提醒（SyncViewModel + DesignIndex）**：后台自动同步失败重试耗尽或不可重试时弹窗提醒（30 分钟冷却去重，手动同步不冷却）；出现新的未处理冲突按路径集合签名去重提醒，「去处理」一键跳转同步设置；后台同步触发安全暂停也走 onNeedsConfirm（此前仅手动同步提醒，自动同步会永远静默等待确认）。
+- **#1 任务复选框勾选不翻转（BlockParser）**：列表块 rawContent 为空导致勾选后重解析 ForEach key 恒定、框架复用旧节点。修复：列表原始行写入 rawContent 参与渲染 key 哈希；新增单测覆盖。
+- **#5 文档附件卡片（BlockParser + MdBlockView）**：`![[报告.pdf]]` 等 PDF/Office/EPUB/TXT 附件解析为 ATTACHMENT 块渲染附件卡片（图标+名称+「文档附件 · 点击打开」），点击经 onOpenAttachment 调系统查看器打开。
+- **坚果云行为备忘**：PUT 无 ETag；PROPFIND 文件级 404（仅目录）；GET 不存在 404；限流 503 BlockedTemporarily 约 30 分钟自愈；WebDAV 拒绝目录 DELETE（403，仅网页端可删）。
+- 验证：fnOS ↔ 坚果云往返切换全链路（targetChanged 闸门、冲突副本、基线切换）；最终 fnOS 静默无操作同步 `targetChanged=false, 773↔773`；autoSync 自动触发正常。
 
 ## 近期变更（2026-11-19，基线弃用 API 清零：showToast / AlertDialog / getParams / getStringSync / packing）
 
