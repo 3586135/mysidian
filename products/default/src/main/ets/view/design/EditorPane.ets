@@ -13,6 +13,7 @@ import { EditorToolbar } from './EditorToolbar';
 import { FindReplaceBar } from './FindReplaceBar';
 import { ThreeDotsIcon } from './NoteActionHelper';
 import { FindReplaceUtils } from '../../viewmodel/FindReplaceUtils';
+import { SourceFormatActions, SourceTextEdit } from '../../viewmodel/SourceFormatActions';
 import { WysiwygCompletionQuery, WysiwygFormatState } from './WysiwygEditorEngine';
 import { WysiwygEditor, WysiwygEditorBridge } from './WysiwygEditor';
 import { WysiwygTableSheet } from './WysiwygTableSheet';
@@ -88,6 +89,9 @@ export struct EditorPane {
   private pendingSourceCaret: number = -1;
   private lastSourceCaret: number = -1;
   private focusRestoreSourceCaret: number = -1;
+  /** 源码模式当前选区（工具栏行内包裹用；start==end 表示纯光标）。 */
+  private sourceSelStart: number = 0;
+  private sourceSelEnd: number = 0;
   private editorStackHeight: number = 0;
 
   /** 所见即所得编辑器桥接控制器。 */
@@ -263,7 +267,9 @@ export struct EditorPane {
                 .onChange((value: string) => {
                   this.onEditorChange(value);
                 })
-                .onTextSelectionChange((start: number, _end: number) => {
+                .onTextSelectionChange((start: number, end: number) => {
+                  this.sourceSelStart = start;
+                  this.sourceSelEnd = end;
                   if (this.focusRestoreSourceCaret < 0) {
                     this.lastSourceCaret = start;
                   }
@@ -365,6 +371,9 @@ export struct EditorPane {
               },
               onPickAttachment: (): void => {
                 this.pickAndInsertAttachment();
+              },
+              onDismissKeyboard: (): void => {
+                this.dismissEditingKeyboard();
               }
             })
           }
@@ -831,22 +840,83 @@ export struct EditorPane {
     }
   }
 
-  /** 在光标处插入 Markdown 语法（所见模式直接应用富文本格式）。 */
+  /**
+   * 应用工具栏格式命令：所见模式走引擎；源码模式与所见保持「同命令同语义」——
+   * heading 循环标题级别、行内标记包裹/解包选区、[[ 成对插入，其余在光标处插入。
+   */
   private insertFormat(syntax: string): void {
     if (!this.sourceMode) {
       this.wysiwygBridge.applyToolbarAction(syntax);
       return;
     }
-    const snippet: string = syntax === 'table'
-      ? '| 列1 | 列2 |\n| --- | --- |\n|  |  |\n'
-      : syntax;
     const caret: number = this.textEditorController.getCaretOffset().index;
+    if (syntax === 'heading') {
+      const edit: SourceTextEdit =
+        SourceFormatActions.cycleHeadingAtCaret(this.vm.draftBuffer, caret);
+      this.pushToolbarUndoSnapshot();
+      this.replaceEditorText(edit.text, edit.selEnd);
+      return;
+    }
+    if (syntax === '[[') {
+      const edit: SourceTextEdit =
+        SourceFormatActions.insertPairAtCaret(this.vm.draftBuffer, caret, '[[', ']]');
+      this.pushToolbarUndoSnapshot();
+      this.replaceEditorText(edit.text, edit.selEnd);
+      return;
+    }
+    if (SourceFormatActions.isInlineMark(syntax)) {
+      const edit: SourceTextEdit | null = this.sourceSelEnd > this.sourceSelStart
+        ? SourceFormatActions.wrapInlineSelection(this.vm.draftBuffer, this.sourceSelStart,
+          this.sourceSelEnd, syntax)
+        : null;
+      const applied: SourceTextEdit = edit !== null ? edit
+        : SourceFormatActions.toggleMarkAtCaret(this.vm.draftBuffer, caret, syntax);
+      this.pushToolbarUndoSnapshot();
+      this.replaceEditorText(applied.text, applied.selEnd);
+      return;
+    }
+    const snippet: string = syntax === 'table'
+      ? this.tableTemplate()
+      : syntax;
     this.textEditorController.addText(snippet, { offset: caret });
     // addText 未触发 onChange 时的兜底：手动同步缓冲区。
     const text: string = this.vm.draftBuffer;
     const before: string = text.slice(0, caret);
     const after: string = text.slice(caret);
     this.vm.updateDraft(before + snippet + after);
+  }
+
+  /** 源码模式表格模板（资源化文案，读取失败时回退纯符号模板）。 */
+  private tableTemplate(): string {
+    try {
+      const hostCtx = this.getUIContext().getHostContext();
+      if (hostCtx !== undefined && hostCtx !== null) {
+        return hostCtx.resourceManager.getStringSync($r('app.string.editor_table_template').id);
+      }
+    } catch (error) {
+    }
+    return '|  |  |\n| --- | --- |\n|  |  |\n';
+  }
+
+  /** 工具栏动作的撤销快照：不参与 600ms 输入合并，保证每次动作独立可撤销。 */
+  private pushToolbarUndoSnapshot(): void {
+    this.undoStack.push(this.vm.draftBuffer);
+    if (this.undoStack.length > 50) {
+      this.undoStack.shift();
+    }
+    this.undoDepth = this.undoStack.length;
+    this.redoStack = [];
+    this.redoDepth = 0;
+    this.lastUndoPushAt = Date.now();
+  }
+
+  /** 收起编辑键盘：源码模式清除焦点，所见模式退出编辑态；工具栏显隐仍与键盘联动。 */
+  private dismissEditingKeyboard(): void {
+    if (this.sourceMode) {
+      this.getUIContext().getFocusController().clearFocus();
+      return;
+    }
+    this.wysiwygBridge.stopEditing();
   }
 
   /** 编辑器内容变化：处理列表续行、撤销栈与 wiki 补全。 */

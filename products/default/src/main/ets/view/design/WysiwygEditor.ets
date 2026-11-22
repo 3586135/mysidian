@@ -27,6 +27,7 @@ export class WysiwygEditorBridge {
   public getUndoDepth: () => number = (): number => 0;
   public getRedoDepth: () => number = (): number => 0;
   public requestFocus: () => void = (): void => {};
+  public stopEditing: () => void = (): void => {};
   public applyTableEdit: (tableId: number, nextRawMd: string) => void =
     (_id: number, _md: string): void => {};
 }
@@ -168,6 +169,9 @@ export struct WysiwygEditor {
     this.bridge.getRedoDepth = (): number => this.engine.getRedoDepth();
     this.bridge.requestFocus = (): void => {
       this.engine.requestFocus();
+    };
+    this.bridge.stopEditing = (): void => {
+      this.engine.richController.stopEditing();
     };
     this.bridge.applyTableEdit = (tableId: number, nextRawMd: string): void => {
       this.engine.applyTableEdit(tableId, nextRawMd);

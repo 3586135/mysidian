@@ -1427,6 +1427,102 @@
     {
       "name": "table_editor_source_hint",
       "value": "单元格支持 Markdown 行内格式（**加粗**、`代码`、[[双链]]）"
+    },
+    {
+      "name": "toolbar_task",
+      "value": "任务"
+    },
+    {
+      "name": "toolbar_image",
+      "value": "图片"
+    },
+    {
+      "name": "toolbar_attachment",
+      "value": "附件"
+    },
+    {
+      "name": "toolbar_table",
+      "value": "表格"
+    },
+    {
+      "name": "toolbar_a11y_bold",
+      "value": "加粗"
+    },
+    {
+      "name": "toolbar_a11y_italic",
+      "value": "斜体"
+    },
+    {
+      "name": "toolbar_a11y_strike",
+      "value": "删除线"
+    },
+    {
+      "name": "toolbar_a11y_highlight",
+      "value": "高亮"
+    },
+    {
+      "name": "toolbar_a11y_code",
+      "value": "行内代码"
+    },
+    {
+      "name": "toolbar_a11y_heading",
+      "value": "标题"
+    },
+    {
+      "name": "toolbar_a11y_quote",
+      "value": "引用"
+    },
+    {
+      "name": "toolbar_a11y_bullet",
+      "value": "无序列表"
+    },
+    {
+      "name": "toolbar_a11y_ordered",
+      "value": "有序列表"
+    },
+    {
+      "name": "toolbar_a11y_task",
+      "value": "任务列表"
+    },
+    {
+      "name": "toolbar_a11y_hr",
+      "value": "分隔线"
+    },
+    {
+      "name": "toolbar_a11y_undo",
+      "value": "撤销"
+    },
+    {
+      "name": "toolbar_a11y_redo",
+      "value": "重做"
+    },
+    {
+      "name": "toolbar_a11y_image",
+      "value": "插入图片"
+    },
+    {
+      "name": "toolbar_a11y_attachment",
+      "value": "插入附件"
+    },
+    {
+      "name": "toolbar_a11y_table",
+      "value": "插入表格"
+    },
+    {
+      "name": "toolbar_a11y_wikilink",
+      "value": "插入双链"
+    },
+    {
+      "name": "toolbar_a11y_tag",
+      "value": "插入标签"
+    },
+    {
+      "name": "toolbar_a11y_keyboard",
+      "value": "收起键盘"
+    },
+    {
+      "name": "editor_table_template",
+      "value": "| 列1 | 列2 |\n| --- | --- |\n|  |  |\n"
     }
   ]
 }
