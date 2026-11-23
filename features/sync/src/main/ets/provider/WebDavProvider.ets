@@ -4,6 +4,7 @@ import { util } from '@kit.ArkTS';
 import { BusinessError } from '@kit.BasicServicesKit';
 import { RemoteEntry, RemoteTrashStatus, SyncConfig, SyncPathGuard, SyncProvider } from '@ohos/domain';
 import { Logger } from '@ohos/common';
+import { STREAM_HARD_CAP_BYTES, SyncOversizedError, isDeclaredOverCap, isStreamOverCap } from '../SyncLimits';
 
 const LOG: Logger = new Logger('MySidianWebDav');
 
@@ -53,6 +54,12 @@ class PropfindUnsupportedError extends Error {
   constructor(code: number) {
     super(`propfind unsupported (${code})`);
   }
+}
+
+/** 单次流式请求的结果：HTTP 状态码与实际接收的累计字节数。 */
+class StreamFetchOutcome {
+  responseCode: number = 0;
+  totalBytes: number = 0;
 }
 
 /**
@@ -149,14 +156,7 @@ export class WebDavProvider implements SyncProvider {
   public async pull(entry: RemoteEntry, destPath: string): Promise<void> {
     WebDavProvider.assertSafeSyncPath(entry.path);
     const url: string = `${this.baseUrl}/${WebDavProvider.encodePath(entry.path)}`;
-    const response: http.HttpResponse = await this.request(url, http.RequestMethod.GET,
-      http.HttpDataType.STRING);
-    if (response.responseCode !== 200) {
-      throw new Error(WebDavProvider.describeCode(response.responseCode, 'webdav pull'));
-    }
-    const payload: string = WebDavProvider.extractTextPayload(
-      response.result, 'webdav file response is not text');
-    WebDavProvider.writeText(destPath, payload);
+    await this.streamToPath(url, destPath, 'webdav pull');
   }
 
   public async push(localPath: string, entry: RemoteEntry): Promise<string> {
@@ -190,16 +190,7 @@ export class WebDavProvider implements SyncProvider {
   public async pullBinary(entry: RemoteEntry, destPath: string): Promise<void> {
     WebDavProvider.assertSafeSyncPath(entry.path);
     const url: string = `${this.baseUrl}/${WebDavProvider.encodePath(entry.path)}`;
-    const response: http.HttpResponse = await this.request(url, http.RequestMethod.GET,
-      http.HttpDataType.ARRAY_BUFFER);
-    if (response.responseCode !== 200) {
-      throw new Error(WebDavProvider.describeCode(response.responseCode, 'webdav pullBinary'));
-    }
-    const buffer: ArrayBuffer | null = WebDavProvider.toArrayBuffer(response.result);
-    if (buffer === null) {
-      throw new Error('webdav binary response is not binary');
-    }
-    WebDavProvider.writeBytes(destPath, buffer);
+    await this.streamToPath(url, destPath, 'webdav pullBinary');
   }
 
   /** 推送本地二进制文件（图片等附件），返回上传后的服务器版本标识。 */
@@ -207,14 +198,16 @@ export class WebDavProvider implements SyncProvider {
     WebDavProvider.assertSafeSyncPath(entry.path);
     const url: string = `${this.baseUrl}/${WebDavProvider.encodePath(entry.path)}`;
     const data: ArrayBuffer = WebDavProvider.readBytes(localPath);
-    const response: http.HttpResponse = await this.requestBinary(url, http.RequestMethod.PUT, data);
+    const response: http.HttpResponse = await this.request(url, http.RequestMethod.PUT,
+      http.HttpDataType.STRING, data);
     if (response.responseCode === 403 || response.responseCode === 404 ||
       response.responseCode === 409) {
       // 父目录不存在（fnOS 以 403 表达）：先建目录再重试一次。
       const dir: string = WebDavProvider.dirnameOf(entry.path);
       if (dir.length > 0) {
         await this.mkdirRemote(dir);
-        const retry: http.HttpResponse = await this.requestBinary(url, http.RequestMethod.PUT, data);
+        const retry: http.HttpResponse = await this.request(url, http.RequestMethod.PUT,
+          http.HttpDataType.STRING, data);
         if (retry.responseCode >= 200 && retry.responseCode < 300) {
           return WebDavProvider.etagOf(retry);
         }
@@ -943,7 +936,8 @@ export class WebDavProvider implements SyncProvider {
    * 401 不重试——认证失败立即上抛，不喂服务器防暴力破解计数，由冷却机制接管；
    * 408/425/429/5xx/网络异常用全抖动指数退避重试；429 触发自适应请求间距惩罚，
    * 成功响应逐步衰减）。每次尝试创建独立 HttpRequest 实例并在完成后销毁，
-   * 防止并发认证头竞态丢失。
+   * 防止并发认证头竞态丢失。体积熔断错误（SyncOversizedError）属持续性策略
+   * 状态，不参与瞬时错误重试。
    */
   private async request(url: string, method: http.RequestMethod, expect: http.HttpDataType,
     body?: string | ArrayBuffer, extraHeaders?: Record<string, string>): Promise<http.HttpResponse> {
@@ -955,17 +949,7 @@ export class WebDavProvider implements SyncProvider {
       try {
         const response: http.HttpResponse = await this.sendOnce(
           url, method, expect, body, extraHeaders);
-        if (response.responseCode === 429) {
-          this.pacingPenaltyMs = Math.min(Math.max(this.pacingPenaltyMs * 2, 10),
-            WebDavProvider.MAX_PACING_PENALTY_MS);
-        } else {
-          // 成功（2xx）与其余错误状态都衰减：惩罚只应在持续被限流时保留，
-          // 若成功请求不衰减，一次 429 会拖慢整个会话的每个后续请求。
-          this.pacingPenaltyMs = Math.floor(this.pacingPenaltyMs / 2);
-          if (this.pacingPenaltyMs < 1) {
-            this.pacingPenaltyMs = 0;
-          }
-        }
+        this.applyResponsePacing(response.responseCode);
         if (WebDavProvider.isRetryableStatus(response.responseCode) &&
           attempt < WebDavProvider.MAX_RETRY_ATTEMPTS) {
           const waitMs: number = WebDavProvider.computeRetryDelayMs(attempt, response);
@@ -976,6 +960,9 @@ export class WebDavProvider implements SyncProvider {
         }
         return response;
       } catch (error) {
+        if (error instanceof SyncOversizedError) {
+          throw error;
+        }
         if (attempt < WebDavProvider.MAX_RETRY_ATTEMPTS) {
           const waitMs: number = WebDavProvider.computeRetryDelayMs(attempt, null);
           attempt++;
@@ -989,8 +976,23 @@ export class WebDavProvider implements SyncProvider {
     }
   }
 
-  private async sendOnce(url: string, method: http.RequestMethod, expect: http.HttpDataType,
-    body?: string | ArrayBuffer, extraHeaders?: Record<string, string>): Promise<http.HttpResponse> {
+  /** 429 自适应请求间距惩罚：被限流翻倍抬升，成功与其余状态逐步衰减。 */
+  private applyResponsePacing(responseCode: number): void {
+    if (responseCode === 429) {
+      this.pacingPenaltyMs = Math.min(Math.max(this.pacingPenaltyMs * 2, 10),
+        WebDavProvider.MAX_PACING_PENALTY_MS);
+    } else {
+      // 成功（2xx）与其余错误状态都衰减：惩罚只应在持续被限流时保留，
+      // 若成功请求不衰减，一次 429 会拖慢整个会话的每个后续请求。
+      this.pacingPenaltyMs = Math.floor(this.pacingPenaltyMs / 2);
+      if (this.pacingPenaltyMs < 1) {
+        this.pacingPenaltyMs = 0;
+      }
+    }
+  }
+
+  /** 请求发出前的限流间距等待（对齐 pacingPenaltyMs 惩罚窗口）。 */
+  private async waitPacingGap(): Promise<void> {
     if (this.pacingPenaltyMs > 0) {
       const elapsedMs: number = Date.now() - this.lastRequestFinishedAt;
       const waitMs: number = this.pacingPenaltyMs - elapsedMs;
@@ -998,6 +1000,11 @@ export class WebDavProvider implements SyncProvider {
         await WebDavProvider.delay(waitMs);
       }
     }
+  }
+
+  private async sendOnce(url: string, method: http.RequestMethod, expect: http.HttpDataType,
+    body?: string | ArrayBuffer, extraHeaders?: Record<string, string>): Promise<http.HttpResponse> {
+    await this.waitPacingGap();
     const request: http.HttpRequest = http.createHttp();
     try {
       const headers: Record<string, string> = this.buildHeaders();
@@ -1014,6 +1021,10 @@ export class WebDavProvider implements SyncProvider {
         method: method,
         expectDataType: expect,
         header: headers,
+        // 缓冲式请求的响应体积上限（后备防线）：默认仅 5MB，PROPFIND/清单/
+        // readRemote 等大响应会被 netstack 以 2300023/2300063 截断；显式抬到
+        // 64MB+1MB——与流式读取熔断同一上限，任何缓冲响应都无法无界膨胀。
+        maxLimit: STREAM_HARD_CAP_BYTES,
         readTimeout: 30000,
         connectTimeout: 15000
       };
@@ -1027,7 +1038,17 @@ export class WebDavProvider implements SyncProvider {
       if (body !== undefined && (typeof body !== 'string' || body.length > 0)) {
         options.extraData = body;
       }
-      const response: http.HttpResponse = await request.request(url, options);
+      let response: http.HttpResponse;
+      try {
+        response = await request.request(url, options);
+      } catch (error) {
+        const err = error as BusinessError;
+        if (err.code === 2300023 || err.code === 2300063) {
+          // 响应超出 maxLimit 后备上限（2300023 写入失败 / 2300063 超最大体积）。
+          throw new SyncOversizedError(STREAM_HARD_CAP_BYTES, url);
+        }
+        throw error as Error;
+      }
       this.lastRequestFinishedAt = Date.now();
       return response;
     } finally {
@@ -1043,6 +1064,162 @@ export class WebDavProvider implements SyncProvider {
   private static isRetryableStatus(code: number): boolean {
     return code === 408 || code === 425 || code === 429 ||
       code === 500 || code === 502 || code === 503 || code === 504;
+  }
+
+  /**
+   * 流式下载远端文件到本地路径（requestInStream）：响应分块直写临时文件，
+   * 完成后 fsync + rename 原子替换。体积安全不依赖服务器自报 size，而是
+   * 在消费点强制：Content-Length 前置校验（headersReceive）+ 分块累计熔断
+   * （dataReceive）双防线，任一超限立即 destroy 连接并抛 SyncOversizedError，
+   * 谎报体积/无 Content-Length（chunked）的服务端同样被兜住。
+   * 瞬时错误（429/5xx/网络异常）沿用全抖动退避重试，每次尝试重建临时文件。
+   */
+  private async streamToPath(url: string, destPath: string, action: string): Promise<void> {
+    if (this.baseUrl.length === 0) {
+      throw new Error('webdav provider is not connected');
+    }
+    const tempPath: string = `${destPath}.sync-tmp`;
+    let attempt: number = 0;
+    while (true) {
+      const file = fileIo.openSync(tempPath,
+        fileIo.OpenMode.READ_WRITE | fileIo.OpenMode.CREATE | fileIo.OpenMode.TRUNC);
+      let closed: boolean = false;
+      try {
+        const outcome: StreamFetchOutcome = await this.streamFetchOnce(url,
+          (chunk: ArrayBuffer): void => {
+            fileIo.writeSync(file.fd, chunk);
+          });
+        this.applyResponsePacing(outcome.responseCode);
+        this.lastRequestFinishedAt = Date.now();
+        if (WebDavProvider.isRetryableStatus(outcome.responseCode) &&
+          attempt < WebDavProvider.MAX_RETRY_ATTEMPTS) {
+          fileIo.closeSync(file);
+          closed = true;
+          const waitMs: number = WebDavProvider.computeRetryDelayMs(attempt, null);
+          attempt++;
+          LOG.warn(`webdav ${action} HTTP ${outcome.responseCode}, retry #${attempt} after ${waitMs}ms`);
+          await WebDavProvider.delay(waitMs);
+          continue;
+        }
+        if (outcome.responseCode !== 200) {
+          throw new Error(WebDavProvider.describeCode(outcome.responseCode, action));
+        }
+        fileIo.fsyncSync(file.fd);
+        fileIo.closeSync(file);
+        closed = true;
+        fileIo.renameSync(tempPath, destPath);
+        return;
+      } catch (error) {
+        if (!closed) {
+          fileIo.closeSync(file);
+        }
+        WebDavProvider.removeTempFileSafe(tempPath);
+        if (error instanceof SyncOversizedError) {
+          throw error;
+        }
+        if (attempt < WebDavProvider.MAX_RETRY_ATTEMPTS) {
+          const waitMs: number = WebDavProvider.computeRetryDelayMs(attempt, null);
+          attempt++;
+          const err = error as BusinessError;
+          LOG.warn(`webdav ${action} transient error (${err.code ?? ''}), retry #${attempt} after ${waitMs}ms: ${err.message}`);
+          await WebDavProvider.delay(waitMs);
+          continue;
+        }
+        throw error as Error;
+      }
+    }
+  }
+
+  /**
+   * 单次流式 GET（requestInStream）。事件订阅必须在发起请求前同步完成，
+   * 每次调用新建并销毁独立 HttpRequest 实例（官方 FAQ：复用会偶发丢失
+   * headersReceive 回调）。熔断状态以 fuseBytes 记录（0 = 未熔断），
+   * 便于在 throw 点构造确定的 Error 实例。
+   */
+  private async streamFetchOnce(url: string,
+    sink: (chunk: ArrayBuffer) => void): Promise<StreamFetchOutcome> {
+    await this.waitPacingGap();
+    const httpRequest: http.HttpRequest = http.createHttp();
+    const outcome: StreamFetchOutcome = new StreamFetchOutcome();
+    let fuseBytes: number = 0;
+    const dataEnd: Promise<void> = new Promise<void>((resolve: () => void): void => {
+      httpRequest.on('dataEnd', (): void => {
+        resolve();
+      });
+    });
+    try {
+      httpRequest.on('headersReceive', (header: Object): void => {
+        const declared: number = WebDavProvider.contentLengthOf(header);
+        if (isDeclaredOverCap(declared)) {
+          fuseBytes = declared;
+          httpRequest.destroy();
+        }
+      });
+      httpRequest.on('dataReceive', (chunk: ArrayBuffer): void => {
+        if (fuseBytes > 0) {
+          return;
+        }
+        outcome.totalBytes += chunk.byteLength;
+        if (isStreamOverCap(outcome.totalBytes)) {
+          fuseBytes = outcome.totalBytes;
+          httpRequest.destroy();
+          return;
+        }
+        sink(chunk);
+      });
+      const options: http.HttpRequestOptions = {
+        method: http.RequestMethod.GET,
+        header: this.buildHeaders(),
+        // 大文件慢链路放宽读取超时（官方建议：流式传输较大数据时增大该值）。
+        readTimeout: 300000,
+        connectTimeout: 15000
+      };
+      if (this.config.skipCertVerify) {
+        options.remoteValidation = 'skip';
+      } else if (this.config.caCertPath.length > 0) {
+        options.caPath = this.config.caCertPath;
+      }
+      outcome.responseCode = await httpRequest.requestInStream(url, options);
+      if (fuseBytes > 0) {
+        throw new SyncOversizedError(fuseBytes, url);
+      }
+      // 等待响应体完整接收（requestInStream 的 resolve 语义未承诺晚于
+      // dataEnd），保证 rename 前临时文件内容完整。
+      await dataEnd;
+      if (fuseBytes > 0) {
+        throw new SyncOversizedError(fuseBytes, url);
+      }
+      return outcome;
+    } catch (error) {
+      if (fuseBytes > 0) {
+        throw new SyncOversizedError(fuseBytes, url);
+      }
+      throw error as Error;
+    } finally {
+      httpRequest.destroy();
+    }
+  }
+
+  /** 从 headersReceive 回调对象提取 Content-Length（大小写不敏感），无法解析时返回 0 交由累计熔断兜底。 */
+  private static contentLengthOf(header: Object): number {
+    const map: Record<string, string> = header as Record<string, string>;
+    if (map === undefined || map === null) {
+      return 0;
+    }
+    const keys: string[] = Object.keys(map);
+    for (const key of keys) {
+      if (key.toLowerCase() === 'content-length') {
+        const value: string | undefined = map[key];
+        if (value !== undefined && typeof value === 'string') {
+          const parsed: number = Number(value.trim());
+          if (!Number.isNaN(parsed) && parsed >= 0) {
+            return parsed;
+          }
+        }
+        return 0;
+      }
+    }
+    return 0;
   }
 
   /** 全抖动指数退避（对齐 sync-engine 插件 retryDelay）：random × min(1000×2^n, 30s)。 */
@@ -1205,40 +1382,6 @@ export class WebDavProvider implements SyncProvider {
     return entries;
   }
 
-  /** 原子写入文本：先写临时文件并 fsync，再 rename 到目标（防中断截断损坏）。 */
-  private static writeText(path: string, content: string): void {
-    const tempPath: string = `${path}.sync-tmp`;
-    const file = fileIo.openSync(tempPath,
-      fileIo.OpenMode.READ_WRITE | fileIo.OpenMode.CREATE | fileIo.OpenMode.TRUNC);
-    try {
-      fileIo.writeSync(file.fd, content);
-      fileIo.fsyncSync(file.fd);
-    } catch (error) {
-      fileIo.closeSync(file);
-      WebDavProvider.removeTempFileSafe(tempPath);
-      throw error as Error;
-    }
-    fileIo.closeSync(file);
-    fileIo.renameSync(tempPath, path);
-  }
-
-  /** 原子写入二进制内容到沙箱文件（临时文件 + rename，防中断截断损坏）。 */
-  private static writeBytes(path: string, data: ArrayBuffer): void {
-    const tempPath: string = `${path}.sync-tmp`;
-    const file = fileIo.openSync(tempPath,
-      fileIo.OpenMode.READ_WRITE | fileIo.OpenMode.CREATE | fileIo.OpenMode.TRUNC);
-    try {
-      fileIo.writeSync(file.fd, data);
-      fileIo.fsyncSync(file.fd);
-    } catch (error) {
-      fileIo.closeSync(file);
-      WebDavProvider.removeTempFileSafe(tempPath);
-      throw error as Error;
-    }
-    fileIo.closeSync(file);
-    fileIo.renameSync(tempPath, path);
-  }
-
   /** 删除遗留临时文件（写失败时清理，存在才删，删除失败不掩盖原异常）。 */
   private static removeTempFileSafe(path: string): void {
     try {
@@ -1276,17 +1419,6 @@ export class WebDavProvider implements SyncProvider {
     throw new Error(errorMessage);
   }
 
-  /** 把 HTTP 响应体收敛为 ArrayBuffer，非二进制时返回 null。 */
-  private static toArrayBuffer(payload: string | Object | ArrayBuffer): ArrayBuffer | null {
-    if (typeof payload === 'string') {
-      return null;
-    }
-    if (payload instanceof ArrayBuffer) {
-      return payload;
-    }
-    return null;
-  }
-
   /** 按候选头名列表提取字符串响应头值（大小写不敏感匹配）。 */
   private static headerValueOf(response: http.HttpResponse, keys: string[]): string {
     const headerMap: Record<string, string> = response.header as Record<string, string>;
@@ -1311,12 +1443,6 @@ export class WebDavProvider implements SyncProvider {
   private static dirnameOf(path: string): string {
     const index: number = path.lastIndexOf('/');
     return index <= 0 ? '' : path.substring(0, index);
-  }
-
-  /** 发送二进制请求体（PUT/POST 上传附件）。 */
-  private async requestBinary(url: string, method: http.RequestMethod,
-    data: ArrayBuffer): Promise<http.HttpResponse> {
-    return this.request(url, method, http.HttpDataType.STRING, data);
   }
 
   private static readText(path: string): string {

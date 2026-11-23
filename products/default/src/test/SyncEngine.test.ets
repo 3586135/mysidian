@@ -2,6 +2,8 @@ import { describe, it, expect } from '@ohos/hypium';
 import { RemoteEntry, SyncFileFilter, SyncPathGuard, SyncSafetyReason } from '@ohos/domain';
 import { SyncBaseline } from '@ohos/vault';
 import { SyncDecision, SyncEngine } from '@ohos/sync';
+import { MAX_SYNC_FILE_BYTES, STREAM_HARD_CAP_BYTES, SyncOversizedError,
+  isDeclaredOverCap, isStreamOverCap } from '@ohos/sync';
 
 function makeEntry(path: string, etag: string, serverTag: string = ''): RemoteEntry {
   const entry: RemoteEntry = new RemoteEntry();
@@ -224,6 +226,38 @@ export default function syncEngineTest() {
       expect(SyncEngine.isHashReusable(baseline, 1000, 512)).assertFalse();
       const racedBaseline: SyncBaseline = makeBaseline('hash-a', 'etag-1', 1000, 256, 1001000);
       expect(SyncEngine.isHashReusable(racedBaseline, 1000, 256)).assertFalse();
+    });
+  });
+
+  describe('SyncLimitsTest', () => {
+    it('enforces declared and received byte caps at the hard-cap boundary', 0, () => {
+      // 未知（0）与非法（负数）自报体积放行，交由分块累计熔断兜底。
+      expect(isDeclaredOverCap(0)).assertFalse();
+      expect(isDeclaredOverCap(-1)).assertFalse();
+      expect(isDeclaredOverCap(STREAM_HARD_CAP_BYTES)).assertFalse();
+      expect(isDeclaredOverCap(STREAM_HARD_CAP_BYTES + 1)).assertTrue();
+      expect(isStreamOverCap(0)).assertFalse();
+      expect(isStreamOverCap(STREAM_HARD_CAP_BYTES)).assertFalse();
+      expect(isStreamOverCap(STREAM_HARD_CAP_BYTES + 1)).assertTrue();
+    });
+
+    it('keeps the hard cap just above the 64MB sync limit with bounded margin', 0, () => {
+      expect(STREAM_HARD_CAP_BYTES > MAX_SYNC_FILE_BYTES).assertTrue();
+      expect(STREAM_HARD_CAP_BYTES - MAX_SYNC_FILE_BYTES <= 4 * 1024 * 1024).assertTrue();
+      expect(MAX_SYNC_FILE_BYTES).assertEqual(64 * 1024 * 1024);
+    });
+
+    it('builds oversized error as an Error carrying the byte count', 0, () => {
+      const err: SyncOversizedError = new SyncOversizedError(12345, 'notes/big.md');
+      expect(err instanceof Error).assertTrue();
+      expect(err.byteCount).assertEqual(12345);
+      expect(err.message.includes('体积上限')).assertTrue();
+      expect(err.message.includes('notes/big.md')).assertTrue();
+      // 超限消息不得命中 isFatalSyncError 的关键字（401/403/认证/无权限），
+      // 否则会被误判为致命错误中止整轮同步。
+      expect(err.message.includes('401')).assertFalse();
+      expect(err.message.includes('403')).assertFalse();
+      expect(err.message.includes('无权限')).assertFalse();
     });
   });
 }

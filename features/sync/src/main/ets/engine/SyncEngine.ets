@@ -7,6 +7,7 @@ import { Logger } from '@ohos/common';
 import { FileHistory, SyncBaseline, SyncBaselineRow, SyncStateDao, VaultManager } from '@ohos/vault';
 import { ConflictResolver } from './ConflictResolver';
 import { WebDavProvider } from '../provider/WebDavProvider';
+import { MAX_SYNC_FILE_BYTES, SyncOversizedError } from '../SyncLimits';
 
 const LOG: Logger = new Logger('MySidianSync');
 
@@ -18,10 +19,9 @@ const LOG: Logger = new Logger('MySidianSync');
 const PULL_CONCURRENCY: number = 1;
 
 /**
- * 单文件参与同步的体积上限（64MB）：超限文件跳过同步并记录警告，
- * 避免整库哈希/读写被单个超大文件拖死或撑爆内存。
+ * 单文件参与同步的体积上限常量统一放在 SyncLimits（引擎规划期检查与
+ * 供应方读取期熔断共用，见 SyncLimits.ets 头注释）。
  */
-const MAX_SYNC_FILE_BYTES: number = 64 * 1024 * 1024;
 
 /**
  * 双向同步决策枚举。
@@ -46,6 +46,13 @@ class PlannedConflictItem {
   remote: RemoteEntry = new RemoteEntry();
   preloadedRemoteText: string | null = null;
   preloadedBinaryTempPath: string = '';
+}
+
+/** 单文件拉取结果：ok 成功；oversized 读取期体积熔断（持续性状态，跳过不计错）；error 失败消息。 */
+class PullOutcome {
+  ok: boolean = false;
+  oversized: boolean = false;
+  error: string = '';
 }
 
 /** 本地扫描结果：可同步条目 + 因超限被跳过的文件路径（决策阶段须原样保留两端）。 */
@@ -400,6 +407,12 @@ export class SyncEngine {
           item.preloadedRemoteText = remoteText;
           plan.conflicts.push(item);
         } catch (error) {
+          if (error instanceof SyncOversizedError) {
+            // 远端内容探测期体积熔断：持续性状态，跳过该文件本轮决策
+            // （基线不变，下轮重新探测），不中止整轮也不计 itemErrors。
+            LOG.warn(`sync check-content skip oversized remote: ${local.path}`);
+            continue;
+          }
           const err = error as BusinessError;
           if ((err.message ?? '').includes('404')) {
             plan.uploads.push(local);
@@ -413,8 +426,19 @@ export class SyncEngine {
         const isMd: boolean = SyncFileFilter.isMarkdown(local.path);
         if (!isMd && remote.etag.length === 0 &&
           (remote.size === 0 || remote.size === local.size)) {
-          const preloadedTemp: string | null = await this.checkBinaryEqualOrTemp(
-            provider, vault, local, remote);
+          let preloadedTemp: string | null = null;
+          try {
+            preloadedTemp = await this.checkBinaryEqualOrTemp(
+              provider, vault, local, remote);
+          } catch (error) {
+            if (error instanceof SyncOversizedError) {
+              // 冲突预载期体积熔断：跳过该文件本轮决策（基线不变，两端
+              // 各自原样保留），不因单个超大文件中止整轮规划。
+              LOG.warn(`sync conflict probe skip oversized remote: ${local.path}`);
+              continue;
+            }
+            throw error as Error;
+          }
           if (preloadedTemp === null) {
             plan.verifiedEqualEntries.push(local);
             continue;
@@ -561,6 +585,12 @@ export class SyncEngine {
       } catch (error) {
         SyncEngine.removeTempFileSafe(item.preloadedBinaryTempPath);
         item.preloadedBinaryTempPath = '';
+        if (error instanceof SyncOversizedError) {
+          // 冲突副本保存期体积熔断：持续性状态，跳过该冲突（两端各自
+          // 原样保留、基线不变），不计 itemErrors 以免每轮永久报失败。
+          LOG.warn(`sync conflict skip oversized remote: ${item.local.path}`);
+          continue;
+        }
         const msg: string = SyncEngine.errorMessageOf(error);
         LOG.warn(`sync conflict backup failed (${item.local.path}): ${msg}`);
         if (SyncEngine.isFatalSyncError(msg)) {
@@ -655,8 +685,9 @@ export class SyncEngine {
     if (pulls.length > 0) {
       LOG.info(`sync pull pending: ${pulls.length} files`);
     }
-    // 超限文件单项跳过（不拉取也不计成功），下轮仍会重试判定，避免内存被单个超大文件撑爆。
-    // 仅记日志不计 itemErrors：超限是持续性状态，计入会让每轮同步都永久报"失败"。
+    // 规划期超限预检（省带宽优化/防御纵深）：真实强制在供应方读取期熔断
+    // （服务器可谎报 size 或不报 size，见 SyncLimits.ets）。仅记日志不计
+    // itemErrors：超限是持续性状态，计入会让每轮同步都永久报"失败"。
     const boundedPulls: RemoteEntry[] = [];
     for (const remote of pulls) {
       if (remote.size > 0 && remote.size > MAX_SYNC_FILE_BYTES) {
@@ -670,27 +701,33 @@ export class SyncEngine {
         return;
       }
       const batch: RemoteEntry[] = boundedPulls.slice(i, i + PULL_CONCURRENCY);
-      const outcomes: Array<string | null> = await Promise.all(batch.map(
-        (remote: RemoteEntry): Promise<string | null> => {
+      const outcomes: PullOutcome[] = await Promise.all(batch.map(
+        (remote: RemoteEntry): Promise<PullOutcome> => {
           return this.pullRemote(provider, vault, remote, context);
         }));
       for (let k = 0; k < outcomes.length; k++) {
-        const outcome: string | null = outcomes[k];
+        const outcome: PullOutcome = outcomes[k];
         const remoteItem: RemoteEntry = batch[k];
-        if (outcome === null) {
+        if (outcome.ok) {
           progress.succeededPulls.add(remoteItem.path);
           continue;
         }
-        if (outcome.includes('404')) {
+        // 读取期体积熔断（远端谎报/未报体积）：与规划期跳过同等对待——
+        // 持续性状态，记日志不计 itemErrors，避免每轮同步永久报失败。
+        if (outcome.oversized) {
+          LOG.warn(`sync pull skip oversized at read: ${remoteItem.path}`);
+          continue;
+        }
+        if (outcome.error.includes('404')) {
           LOG.warn(`sync pull skip (404): ${remoteItem.path}`);
           continue;
         }
-        LOG.warn(`sync pull failed (${remoteItem.path}): ${outcome}`);
-        if (SyncEngine.isFatalSyncError(outcome)) {
-          progress.fatalError = outcome;
+        LOG.warn(`sync pull failed (${remoteItem.path}): ${outcome.error}`);
+        if (SyncEngine.isFatalSyncError(outcome.error)) {
+          progress.fatalError = outcome.error;
           return;
         }
-        progress.itemErrors.push(`${remoteItem.path}: ${outcome}`);
+        progress.itemErrors.push(`${remoteItem.path}: ${outcome.error}`);
       }
     }
   }
@@ -1237,16 +1274,23 @@ export class SyncEngine {
     }
   }
 
-  /** 拉取单个远端新文件：成功返回 null，失败返回错误消息。 */
+  /** 拉取单个远端新文件：体积熔断与失败均以 PullOutcome 表达，绝不抛出到批量循环外。 */
   private async pullRemote(provider: SyncProvider, vault: VaultInfo, remote: RemoteEntry,
-    context: common.Context): Promise<string | null> {
+    context: common.Context): Promise<PullOutcome> {
+    const outcome: PullOutcome = new PullOutcome();
     try {
       await this.pullEntry(provider, vault, remote, context);
       this.status.pendingDownloads++;
-      return null;
+      outcome.ok = true;
+      return outcome;
     } catch (error) {
+      if (error instanceof SyncOversizedError) {
+        outcome.oversized = true;
+        return outcome;
+      }
       const err = error as BusinessError;
-      return err.message ?? '';
+      outcome.error = err.message ?? '';
+      return outcome;
     }
   }
 

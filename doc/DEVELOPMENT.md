@@ -1,6 +1,6 @@
 # 开发状态与设计决策
 
-> 最后更新：2026-11-22。本文档记录各里程碑的功能实现、关键设计决策、验证状态与已知问题，供后续开发（含 AI 协作）快速接续。
+> 最后更新：2026-11-23。本文档记录各里程碑的功能实现、关键设计决策、验证状态与已知问题，供后续开发（含 AI 协作）快速接续。
 
 ## 里程碑历史（git 提交）
 
@@ -17,6 +17,19 @@
 | v0.5.0 | **安全、性能与生产力增强**：Asset Store 密码硬件级加密、DB v4 同步哈希缓存、冲突处理中心、FTS5 自愈 + BM25 排序、未链接提及 RDB 化、页内查找替换、文件树节点操作菜单、图片全屏缩放预览、应用内主题切换 |
 | v0.6.0 | **查询引擎 RDB 化、代码高亮、书签、本地快照备份与多端生态**：Dataview/日历 RDB 批量加速、列表项文本与标签入库、原生代码块语法着色、置顶书签、本地定时/一键快照备份恢复、2in1 键盘快捷键与桌面长按快捷方式 |
 | v1.0.0 | **全端质感打磨、同步安全无感化、系统打开方式与 1.0 正式发布**：首页默认素雅 5 色莫兰迪纸感列表与原地目录穿透面包屑、透明毛玻璃三页签底栏、按年月分卷日记（`日记/YYYY-MM/YYYY-MM-DD.md`）、自适应大纲浮层与多行编辑工具栏、WebDAV 干跑安全闸门/断点落盘/`.trash/` 软删与新建仓库自签名开关、系统 `.md`「打开方式」只读预览与一键导入、Ceramic Washi 分层应用图标、`md_*` 资源解耦与全模块单测通过 |
+
+## 近期变更（2026-11-23，WebDAV 读路径流式化 + 双重体积熔断）
+
+从第一性原理修复 v1.5.3 已知限制「远端 `remote.size===0` 时读路径无体积上限（OOM 风险）」：
+
+- **本质原因（信任边界错位）**：内存安全决策原先依赖服务器自报元数据（`remote.size`），而内存安全必须在消费点（读取本身）强制执行——服务器可谎报 size 或 PROPFIND/GET 之间内容变化（TOCTOU）。
+- **新增 `SyncLimits.ets`（features/sync）**：`MAX_SYNC_FILE_BYTES`（64MB）、`STREAM_HARD_CAP_BYTES`（64MB + 1MB 余量）、`SyncOversizedError extends Error`（含 byteCount，消息不含 401/403/无权限等 fatal 关键字，不会被误判中止整轮）、纯函数 `isDeclaredOverCap`/`isStreamOverCap`——引擎与供应方共用的唯一体积上限来源。
+- **WebDavProvider 流式重写**：`pull`/`pullBinary` 统一走 `streamToPath`（`requestInStream` 流式 GET，分块直写 `${destPath}.sync-tmp`，fsync + rename 原子替换；readTimeout 放宽 300000ms）；单次流内双防线——`headersReceive` 的 Content-Length 前置校验 + `dataReceive` 分块累计熔断（chunked 传输/谎报/无 Content-Length 均兜住），超限 destroy 连接并抛 `SyncOversizedError`；Content-Length 头解析大小写不敏感。
+- **`sendOnce` 加 `maxLimit=STREAM_HARD_CAP_BYTES`**：修复潜在 bug——缓冲式请求默认 5MB 上限会截断大 PROPFIND/manifest/readRemote 响应；2300023/2300063（流式写入失败/超 maxLimit）映射为 SyncOversizedError。
+- **引擎 oversized 语义（PullOutcome 三态）**：`pullRemote` 返回 ok/oversized/error；oversized 走静默跳过（记 warn 不计 itemErrors，与规划期超限跳过同哲学——超限是持续性状态，不应每轮永久报「失败」）；CHECK_CONTENT 探测、CONFLICT 二进制预载、`executeConflicts` 均 oversized 分支跳过本轮、基线不变下轮重试。规划期 size 检查保留为省带宽优化/防御纵深（强制点已移至供应方读取路径）。
+- **历史包袱清理**：删除 `requestBinary` 包装（3 调用点改直调 request）、死代码 `writeText`/`writeBytes`/`toArrayBuffer`；pushBinary 改直调 `request(PUT)`。`pull`/`pullBinary` 统一后逐字节保真（原 writeText 解码再编码改为字节直落）。
+- **ArkTS 坑位记录**：`arkts-limited-throw`——throw 语句不接受联合类型（含 null）变量，即使有 null 收窄；用数值状态位（`fuseBytes`）记熔断状态、throw 点现场构造 Error 解决。
+- 验证：`devecocli check arkts` 0 错误；`devecocli build` exitCode=0（签名构建成功）；四模块单测全绿（default 47 / markdown 75 / vault 24，含新增 SyncLimitsTest 3 用例：熔断边界、hard cap 余量、错误类型语义）。
 
 ## 近期变更（2026-11-23，v1.5.3：全项目六域对抗性审查修复 40+ 项）
 
@@ -37,7 +50,7 @@
   - ZipTransfer `copyFileToUri`：target 打开失败不再泄漏 source fd；`writeSync` 按返回值循环补写（部分写入不再产出截断导出文件）；
   - `MdPropertiesView` ForEach key 补 `listValue`/`rawBlock`；`FileHistory.rollback`/`writeNote` rename 失败清理 `.tmp` 残留。
 - **编辑器复扫收编 15 项**：查找替换拒绝触及表格/图片原子行占位符（`rangeTouchesAtomicLine`）；期望文本分支泄漏修复（增量拼接与控制器全量一致时同步缓存消费期望）；`applyTableEdit` 先离屏渲染后提交（渲染失败零副作用）；EditorPane 异步定时器句柄统一管理（销毁/重入清除）；图片/附件选择器异步返回后会话校验（防插入已切换笔记）；`syncMetaCountToPlainText` 截断释放表格位图；文档切换重置撤销降频状态；imageMap 无限累积修剪；选区夹紧；死三目清理；IMAGE 行与 TABLE 行同走原子块守卫；源码模式程序化替换补撤销快照；任务勾选命中区按 `WysiwygMarginCache` 真实几何推导（indent*18+4，15vp）。
-- **已知限制（本轮记录不修）**：inline 转义反斜杠往返丢失（`\*a\*` → `*a*`，InlineParser 丢 `\` 且序列化不还原，需重建转义往返协议）；远端 `remote.size===0` 时读路径无体积上限（OOM 风险，需流式上限）；`syncIndex` 非事务化（中断留半索引，下轮全量自愈）；`.tmp` 固定名并发写互踩（同笔记并发保存窗口极小）；`createVault` 半程失败留孤儿目录；`createBackup` 半程 zip 残留；TOCTOU（listFileSync/statSync 竞态）；闪念在编辑器中不实时显示（draftBuffer 非响应式，编辑器是权威来源）。
+- **已知限制（本轮记录不修）**：inline 转义反斜杠往返丢失（`\*a\*` → `*a*`，InlineParser 丢 `\` 且序列化不还原，需重建转义往返协议）；远端 `remote.size===0` 时读路径无体积上限（OOM 风险，需流式上限；**已于同日修复**，见上方流式熔断段落）；`syncIndex` 非事务化（中断留半索引，下轮全量自愈）；`.tmp` 固定名并发写互踩（同笔记并发保存窗口极小）；`createVault` 半程失败留孤儿目录；`createBackup` 半程 zip 残留；TOCTOU（listFileSync/statSync 竞态）；闪念在编辑器中不实时显示（draftBuffer 非响应式，编辑器是权威来源）。
 - 验证：`devecocli check arkts` 全轮次 0 错误；`devecocli build` exitCode=0（签名构建成功）；新增 11 个单测断言（Batch C 7 + Batch F 4）。
 
 ## 近期变更（2026-11-22，编辑工具栏命令化重构：参考 obsidian-editing-toolbar）
