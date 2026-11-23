@@ -75,6 +75,8 @@ export class WysiwygStyleHelper {
 
   /** 判断 RichEditor 返回的 span 结果是否为图片 span（集中隔离 union 收窄）。 */
   public static isImageSpanResult(span: RichEditorImageSpanResult | RichEditorTextSpanResult): boolean {
+    // #13：imageStyle 仅存在于图片 span 接口；ArkTS 禁用 in 运算符，此处的 as 断言为
+    // SDK 联合类型盲收窄的唯一可行手段，已集中隔离在本方法内（调用方不再各自断言）。
     return (span as RichEditorImageSpanResult).imageStyle !== undefined;
   }
 

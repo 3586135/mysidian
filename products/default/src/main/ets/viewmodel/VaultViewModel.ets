@@ -400,6 +400,11 @@ export class VaultViewModel {
       if (!path.toLowerCase().endsWith('.md')) {
         continue;
       }
+      // 根级 conflicts/ 是同步冲突副本专用目录：不进入笔记索引（与
+      // scanVault 一致），否则冲突副本会作为独立笔记混入列表/搜索。
+      if (path === 'conflicts' || path.startsWith('conflicts/')) {
+        continue;
+      }
       const row: NoteRow | undefined = known[path];
       if (row === undefined) {
         await this.indexNoteByPath(vault, path, resolver);
@@ -417,9 +422,11 @@ export class VaultViewModel {
         changed++;
       }
     }
-    // 清理幽灵行：文件已不存在（外部删除 / 同步删除）但索引仍残留的笔记。
+    // 清理幽灵行：文件已不存在（外部删除 / 同步删除）但索引仍残留的笔记；
+    // conflicts/ 下的历史误索引行（旧版本增量索引未排除冲突副本）一并清除。
     for (const note of notes) {
-      if (fileSet[note.path] !== true) {
+      if (fileSet[note.path] !== true || note.path === 'conflicts' ||
+        note.path.startsWith('conflicts/')) {
         await NoteDao.removeByPath(context, vault.id, note.path);
         changed++;
       }
@@ -1522,6 +1529,11 @@ export class VaultViewModel {
     if (newPath === path) {
       return false;
     }
+    // 改名前先把当前脏草稿落盘到旧路径：否则改名后 openNote 内的 saveDraft
+    // 仍写旧 selectedPath，会把已改名的旧文件复活，产生内容分叉。
+    if (this.editMode && this.selectedPath === path && this.draftBuffer !== this.noteContent) {
+      await this.saveDraft();
+    }
     const renamed: boolean = await manager.renameNote(this.currentVault, path, newPath);
     if (!renamed) {
       return false;
@@ -1594,6 +1606,11 @@ export class VaultViewModel {
     const target: string = destDir.length === 0 ? name : `${destDir}/${name}`;
     if (target === path) {
       return false;
+    }
+    // 移动前先把当前脏草稿落盘到旧路径：否则移动后 openNote 内的 saveDraft
+    // 仍写旧 selectedPath，会把已移动的旧文件复活，产生内容分叉。
+    if (this.editMode && this.selectedPath === path && this.draftBuffer !== this.noteContent) {
+      await this.saveDraft();
     }
     const moved: boolean = await manager.moveNote(this.currentVault, path, target);
     if (!moved) {
@@ -1870,22 +1887,26 @@ export class VaultViewModel {
     const name: string = VaultViewModel.dateKey(now.getFullYear(), now.getMonth() + 1, now.getDate());
     const existingPath: string = await this.findExistingDailyPath(context, name);
     const path: string = existingPath.length > 0 ? existingPath : VaultPath.dailyNotePath(name);
-    let content: string = '';
-    if (existingPath.length > 0) {
-      content = await manager.readNote(this.currentVault, path);
+    // E1：今日日记正开在编辑器里时，以未保存草稿为 base——磁盘旧内容不得整体覆盖草稿，
+    // 否则闪念后立即保存会把用户未保存的编辑全部丢掉。
+    const editingThisNote: boolean = this.editMode && this.selectedPath === path;
+    let base: string = '';
+    if (editingThisNote) {
+      base = this.draftBuffer;
+    } else if (existingPath.length > 0) {
+      base = await manager.readNote(this.currentVault, path);
     } else {
-      content = `# ${name}\n\n`;
+      base = `# ${name}\n\n`;
     }
-    let base: string = content;
     // 已有日记末行可能无换行符，直接追加会黏到上一行，先补齐。
     if (base.length > 0 && !base.endsWith('\n')) {
       base = `${base}\n`;
     }
     const next: string = `${base}- ${new Date().toTimeString().substring(0, 5)} ${text.trim()}\n`;
-    if (this.editMode && this.selectedPath === path) {
-      // 今日日记正开在编辑器里：磁盘写入的内容会被未保存的草稿在下次
-      // 保存时整体覆盖，闪念将静默丢失。改为直接追加进草稿缓冲本身，
-      // 由正常保存路径落盘。
+    if (editingThisNote) {
+      // 编辑态追加后立即落盘并同步 draft/noteContent：返回键退出编辑走
+      // draftBuffer === noteContent 的取消分支，不落盘会产生"显示有、磁盘无"的幽灵内容。
+      await manager.writeNote(this.currentVault, path, next);
       this.draftBuffer = next;
       this.noteContent = next;
       await manager.refreshNote(this.currentVault, path);
@@ -2302,9 +2323,12 @@ export class VaultViewModel {
     if (manager === null || context === null) {
       return;
     }
-    await manager.writeNote(this.currentVault, this.selectedPath, this.draftBuffer);
-    this.noteContent = this.draftBuffer;
-    this.document = MarkdownParser.parse(this.noteContent);
+    // 写盘前快照：await 期间新进入 draftBuffer 的尾部按键不属于本次落盘，
+    // 用快照保证磁盘 / noteContent / 索引三者一致，不产生"假已保存"内容。
+    const draft: string = this.draftBuffer;
+    await manager.writeNote(this.currentVault, this.selectedPath, draft);
+    this.noteContent = draft;
+    this.document = MarkdownParser.parse(draft);
     this.editMode = false;
     this.draftBuffer = '';
     this.dataViewCache.clear();
@@ -2545,12 +2569,15 @@ export class VaultViewModel {
     if (manager === null || this.selectedPath.length === 0) {
       return;
     }
-    const content: string = await manager.readNote(this.currentVault, this.selectedPath);
-    const next: string = FrontmatterSerializer.rebuild(content, properties, removedKeys);
+    // 编辑模式下草稿（draftBuffer）是权威内容：以草稿为 base 重建 frontmatter，
+    // 防止磁盘旧正文覆盖用户未落盘的正文编辑。
+    const base: string = this.editMode
+      ? this.draftBuffer
+      : await manager.readNote(this.currentVault, this.selectedPath);
+    const next: string = FrontmatterSerializer.rebuild(base, properties, removedKeys);
     await manager.writeNote(this.currentVault, this.selectedPath, next);
     this.noteContent = next;
     this.document = MarkdownParser.parse(next);
-    // 编辑模式下的草稿仍持有旧 frontmatter，需同步，否则下次落盘会回滚属性修改。
     if (this.editMode) {
       this.draftBuffer = next;
     }

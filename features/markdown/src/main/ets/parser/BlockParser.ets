@@ -36,13 +36,13 @@ export class BlockParser {
       }
       const media: RegExpExecArray | null = /^!\[\[([^\]]+)\]\]$/.exec(trimmed);
       if (media !== null) {
-        blocks.push(BlockParser.parseMediaBlock(media[1]));
+        blocks.push(BlockParser.parseMediaBlock(media[1], trimmed));
         index++;
         continue;
       }
       const mdImage: RegExpExecArray | null = /^!\[[^\]]*\]\(([^)]+)\)$/.exec(trimmed);
       if (mdImage !== null) {
-        blocks.push(BlockParser.parseMediaBlock(mdImage[1]));
+        blocks.push(BlockParser.parseMediaBlock(mdImage[1], trimmed));
         index++;
         continue;
       }
@@ -52,6 +52,8 @@ export class BlockParser {
         block.type = MdBlockType.HEADING;
         block.level = trimmed.length - trimmed.replace(/^#{1,6}/, '').length;
         block.inlines = this.inlineParser.parse(heading[1].trim());
+        // 原始行参与 ForEach key 哈希：编辑标题文字后 key 变化，框架才会重建节点。
+        block.rawContent = trimmed;
         blocks.push(block);
         index++;
         continue;
@@ -190,6 +192,8 @@ export class BlockParser {
     block.type = MdBlockType.LIST;
     let index: number = start;
     let baseIndent: number = -1;
+    // 逐项累积纯文本内容：软换行续行时合并进上一项并重解析 inlines。
+    const itemContents: string[] = [];
     while (index < lines.length) {
       const raw: string = lines[index];
       const trimmed: string = raw.trim();
@@ -203,6 +207,17 @@ export class BlockParser {
       }
       const match: RegExpExecArray | null = /^([-*+]|\d+[.)])\s+(.*)$/.exec(trimmed);
       if (match === null) {
+        // 软换行懒续行：非空、非新块起始、非表格行的普通文本并入上一项
+        // （修复前会在此断开列表，把列表项的后半段渲染成独立段落）。
+        // 空行后的续行不合并（空行即列表边界），块起始行不吞并。
+        if (block.items.length > 0 && !this.isBlockStart(trimmed) && !trimmed.includes('|')) {
+          const lastIdx: number = block.items.length - 1;
+          itemContents[lastIdx] = `${itemContents[lastIdx]}\n${trimmed}`;
+          const continued: MdListItem = block.items[lastIdx];
+          continued.inlines = this.inlineParser.parse(itemContents[lastIdx]);
+          index++;
+          continue;
+        }
         break;
       }
       const indent: number = raw.length - raw.trimStart().length;
@@ -244,6 +259,7 @@ export class BlockParser {
         content = TaskMetadata.apply(item, content);
       }
       item.inlines = this.inlineParser.parse(content);
+      itemContents.push(content);
       block.items.push(item);
       index++;
     }
@@ -270,6 +286,10 @@ export class BlockParser {
       return result;
     }
     index++;
+    // 开栏 $$ 与内容同行（如 "$$x = 1"）时，$$ 后的首行内容不得丢弃。
+    if (first.length > 2) {
+      body.push(first.substring(2).trim());
+    }
     while (index < lines.length) {
       const current: string = lines[index].trim();
       if (current.endsWith('$$')) {
@@ -320,6 +340,8 @@ export class BlockParser {
       block.rows.push(this.splitTableRow(trimmed));
       index++;
     }
+    // 原始行参与 ForEach key 哈希：编辑单元格后 key 变化，表格节点才会重建。
+    block.rawContent = lines.slice(start, index).join('\n');
     result.block = block;
     result.next = index;
     return result;
@@ -341,6 +363,7 @@ export class BlockParser {
         heading.type = MdBlockType.HEADING;
         heading.level = trimmed === '===' ? 1 : 2;
         heading.inlines = this.inlineParser.parse(body.join(' '));
+        heading.rawContent = `${body.join(' ')}\n${trimmed}`;
         result.block = heading;
         result.next = index + 1;
         return result;
@@ -386,9 +409,11 @@ export class BlockParser {
   /**
    * 解析独占一行的图片 / 附件 / 嵌入块：![[x.png]] / ![[报告.pdf]] / ![[笔记]] / ![说明](路径)。
    * 图片与附件按扩展名判定；其余 wiki 目标视为笔记嵌入。
+   * rawLine（原始行）记入 rawContent 参与 ForEach key，编辑目标/别名后节点才会刷新。
    */
-  private static parseMediaBlock(spec: string): MdBlock {
+  private static parseMediaBlock(spec: string, rawLine: string): MdBlock {
     const block: MdBlock = new MdBlock();
+    block.rawContent = rawLine;
     let target: string = spec.trim();
     let alias: string = '';
     const pipe: number = target.indexOf('|');
@@ -474,17 +499,35 @@ export class BlockParser {
   }
 
   private splitTableRow(line: string): string[] {
-    let trimmed: string = line.trim();
-    if (trimmed.startsWith('|')) {
-      trimmed = trimmed.substring(1);
+    let src: string = line.trim();
+    // 行首/行尾的结构性管道切掉；转义管道 `\|` 是字面内容，不参与切分。
+    if (src.startsWith('|')) {
+      src = src.substring(1);
     }
-    if (trimmed.endsWith('|')) {
-      trimmed = trimmed.substring(0, trimmed.length - 1);
+    if (src.endsWith('|') && !src.endsWith('\\|')) {
+      src = src.substring(0, src.length - 1);
     }
     const cells: string[] = [];
-    for (const cell of trimmed.split('|')) {
-      cells.push(cell.trim());
+    let cell: string = '';
+    let index: number = 0;
+    while (index < src.length) {
+      const ch: string = src.charAt(index);
+      if (ch === '\\' && index + 1 < src.length && src.charAt(index + 1) === '|') {
+        // GFM 表格内 `\|` 转义为字面竖线。
+        cell += '|';
+        index += 2;
+        continue;
+      }
+      if (ch === '|') {
+        cells.push(cell.trim());
+        cell = '';
+        index++;
+        continue;
+      }
+      cell += ch;
+      index++;
     }
+    cells.push(cell.trim());
     return cells;
   }
 

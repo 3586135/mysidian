@@ -610,6 +610,7 @@ export class WebDavProvider implements SyncProvider {
     }
     const payload: string = WebDavProvider.extractTextPayload(
       response.result, 'propfind response is not text');
+    WebDavProvider.assertMultistatusPayload(payload);
     const items: PropfindItem[] = WebDavProvider.parseMultistatus(payload);
     const files: RemoteEntry[] = [];
     let sawDir = false;
@@ -691,6 +692,7 @@ export class WebDavProvider implements SyncProvider {
     }
     const payload: string = WebDavProvider.extractTextPayload(
       response.result, 'propfind response is not text');
+    WebDavProvider.assertMultistatusPayload(payload);
     const items: PropfindItem[] = WebDavProvider.parseMultistatus(payload);
     for (const it of items) {
       const rel: string | null = this.hrefToRelative(it.href);
@@ -881,6 +883,16 @@ export class WebDavProvider implements SyncProvider {
    * 解析 PROPFIND multistatus 响应。WebDAV 命名空间前缀不固定（D:/d:/无前缀），
    * 采用对前缀不敏感的正则提取 response/href/collection/getcontentlength/getlastmodified。
    */
+  /**
+   * 校验 PROPFIND 响应体确为 multistatus：网关/代理可能以 200 返回 HTML 错误页，
+   * 若按空远端处理，本地整库会被误判为"远端已删"而批量进回收站——必须中止本轮同步。
+   */
+  private static assertMultistatusPayload(payload: string): void {
+    if (!/multistatus/i.test(payload)) {
+      throw new Error('webdav propfind 响应不是 multistatus 内容（可能是网关错误页），已中止本轮同步以防误判远端为空');
+    }
+  }
+
   private static parseMultistatus(text: string): PropfindItem[] {
     const items: PropfindItem[] = [];
     const responseRe: RegExp = /<(?:[A-Za-z0-9_.-]+:)?response(?:\s[^>]*)?>([\s\S]*?)<\/(?:[A-Za-z0-9_.-]+:)?response>/g;
@@ -946,8 +958,10 @@ export class WebDavProvider implements SyncProvider {
         if (response.responseCode === 429) {
           this.pacingPenaltyMs = Math.min(Math.max(this.pacingPenaltyMs * 2, 10),
             WebDavProvider.MAX_PACING_PENALTY_MS);
-        } else if (response.responseCode < 200 || response.responseCode >= 300) {
-          this.pacingPenaltyMs = this.pacingPenaltyMs * 0.75;
+        } else {
+          // 成功（2xx）与其余错误状态都衰减：惩罚只应在持续被限流时保留，
+          // 若成功请求不衰减，一次 429 会拖慢整个会话的每个后续请求。
+          this.pacingPenaltyMs = Math.floor(this.pacingPenaltyMs / 2);
           if (this.pacingPenaltyMs < 1) {
             this.pacingPenaltyMs = 0;
           }

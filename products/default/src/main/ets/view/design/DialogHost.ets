@@ -1,3 +1,4 @@
+import { PromptAction } from '@kit.ArkUI';
 import { VaultViewModel } from '../../viewmodel/VaultViewModel';
 import { noteTitleFromPath } from './NoteActionHelper';
 
@@ -416,16 +417,18 @@ export struct DialogHost {
   private confirmRename(): void {
     const target: string = this.inputText.trim();
     const path: string = this.effectiveTargetPath();
+    // E3：onClose 后本组件可能已卸载，异步回调里的 toast 必须用关闭前捕获的 PromptAction。
+    const prompt: PromptAction = this.getUIContext().getPromptAction();
     this.onClose();
     if (target.length === 0 || path.length === 0) {
       return;
     }
     this.vm.renameNote(path, target).then((ok: boolean): void => {
       if (!ok) {
-        this.toast($r('app.string.msg_rename_failed'));
+        prompt.showToast({ message: $r('app.string.msg_rename_failed') });
         return;
       }
-      this.toast($r('app.string.msg_rename_done'));
+      prompt.showToast({ message: $r('app.string.msg_rename_done') });
       this.onNoteMutated();
     });
   }
@@ -433,38 +436,37 @@ export struct DialogHost {
   /** 确认新建文件夹。 */
   private confirmCreateFolder(): void {
     const name: string = this.inputText.trim();
+    // E3：同 confirmRename，关闭后异步 toast 用关闭前捕获的 PromptAction。
+    const prompt: PromptAction = this.getUIContext().getPromptAction();
     this.onClose();
     if (name.length === 0) {
       return;
     }
     this.vm.createFolder(name).then((ok: boolean): void => {
       if (!ok) {
-        this.toast($r('app.string.msg_folder_failed'));
+        prompt.showToast({ message: $r('app.string.msg_folder_failed') });
         return;
       }
-      this.toast($r('app.string.msg_folder_done'));
+      prompt.showToast({ message: $r('app.string.msg_folder_done') });
     });
   }
 
   /** 确认移动到目标目录。 */
   private confirmMoveTo(dir: string): void {
     const path: string = this.effectiveTargetPath();
+    // E3：同 confirmRename，关闭后异步 toast 用关闭前捕获的 PromptAction。
+    const prompt: PromptAction = this.getUIContext().getPromptAction();
     this.onClose();
     if (path.length === 0) {
       return;
     }
     this.vm.moveNote(path, dir).then((ok: boolean): void => {
       if (!ok) {
-        this.toast($r('app.string.msg_move_failed'));
+        prompt.showToast({ message: $r('app.string.msg_move_failed') });
         return;
       }
-      this.toast($r('app.string.msg_move_done'));
+      prompt.showToast({ message: $r('app.string.msg_move_done') });
       this.onNoteMutated();
     });
-  }
-
-  /** 轻提示（使用 UIContext 的 PromptAction，避免全局 promptAction 的弃用告警）。 */
-  private toast(message: ResourceStr): void {
-    this.getUIContext().getPromptAction().showToast({ message: message });
   }
 }

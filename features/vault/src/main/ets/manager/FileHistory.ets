@@ -59,7 +59,7 @@ export class FileHistory {
         fileIo.mkdirSync(dir, true);
       }
       const encoded: string = FileHistory.encodePath(relativePath);
-      const name: string = `${encoded}.${Date.now()}.md`;
+      const name: string = `${encoded}.${FileHistory.nextStamp(dir, encoded)}.md`;
       const source = fileIo.openSync(absolute, fileIo.OpenMode.READ_ONLY);
       let target: fileIo.File | undefined = undefined;
       try {
@@ -135,7 +135,7 @@ export class FileHistory {
         fileIo.mkdirSync(dir, true);
       }
       const encoded: string = FileHistory.encodePath(relativePath);
-      const currentName: string = `${encoded}.${Date.now()}.md`;
+      const currentName: string = `${encoded}.${FileHistory.nextStamp(dir, encoded)}.md`;
       const source = fileIo.openSync(absolute, fileIo.OpenMode.READ_ONLY);
       const target = fileIo.openSync(`${dir}/${currentName}`,
         fileIo.OpenMode.WRITE_ONLY | fileIo.OpenMode.CREATE | fileIo.OpenMode.TRUNC);
@@ -147,13 +147,24 @@ export class FileHistory {
       }
       FileHistory.prune(dir, relativePath);
     }
-    const file = fileIo.openSync(absolute,
+    // 原子写回：直接 TRUNC 目标文件在写入中途崩溃会留下截断的半份笔记。
+    const tempPath: string = `${absolute}.tmp`;
+    const file = fileIo.openSync(tempPath,
       fileIo.OpenMode.READ_WRITE | fileIo.OpenMode.CREATE | fileIo.OpenMode.TRUNC);
     try {
       fileIo.writeSync(file.fd, content);
       fileIo.fsyncSync(file.fd);
     } finally {
       fileIo.closeSync(file);
+    }
+    try {
+      fileIo.renameSync(tempPath, absolute);
+    } catch (error) {
+      // rename 失败清掉临时文件，避免 .tmp 残留；异常照常上抛由调用方处理。
+      if (fileIo.accessSync(tempPath)) {
+        fileIo.unlinkSync(tempPath);
+      }
+      throw error as Error;
     }
     return true;
   }
@@ -236,6 +247,18 @@ export class FileHistory {
     }
     result.reverse();
     return result;
+  }
+
+  /**
+   * 生成不与现有快照冲突的时间戳：同一毫秒内连续多次快照时递增，
+   * 避免同名互相覆盖（旧实现 TRUNC 直写会把前一份快照悄悄抹掉）。
+   */
+  private static nextStamp(dir: string, encoded: string): number {
+    let stamp: number = Date.now();
+    while (fileIo.accessSync(`${dir}/${encoded}.${stamp}.md`)) {
+      stamp++;
+    }
+    return stamp;
   }
 
   /**

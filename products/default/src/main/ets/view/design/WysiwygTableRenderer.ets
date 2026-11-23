@@ -426,7 +426,7 @@ export class WysiwygTableRenderer {
         continue;
       }
       const font: string = WysiwygTableRenderer.buildCanvasFont(inline, fontSize, isHeader);
-      const color: string = WysiwygTableRenderer.pickInlineColor(inline, isHeader, palette);
+      const color: string = WysiwygTableRenderer.pickInlineColor(inline, palette);
       const isLink: boolean = inline.kind === WysiwygSpanKind.WIKI_LINK ||
         inline.kind === WysiwygSpanKind.MD_LINK;
       ctx.font = font;
@@ -601,13 +601,14 @@ export class WysiwygTableRenderer {
     return `${style}${weight}${size}vp ${family}`;
   }
 
-  private static pickInlineColor(inline: WysiwygInline, isHeader: boolean, palette: TablePalette): string {
+  private static pickInlineColor(inline: WysiwygInline, palette: TablePalette): string {
     if (inline.kind === WysiwygSpanKind.WIKI_LINK ||
       inline.kind === WysiwygSpanKind.MD_LINK ||
       inline.kind === WysiwygSpanKind.TAG) {
       return palette.accent;
     }
-    return isHeader ? palette.textPrimary : palette.textPrimary;
+    // #14：表头与正文同色，删除恒等三目与无效 isHeader 参数。
+    return palette.textPrimary;
   }
 
   private static traceRoundedRect(

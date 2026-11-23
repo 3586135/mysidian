@@ -18,6 +18,28 @@
 | v0.6.0 | **查询引擎 RDB 化、代码高亮、书签、本地快照备份与多端生态**：Dataview/日历 RDB 批量加速、列表项文本与标签入库、原生代码块语法着色、置顶书签、本地定时/一键快照备份恢复、2in1 键盘快捷键与桌面长按快捷方式 |
 | v1.0.0 | **全端质感打磨、同步安全无感化、系统打开方式与 1.0 正式发布**：首页默认素雅 5 色莫兰迪纸感列表与原地目录穿透面包屑、透明毛玻璃三页签底栏、按年月分卷日记（`日记/YYYY-MM/YYYY-MM-DD.md`）、自适应大纲浮层与多行编辑工具栏、WebDAV 干跑安全闸门/断点落盘/`.trash/` 软删与新建仓库自签名开关、系统 `.md`「打开方式」只读预览与一键导入、Ceramic Washi 分层应用图标、`md_*` 资源解耦与全模块单测通过 |
 
+## 近期变更（2026-11-23，v1.5.3：全项目六域对抗性审查修复 40+ 项）
+
+同步（Sync）/ 仓库（Vault）/ Markdown 解析 / WYSIWYG 编辑器 / 编辑 UI / ViewModel 六域并行复扫后的修复，数据损坏类优先：
+
+- **A 批（同步引擎）**：`LocalCollectResult` 结构化收集结果（entries + oversizedPaths）；远端 429/503 限流自适应请求间距（pacing 衰减，对齐 sync-engine 插件惩罚策略）；冲突预载临时文件统一登记销毁（`preloadedTempPaths`）。
+- **B 批（仓库管理）**：`restoreBackup` stash-swap 原子化；`syncIndex` conflicts/ 目录过滤；ZipTransfer 导入导出分块传输（大文件不再整包读入内存）；`FileHistory.nextStamp` 时间戳防碰撞；prop 值入库转义；`scanVault` 失败原子回滚。
+- **C 批（Markdown 解析）**：ATX/Setext/table/media 块 `rawContent` 落库（渲染 ForEach key 稳定化，修复勾选不翻转/列表不刷新类问题）；`splitTableRow` 扫描式 `\|` 转义识别（不再误劈含转义管道的单元格）；`parseList` 软换行懒续行（缩进续行不再吞入列表项、任务标记随续行保留、块级起始行不再被误吞为续行、空行断开续行）；`MdDocumentView` ForEach key 含 `keyHash`（解析期算好，兜底 contentHash(rawContent)）。新增 7 个单测。
+- **D 批（WYSIWYG 引擎，数据损坏防御）**：`deletionBreaksAtomicLine` 精确判定——表格/图片原子行允许整块删除与空行吸收，取消会产生合并损坏的边界删除（D1：前向/选区/兜底三重守卫 + IME 多行插入取消 + `spliceMetasMultiLine` 原子 lead 降级与被替换表格位图释放）；原子行行首退格取消、上一行非原子时光标移上一行末尾（D2）；撤销快照降频 `TYPING_SNAPSHOT_WINDOW_MS=2000`——纯文本输入期跳过按键内全量导出、结构变化/停顿同步补拍、删除路径不跳过（D3，撤销粒度 ≤2s 有界）。
+- **E 批（编辑 UI）**：闪念追加编辑态以草稿为 base 且追加后立即落盘（防幽灵内容）；手写导出 `exportImage` async/await + try/finally 释放 PixelMap/ImagePacker；DialogHost 三处关闭前捕获 `PromptAction`（卸载后 toast 不再静默失败）。
+- **F 批（复扫修复）**：
+  - `saveProperties` 编辑态以 `draftBuffer` 为 base 重建 frontmatter（原从磁盘读旧正文覆盖草稿，用户未落盘正文编辑丢失）；
+  - 数学块首行内容丢失（P1）：`$$x = 1` 开栏与内容同行时 `WysiwygCodec.consumeMathBlock` 与 `BlockParser.parseMath` 均丢弃首行——两处修复 + 4 断言单测；
+  - `renameNote`/`moveNote` 改名/移动前先落盘脏草稿（原改名后 `openNote` 内 `saveDraft` 仍写旧 `selectedPath`，复活旧文件造成内容分叉）；`saveDraft` 写盘前快照（await 期间尾部按键不再产生“假已保存”）；
+  - 同步超限文件结转（P2）：本地超限跳过的文件其远端清单条目与基线行在 `persistSyncState` 原样结转（原全量覆写 manifest/基线会丢哈希记录，退化为冲突/逐文件探测）；远端超限拉取仅记日志不再计 `itemErrors`（原每轮永久报“失败”）；
+  - PROPFIND 200 非 multistatus 防误判（P2）：`assertMultistatusPayload` 校验响应体，网关 HTML 错误页不再被当作空远端（否则本地整库被误判“远端已删”批量进回收站）；
+  - `restoreBackup` stash 保护漏洞（P2，B1 修复不完整）：stash 搬移纳入内层保护（搬移中途失败只合并搬回、不清空仓库）；回滚失败保留 stash 供人工恢复（外层 finally 不再无条件删除）；
+  - ZipTransfer `copyFileToUri`：target 打开失败不再泄漏 source fd；`writeSync` 按返回值循环补写（部分写入不再产出截断导出文件）；
+  - `MdPropertiesView` ForEach key 补 `listValue`/`rawBlock`；`FileHistory.rollback`/`writeNote` rename 失败清理 `.tmp` 残留。
+- **编辑器复扫收编 15 项**：查找替换拒绝触及表格/图片原子行占位符（`rangeTouchesAtomicLine`）；期望文本分支泄漏修复（增量拼接与控制器全量一致时同步缓存消费期望）；`applyTableEdit` 先离屏渲染后提交（渲染失败零副作用）；EditorPane 异步定时器句柄统一管理（销毁/重入清除）；图片/附件选择器异步返回后会话校验（防插入已切换笔记）；`syncMetaCountToPlainText` 截断释放表格位图；文档切换重置撤销降频状态；imageMap 无限累积修剪；选区夹紧；死三目清理；IMAGE 行与 TABLE 行同走原子块守卫；源码模式程序化替换补撤销快照；任务勾选命中区按 `WysiwygMarginCache` 真实几何推导（indent*18+4，15vp）。
+- **已知限制（本轮记录不修）**：inline 转义反斜杠往返丢失（`\*a\*` → `*a*`，InlineParser 丢 `\` 且序列化不还原，需重建转义往返协议）；远端 `remote.size===0` 时读路径无体积上限（OOM 风险，需流式上限）；`syncIndex` 非事务化（中断留半索引，下轮全量自愈）；`.tmp` 固定名并发写互踩（同笔记并发保存窗口极小）；`createVault` 半程失败留孤儿目录；`createBackup` 半程 zip 残留；TOCTOU（listFileSync/statSync 竞态）；闪念在编辑器中不实时显示（draftBuffer 非响应式，编辑器是权威来源）。
+- 验证：`devecocli check arkts` 全轮次 0 错误；`devecocli build` exitCode=0（签名构建成功）；新增 11 个单测断言（Batch C 7 + Batch F 4）。
+
 ## 近期变更（2026-11-22，编辑工具栏命令化重构：参考 obsidian-editing-toolbar）
 
 从信息架构层面重做底部编辑工具栏（此前 6→20 按钮一路加法、零分组、屏外按钮不可知），架构与语义对齐 obsidian-editing-toolbar 的命令化设计，"更深而非更大"：

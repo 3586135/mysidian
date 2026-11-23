@@ -659,6 +659,10 @@ export class WysiwygCodec {
     if (first.length > 2 && first.endsWith('$$')) {
       body.push(first.substring(2, first.length - 2).trim());
     } else {
+      // 开栏 $$ 与内容同行（如 "$$x = 1"）时，$$ 后的首行内容不得丢弃。
+      if (first.length > 2) {
+        body.push(first.substring(2).trim());
+      }
       while (i < lines.length) {
         const cur: string = lines[i].trim();
         if (cur.endsWith('$$')) {

@@ -13,11 +13,25 @@ export class MarkdownParser {
     const frontmatter: FrontmatterResult = FrontmatterParser.parse(lines);
     // startLine 传入 frontmatter 行数，使列表项记录的行号与原文对齐。
     const blocks = new BlockParser().parse(lines.slice(frontmatter.consumed), frontmatter.consumed);
+    // 解析期一次性算好 rawContent 哈希：渲染层 ForEach key 直接取 keyHash，
+    // 不再在每次 key 生成时对全文做字符串扫描。
+    for (const block of blocks) {
+      block.keyHash = MarkdownParser.contentHash(block.rawContent);
+    }
     const document: MdDocument = new MdDocument();
     document.frontmatter = frontmatter.frontmatter;
     document.blocks = blocks;
     document.title = MarkdownParser.resolveTitle(document);
     return document;
+  }
+
+  /** 块内容哈希（djb2），与渲染层 ForEach key 使用的算法保持一致。 */
+  public static contentHash(text: string): number {
+    let h: number = 5381;
+    for (let i = 0; i < text.length; i++) {
+      h = ((h << 5) + h + text.charCodeAt(i)) | 0;
+    }
+    return h >>> 0;
   }
 
   private static resolveTitle(document: MdDocument): string {

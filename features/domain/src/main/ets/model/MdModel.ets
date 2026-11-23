@@ -123,6 +123,8 @@ export class MdBlock {
   alt: string = '';
   /** 图片宽度（像素，0 表示自适应撑满容器）。 */
   imageWidth: number = 0;
+  /** rawContent 的 djb2 哈希（解析期一次算好，ForEach key 直接取用，渲染热路径零字符串扫描）。 */
+  keyHash: number = 0;
 }
 
 /** 单条属性。 */

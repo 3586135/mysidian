@@ -104,7 +104,8 @@ export struct MdDocumentView {
           .combine(TransitionEffect.translate({ y: 8 }))
           .animation({ duration: 240, curve: Curve.Friction }))
       }, (block: MdBlock, index: number): string =>
-        `${this.docKey}_${index}_${block.type}_${MdDocumentView.contentHash(block.rawContent)}`)
+        `${this.docKey}_${index}_${block.type}_${block.keyHash !== 0
+          ? block.keyHash : MdDocumentView.contentHash(block.rawContent)}`)
     }
     .width('100%')
     .height('100%')

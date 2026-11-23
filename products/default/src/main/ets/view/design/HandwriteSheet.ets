@@ -173,7 +173,7 @@ export struct HandwriteSheet {
   }
 
   /** 导出当前画布为 PNG 数据。 */
-  private exportImage(): void {
+  private async exportImage(): Promise<void> {
     if (this.saving || this.strokeCount === 0) {
       return;
     }
@@ -184,18 +184,23 @@ export struct HandwriteSheet {
       const data: ImageData = this.context.getImageData(0, 0, width, height);
       const buffer: ArrayBuffer = data.data.buffer.slice(data.data.byteOffset,
         data.data.byteOffset + data.data.byteLength);
-      image.createPixelMap(buffer, {
+      const pixelMap: image.PixelMap = await image.createPixelMap(buffer, {
         size: { width: width, height: height },
         srcPixelFormat: image.PixelMapFormat.RGBA_8888
-      }).then((pixelMap: image.PixelMap): Promise<ArrayBuffer> => {
-        const packer: image.ImagePacker = image.createImagePacker();
-        return packer.packToData(pixelMap, { format: 'image/png', quality: 100 });
-      }).then((packed: ArrayBuffer): void => {
-        this.saving = false;
-        this.onSave(packed);
-      }).catch(() => {
-        this.saving = false;
       });
+      // E2：PixelMap/ImagePacker 用毕必须释放，否则长时间多次手写会累积泄漏原生内存。
+      try {
+        const packer: image.ImagePacker = image.createImagePacker();
+        try {
+          const packed: ArrayBuffer = await packer.packToData(pixelMap, { format: 'image/png', quality: 100 });
+          this.saving = false;
+          this.onSave(packed);
+        } finally {
+          packer.release();
+        }
+      } finally {
+        pixelMap.release();
+      }
     } catch (error) {
       this.saving = false;
     }

@@ -240,6 +240,21 @@ export default function wysiwygCodecTest() {
       expect(backToSrc).assertEqual(tailSrc);
     });
 
+    it('parsesMathBlockFirstLineContent', 0, () => {
+      // 开栏 $$ 与内容同行：首行内容不得被吞。
+      const doc: WysiwygDocument = WysiwygCodec.parse('$$x = 1\ny = 2$$');
+      expect(doc.paragraphs.length).assertEqual(2);
+      expect(doc.paragraphs[0].kind).assertEqual(WysiwygBlockKind.MATH);
+      expect(doc.paragraphs[1].kind).assertEqual(WysiwygBlockKind.MATH);
+      expect(WysiwygCodec.wysiwygParagraphPlainText(doc.paragraphs[0])).assertEqual('x = 1');
+      expect(WysiwygCodec.wysiwygParagraphPlainText(doc.paragraphs[1])).assertEqual('y = 2');
+
+      // 单行块 $$...$$ 保持原行为。
+      const single: WysiwygDocument = WysiwygCodec.parse('$$x = 1$$');
+      expect(single.paragraphs.length).assertEqual(1);
+      expect(WysiwygCodec.wysiwygParagraphPlainText(single.paragraphs[0])).assertEqual('x = 1');
+    });
+
     it('parsesEditsAndSerializesStructuredTableData', 0, () => {
       const cells: string[] = WysiwygTableCodec.splitRow('| A \\| B | `x|y` | **C** |');
       expect(cells.length).assertEqual(3);

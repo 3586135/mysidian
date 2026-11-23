@@ -189,20 +189,65 @@ export class VaultManager {
       return false;
     }
     const tempDir: string = `${this.context.cacheDir}/restore_${Date.now()}`;
+    const stashDir: string = `${this.context.cacheDir}/stash_${Date.now()}`;
     fileIo.mkdirSync(tempDir, true);
+    /** false = stash 内仍可能保有仓库内容的唯一副本，外层 finally 绝不能删除。 */
+    let stashConsumed: boolean = false;
     try {
       await ZipTransfer.decompressFromFile(backupFile, tempDir);
       const extractedRoot: string = this.resolveImportRoot(tempDir);
-      this.removeDirectoryContent(vault.rootPath);
-      this.copyDirectoryContent(extractedRoot, vault.rootPath);
-      await NoteDao.removeByVault(this.context, vault.id);
-      await this.scanVault(vault);
-      return true;
+      // 现行内容先整体挪进 stash 再拷入备份内容：恢复中途失败可原样搬回。
+      // 旧实现"先清空后拷贝"一旦失败会把仓库留在半空状态（数据丢失）。
+      fileIo.mkdirSync(stashDir, true);
+      let restored: boolean = false;
+      // stash 搬移本身也可能中途失败：必须在内层保护之内，失败同样触发回滚，
+      // 且此时只做搬回合并、不能先清空仓库（未搬走的文件还留在仓库里）。
+      let stashMoveDone: boolean = false;
+      try {
+        this.moveDirectoryContent(vault.rootPath, stashDir);
+        stashMoveDone = true;
+        this.copyDirectoryContent(extractedRoot, vault.rootPath);
+        await NoteDao.removeByVault(this.context, vault.id);
+        await this.scanVault(vault);
+        restored = true;
+        stashConsumed = true;
+      } finally {
+        if (!restored) {
+          LOG.warn('restore backup failed, rolling back vault content from stash');
+          stashConsumed = this.rollbackStashIntoVault(vault.rootPath, stashDir, stashMoveDone);
+        }
+      }
+      return restored;
     } catch (error) {
       LOG.error('restore backup failed');
       return false;
     } finally {
       this.removeDirectory(tempDir);
+      // 回滚失败时保留 stash 供人工恢复：删除它等于销毁仓库唯一副本。
+      if (stashConsumed) {
+        this.removeDirectory(stashDir);
+      } else {
+        LOG.error(`stash kept for manual recovery: ${stashDir}`);
+      }
+    }
+  }
+
+  /**
+   * 恢复失败后把 stash 中的原仓库内容搬回。
+   * stashMoveDone=false（搬移中途失败）：只合并搬回——未搬走的文件仍在仓库里，
+   * 先清空会把它们销毁；stashMoveDone=true（备份拷入阶段失败）：仓库里是
+   * 残缺备份内容，须清空后整体搬回。任何一步失败返回 false，stash 保留。
+   */
+  private rollbackStashIntoVault(rootPath: string, stashDir: string, stashMoveDone: boolean): boolean {
+    try {
+      if (stashMoveDone) {
+        this.removeDirectoryContent(rootPath);
+      }
+      this.moveDirectoryContent(stashDir, rootPath);
+      return true;
+    } catch (error) {
+      LOG.error('rollback from stash failed, stash kept for manual recovery');
+      return false;
     }
   }
 
@@ -218,6 +263,36 @@ export class VaultManager {
         this.copyDirectoryContent(sFull, dFull);
       } else {
         fileIo.copyFileSync(sFull, dFull);
+      }
+    }
+  }
+
+  /** 把 srcDir 全部内容移动到 dstDir：rename 优先（同卷瞬时完成），失败退化为拷贝+删除。 */
+  private moveDirectoryContent(srcDir: string, dstDir: string): void {
+    if (!fileIo.accessSync(srcDir)) {
+      return;
+    }
+    if (!fileIo.accessSync(dstDir)) {
+      fileIo.mkdirSync(dstDir, true);
+    }
+    const names: string[] = fileIo.listFileSync(srcDir);
+    for (const name of names) {
+      const sFull: string = `${srcDir}/${name}`;
+      const dFull: string = `${dstDir}/${name}`;
+      if (!fileIo.statSync(sFull).isDirectory()) {
+        try {
+          fileIo.renameSync(sFull, dFull);
+        } catch (error) {
+          fileIo.copyFileSync(sFull, dFull);
+          fileIo.unlinkSync(sFull);
+        }
+        continue;
+      }
+      try {
+        fileIo.renameSync(sFull, dFull);
+      } catch (error) {
+        this.copyDirectoryContent(sFull, dFull);
+        this.removeDirectory(sFull);
       }
     }
   }
@@ -272,7 +347,15 @@ export class VaultManager {
       }
       throw error as Error;
     }
-    fileIo.renameSync(tempPath, absolute);
+    try {
+      fileIo.renameSync(tempPath, absolute);
+    } catch (error) {
+      // rename 失败清掉临时文件，避免 .tmp 残留；异常照常上抛由调用方处理。
+      if (fileIo.accessSync(tempPath)) {
+        fileIo.unlinkSync(tempPath);
+      }
+      throw error as Error;
+    }
     await VaultDao.touch(this.context, vault.id);
   }
 

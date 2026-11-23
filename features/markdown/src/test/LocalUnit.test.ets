@@ -328,6 +328,87 @@ export default function markdownParserTest() {
       expect(block.rows[0][1]).assertEqual('2');
     });
 
+    it('parsesTableEscapedPipe', 0, () => {
+      // GFM 表格内 `\|` 转义为字面竖线，不参与列切分。
+      const document = MarkdownParser.parse('| a \\| b | c |\n| --- | --- |\n| x \\| y | z |');
+      const block = document.blocks[0];
+      expect(block.type).assertEqual(MdBlockType.TABLE);
+      expect(block.headers.length).assertEqual(2);
+      expect(block.headers[0]).assertEqual('a | b');
+      expect(block.headers[1]).assertEqual('c');
+      expect(block.rows[0][0]).assertEqual('x | y');
+      expect(block.rows[0][1]).assertEqual('z');
+    });
+
+    it('parsesHeadingAndTableRawContentForKey', 0, () => {
+      // ATX / Setext 标题、表格、媒体块的 rawContent 参与渲染层 ForEach key，
+      // 编辑内容后 key 必须变化，否则节点复用停留在旧状态。
+      const atx = MarkdownParser.parse('# 标题');
+      expect(atx.blocks[0].rawContent).assertEqual('# 标题');
+      const setext = MarkdownParser.parse('标题\n===');
+      expect(setext.blocks[0].type).assertEqual(MdBlockType.HEADING);
+      expect(setext.blocks[0].level).assertEqual(1);
+      expect(setext.blocks[0].rawContent).assertEqual('标题\n===');
+      const image = MarkdownParser.parse('![[photo.png|300]]');
+      expect(image.blocks[0].rawContent).assertEqual('![[photo.png|300]]');
+      const table = MarkdownParser.parse('| a |\n| --- |\n| 1 |');
+      expect(table.blocks[0].rawContent).assertEqual('| a |\n| --- |\n| 1 |');
+    });
+
+    it('computesBlockKeyHashAtParseTime', 0, () => {
+      // 解析期统一计算 keyHash：内容不同的同名块 keyHash 不同。
+      const doc1 = MarkdownParser.parse('# Title A');
+      const doc2 = MarkdownParser.parse('# Title B');
+      expect(doc1.blocks[0].keyHash > 0).assertTrue();
+      expect(doc1.blocks[0].keyHash !== doc2.blocks[0].keyHash).assertTrue();
+      const t1 = MarkdownParser.parse('| a |\n| --- |\n| 1 |');
+      const t2 = MarkdownParser.parse('| a |\n| --- |\n| 2 |');
+      expect(t1.blocks[0].keyHash !== t2.blocks[0].keyHash).assertTrue();
+    });
+
+    it('parsesListSoftWrapContinuation', 0, () => {
+      // 软换行续行并入上一列表项，不再被拆成独立段落。
+      const document = MarkdownParser.parse('- item one\n  continued line\n- second');
+      expect(document.blocks.length).assertEqual(1);
+      const block = document.blocks[0];
+      expect(block.type).assertEqual(MdBlockType.LIST);
+      expect(block.items.length).assertEqual(2);
+      let joined: string = '';
+      for (const seg of MdInlineFlattener.flatten(block.items[0].inlines)) {
+        joined += seg.text;
+      }
+      expect(joined.includes('continued line')).assertTrue();
+    });
+
+    it('keepsTaskFlagWithSoftWrapContinuation', 0, () => {
+      const document = MarkdownParser.parse('- [ ] task\n  note text');
+      const item = document.blocks[0].items[0];
+      expect(item.isTask).assertTrue();
+      expect(item.checked).assertFalse();
+      let joined: string = '';
+      for (const seg of MdInlineFlattener.flatten(item.inlines)) {
+        joined += seg.text;
+      }
+      expect(joined.includes('note text')).assertTrue();
+    });
+
+    it('doesNotSwallowBlockStartAsContinuation', 0, () => {
+      // 续行合并不吞并标题等块起始行。
+      const document = MarkdownParser.parse('- item\n# Heading\nmore');
+      expect(document.blocks.length).assertEqual(3);
+      expect(document.blocks[0].type).assertEqual(MdBlockType.LIST);
+      expect(document.blocks[1].type).assertEqual(MdBlockType.HEADING);
+      expect(document.blocks[2].type).assertEqual(MdBlockType.PARAGRAPH);
+    });
+
+    it('breaksListContinuationAtBlankLine', 0, () => {
+      // 空行即列表边界：空行后的普通文本不并入上一项。
+      const document = MarkdownParser.parse('- item\n\ncontinued paragraph');
+      expect(document.blocks.length).assertEqual(2);
+      expect(document.blocks[0].type).assertEqual(MdBlockType.LIST);
+      expect(document.blocks[1].type).assertEqual(MdBlockType.PARAGRAPH);
+    });
+
     it('parsesFrontmatter', 0, () => {
       const document = MarkdownParser.parse(
         '---\ntitle: My Note\ntags: [a, b]\n---\n\n# Heading\n');
@@ -522,6 +603,18 @@ export default function markdownParserTest() {
       const document = MarkdownParser.parse('inline $x^2$ here');
       const segments = MdInlineFlattener.flatten(document.blocks[0].inlines);
       expect(segments[1].text).assertEqual('x²');
+    });
+
+    it('parsesMathBlockFirstLineContent', 0, () => {
+      // 开栏 $$ 与内容同行：首行内容不得被吞。
+      const document = MarkdownParser.parse('$$x = 1\ny = 2$$');
+      expect(document.blocks[0].type).assertEqual(MdBlockType.MATH);
+      expect(document.blocks[0].rawContent).assertEqual('x = 1\ny = 2');
+
+      // 单行块 $$...$$ 保持原行为。
+      const single = MarkdownParser.parse('$$x = 1$$');
+      expect(single.blocks[0].type).assertEqual(MdBlockType.MATH);
+      expect(single.blocks[0].rawContent).assertEqual('x = 1');
     });
 
     it('keepsFrontmatterKeysAfterListProperty', 0, () => {

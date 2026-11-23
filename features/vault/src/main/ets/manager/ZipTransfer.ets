@@ -93,21 +93,36 @@ export class ZipTransfer {
     return fileIo.statSync(destPath).size;
   }
 
-  /** 把沙箱文件内容写入 uri 指向的文件。 */
+  /** 把沙箱文件内容分块写入 uri 指向的文件（大文件不再整包读入内存，防 OOM）。 */
   public static copyFileToUri(srcPath: string, uri: string): void {
     const source = fileIo.openSync(srcPath, fileIo.OpenMode.READ_ONLY);
-    const stat = fileIo.statSync(srcPath);
-    const buffer: ArrayBuffer = new ArrayBuffer(stat.size);
+    let target: fileIo.File | undefined = undefined;
     try {
-      fileIo.readSync(source.fd, buffer);
+      // target 打开失败时 source 已在 finally 关闭，不再泄漏 fd。
+      target = fileIo.openSync(uri, fileIo.OpenMode.READ_WRITE | fileIo.OpenMode.TRUNC);
+      const chunkSize: number = 4 * 1024 * 1024;
+      const buffer: ArrayBuffer = new ArrayBuffer(chunkSize);
+      while (true) {
+        const bytesRead: number = fileIo.readSync(source.fd, buffer);
+        if (bytesRead <= 0) {
+          break;
+        }
+        // writeSync 可能部分写入：必须按返回值循环补写，缺斤短两会产出截断的导出文件。
+        let writtenTotal: number = 0;
+        while (writtenTotal < bytesRead) {
+          const written: number = fileIo.writeSync(target.fd, buffer,
+            { offset: writtenTotal, length: bytesRead - writtenTotal });
+          if (written <= 0) {
+            throw new Error('write to target uri made no progress');
+          }
+          writtenTotal += written;
+        }
+      }
     } finally {
       fileIo.closeSync(source);
-    }
-    const target = fileIo.openSync(uri, fileIo.OpenMode.READ_WRITE | fileIo.OpenMode.TRUNC);
-    try {
-      fileIo.writeSync(target.fd, buffer);
-    } finally {
-      fileIo.closeSync(target);
+      if (target !== undefined) {
+        fileIo.closeSync(target);
+      }
     }
   }
 }

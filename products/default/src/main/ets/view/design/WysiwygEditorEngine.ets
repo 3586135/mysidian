@@ -1,4 +1,5 @@
 import { resourceManager } from '@kit.LocalizationKit';
+import { hilog } from '@kit.PerformanceAnalysisKit';
 import {
   BlockTriggerResult,
   CodeToken,
@@ -78,6 +79,7 @@ export class WysiwygCompletionQuery {
 export class WysiwygEditorEngine {
   private static readonly MAX_UNDO: number = 80;
   private static readonly UNDO_DEBOUNCE_MS: number = 480;
+  private static readonly TYPING_SNAPSHOT_WINDOW_MS: number = 2000;
   private static readonly SYNC_DEBOUNCE_MS: number = 220;
 
   public readonly richController: RichEditorController = new RichEditorController();
@@ -105,6 +107,10 @@ export class WysiwygEditorEngine {
   private lastSyncedMarkdown: string = '';
   private dirtyForSync: boolean = false;
   private syncTimerId: number = -1;
+
+  /** D3：撤销快照降频——纯文本输入期跳过按键内全量导出，结构变化/停顿同步时补拍。 */
+  private structureChangedSinceSnapshot: boolean = false;
+  private typingSnapshotPending: boolean = false;
 
   /** 工具栏光标态行内样式覆盖（保证中文 IME 上屏后依然稳定生效，工具栏同步高亮）。 */
   private typingOverrideActive: boolean = false;
@@ -269,6 +275,7 @@ export class WysiwygEditorEngine {
     const spans = this.richController.getSpans();
     const paragraphs: WysiwygParagraph[] = WysiwygStyleHelper.extractParagraphs(
       spans, this.metas, this.imageMap);
+    this.pruneStaleImageRecords(spans);
     const doc: WysiwygDocument = new WysiwygDocument();
     doc.hasFrontmatter = this.hasFrontmatter;
     doc.frontmatterRaw = this.frontmatterRaw;
@@ -418,6 +425,20 @@ export class WysiwygEditorEngine {
       return false;
     }
 
+    // D1：选区替换（粘贴/上屏覆盖选区）若会合并表格/图片原子行，取消本次插入。
+    const selBeforeInsert: RichEditorSelection = this.richController.getSelection();
+    if (selBeforeInsert.selection[0] !== selBeforeInsert.selection[1] &&
+      this.deletionBreaksAtomicLine(selBeforeInsert.selection[0], selBeforeInsert.selection[1])) {
+      return false;
+    }
+    // D1：表格/图片原子行上的多行插入会拆散原子块，取消。
+    if (pIdx >= 0 && pIdx < this.metas.length &&
+      (this.metas[pIdx].kind === WysiwygBlockKind.TABLE ||
+        this.metas[pIdx].kind === WysiwygBlockKind.IMAGE) &&
+      value.insertValue.includes('\n')) {
+      return false;
+    }
+
     if (value.insertValue === '\t') {
       if (this.tryFinalizeWikiAround(offset, true)) {
         return false;
@@ -449,8 +470,12 @@ export class WysiwygEditorEngine {
     const curText: string = this.prevPlainText;
     this.syncMetaCountToPlainText(curText);
     if (value.direction !== RichEditorDeleteDirection.BACKWARD) {
+      // D1：前向删除/选区删除不得把表格/图片原子行与相邻行合并，表格完整性优先。
+      if (this.deletionBreaksAtomicLine(value.offset, value.offset + value.length)) {
+        return false;
+      }
       this.expectedProgrammaticText = null;
-      this.pushUndoFromCache(value.offset);
+      this.pushUndoFromCache(value.offset, false);
       this.pendingTextMutation = true;
       return true;
     }
@@ -483,11 +508,98 @@ export class WysiwygEditorEngine {
         this.scheduleDebouncedSync();
         return false;
       }
+      // D2：表格/图片原子行行首退格会与上一行合并 → 取消本次删除，仅把光标移到上一行末尾
+      //（上一行同为原子块时只取消不动光标，避免连续退格连锁误删）。
+      if (atLineStart && (pKind === WysiwygBlockKind.TABLE || pKind === WysiwygBlockKind.IMAGE) &&
+        this.deletionBreaksAtomicLine(value.offset, value.offset + value.length)) {
+        if (pIdx > 0 && this.metas[pIdx - 1].kind !== WysiwygBlockKind.TABLE &&
+          this.metas[pIdx - 1].kind !== WysiwygBlockKind.IMAGE) {
+          this.richController.setCaretOffset(this.lineRangeAt(curText, pIdx - 1)[1]);
+        }
+        return false;
+      }
+    }
+    // D1 兜底：任何会把表格/图片原子行与相邻行内容合并的删除一律取消。
+    if (this.deletionBreaksAtomicLine(value.offset, value.offset + value.length)) {
+      return false;
     }
     this.expectedProgrammaticText = null;
-    this.pushUndoFromCache(caret);
+    this.pushUndoFromCache(caret, false);
     this.pendingTextMutation = true;
     return true;
+  }
+
+  /**
+   * D1：判断删除区间 [delStart, delEnd) 是否会把表格/图片原子行与相邻行内容合并。
+   * - 原子行整体被删 → 合法（允许整块删除）；
+   * - 部分覆盖原子行内容 → 破坏；
+   * - 吞掉原子行前/后边界换行且合并后同行有存活文本 → 破坏；
+   * - 空行被原子行吸收（合并后原子行独占一行）→ 合法。
+   */
+  private deletionBreaksAtomicLine(delStart: number, delEnd: number): boolean {
+    const text: string = this.prevPlainText;
+    if (delEnd <= delStart || delStart < 0 || delEnd > text.length) {
+      return false;
+    }
+    for (let i: number = 0; i < this.metas.length; i++) {
+      const kind: WysiwygBlockKind = this.metas[i].kind;
+      if (kind !== WysiwygBlockKind.TABLE && kind !== WysiwygBlockKind.IMAGE) {
+        continue;
+      }
+      const range: [number, number] = WysiwygTriggers.lineRange(text, i);
+      const ls: number = range[0];
+      const le: number = range[1];
+      if (le <= ls) {
+        continue;
+      }
+      if (delStart <= ls && delEnd >= le) {
+        continue;
+      }
+      const overlapStart: number = Math.max(ls, delStart);
+      const overlapEnd: number = Math.min(le, delEnd);
+      if (overlapEnd > overlapStart) {
+        return true;
+      }
+      if (delEnd <= ls) {
+        // 删除区在原子行之前：吞掉其前换行（delEnd === ls）且删除点之前同行有存活内容 → 合并破坏。
+        if (delEnd === ls && delStart > 0 && text.lastIndexOf('\n', delStart - 1) !== delStart - 1) {
+          return true;
+        }
+        continue;
+      }
+      // 删除区在原子行之后：从行尾换行开始删（delStart === le）且删后紧跟非换行内容 → 合并破坏。
+      if (delStart === le && delEnd < text.length && text.charAt(delEnd) !== '\n') {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /**
+   * #1：判断替换区间 [repStart, repEnd) 是否触及任何表格/图片原子行（含完全覆盖）。
+   * 查找/替换触碰到可视化原子块的单字符占位从来不是用户意图，一律拒绝。
+   */
+  private rangeTouchesAtomicLine(repStart: number, repEnd: number): boolean {
+    const text: string = this.prevPlainText;
+    if (repEnd <= repStart || repStart < 0 || repEnd > text.length) {
+      return false;
+    }
+    for (let i: number = 0; i < this.metas.length; i++) {
+      const kind: WysiwygBlockKind = this.metas[i].kind;
+      if (kind !== WysiwygBlockKind.TABLE && kind !== WysiwygBlockKind.IMAGE) {
+        continue;
+      }
+      const range: [number, number] = WysiwygTriggers.lineRange(text, i);
+      if (range[1] <= range[0]) {
+        continue;
+      }
+      const overlapStart: number = Math.max(range[0], repStart);
+      const overlapEnd: number = Math.min(range[1], repEnd);
+      if (overlapEnd > overlapStart) {
+        return true;
+      }
+    }
+    return false;
   }
 
   /**
@@ -518,8 +630,9 @@ export class WysiwygEditorEngine {
       newText = `${oldText.substring(0, rbStart)}${insertedSlice}${oldText.substring(rbEnd)}`;
     }
 
-    if (this.expectedProgrammaticText !== null) {
-      if (newText === this.expectedProgrammaticText) {
+    const expected: string | null = this.expectedProgrammaticText;
+    if (expected !== null) {
+      if (newText === expected) {
         this.expectedProgrammaticText = null;
         this.prevPlainText = newText;
         const centeredWiki: number = this.activeWikiOpenCaret >= 0
@@ -532,7 +645,11 @@ export class WysiwygEditorEngine {
         return this.activeWikiOpenCaret >= 0
           ? this.buildCompletionQuery(newText, this.lastCaretOffset) : null;
       }
-      if (this.getFullPlainTextFromController() === this.expectedProgrammaticText) {
+      if (this.getFullPlainTextFromController() === expected) {
+        // #2：增量拼接与控制器全量一致但拼接结果有偏差：以全量为准同步缓存，消费期望后终止本次增量处理。
+        this.expectedProgrammaticText = null;
+        this.prevPlainText = expected;
+        this.scheduleDebouncedSync();
         return null;
       }
       this.expectedProgrammaticText = null;
@@ -548,7 +665,10 @@ export class WysiwygEditorEngine {
       const prevLineRange: [number, number] = this.lineRangeAt(oldText, startLine);
       const wasEmptyLine: boolean = prevLineRange[0] === prevLineRange[1];
       this.prevPlainText = newText;
-      if (startLine < this.metas.length && this.metas[startLine].kind === WysiwygBlockKind.TABLE) {
+      // #11：图片行与表格行同为单字符占位原子块，行内变更走同一原子块守卫路径。
+      if (startLine < this.metas.length &&
+        (this.metas[startLine].kind === WysiwygBlockKind.TABLE ||
+          this.metas[startLine].kind === WysiwygBlockKind.IMAGE)) {
         forcedWikiCaret = this.handleMutationOnTableLine(startLine, raStart, raEnd, insertedSlice, newText);
       } else {
         this.applyTypingOverrideIfMatching(startLine, rbStart, raStart, raEnd);
@@ -568,6 +688,10 @@ export class WysiwygEditorEngine {
     } else {
       this.typingOverrideActive = false;
       this.spliceMetasMultiLine(startLine, oldSpanLines, newSpanLines, oldText, newText);
+    }
+    // D3：行数变化即结构变化，下一次撤销快照不得因纯文本降频被跳过。
+    if (newSpanLines !== oldSpanLines) {
+      this.structureChangedSinceSnapshot = true;
     }
 
     this.syncMetaCountToPlainText(this.prevPlainText);
@@ -655,9 +779,11 @@ export class WysiwygEditorEngine {
     if (meta.kind !== WysiwygBlockKind.TASK) {
       return false;
     }
-    const marginLeft: number = meta.indent * 18;
-    const marginRight: number = marginLeft + 30;
-    if (event.x >= marginLeft - 4 && event.x <= marginRight) {
+    // #15：命中区按 WysiwygMarginCache 任务勾选框真实几何推导（left = indent*18+4，size = 15），
+    // 不再使用与占位图绘制脱节的硬编码宽度。
+    const boxLeft: number = meta.indent * 18 + 4;
+    const boxRight: number = boxLeft + 15;
+    if (event.x >= boxLeft - 8 && event.x <= boxRight + 4) {
       this.pushUndoNow();
       meta.checked = !meta.checked;
       this.applyParagraphVisualStyle(pIdx, this.prevPlainText);
@@ -984,7 +1110,11 @@ export class WysiwygEditorEngine {
     if (!this.ready) {
       return;
     }
-    this.richController.setSelection(start, end);
+    // #9：选区越界会导致 setSelection 抛异常或选到错误内容，先按当前纯文本长度夹紧。
+    const textLen: number = this.prevPlainText.length;
+    const s: number = Math.max(0, Math.min(textLen, start));
+    const e: number = Math.max(s, Math.min(textLen, end));
+    this.richController.setSelection(s, e);
   }
 
   /** 页内查找替换单个命中。 */
@@ -994,6 +1124,10 @@ export class WysiwygEditorEngine {
     }
     const curText: string = this.prevPlainText;
     if (start < 0 || end > curText.length || start >= end) {
+      return;
+    }
+    // #1：替换区间触及表格/图片原子行占位符时拒绝，防止可视化块被替换文本破坏。
+    if (this.rangeTouchesAtomicLine(start, end)) {
       return;
     }
     this.pushUndoNow();
@@ -1012,7 +1146,10 @@ export class WysiwygEditorEngine {
       return;
     }
     const curText: string = this.prevPlainText;
-    const matches: number[] = FindReplaceUtils.findAll(curText, keyword);
+    const allMatches: number[] = FindReplaceUtils.findAll(curText, keyword);
+    // #1：过滤触及表格/图片原子行占位符的命中，可视化块不参与文本替换。
+    const matches: number[] = allMatches.filter((pos: number): boolean =>
+      !this.rangeTouchesAtomicLine(pos, pos + keyword.length));
     if (matches.length === 0) {
       return;
     }
@@ -1059,6 +1196,10 @@ export class WysiwygEditorEngine {
       this.typingOverrideLine = -1;
       this.pendingTextMutation = false;
       this.activeWikiOpenCaret = -1;
+      // #7：清空旧文档遗留的撤销快照降频状态，防止新文档首次变更误吞/误补撤销快照。
+      this.structureChangedSinceSnapshot = false;
+      this.typingSnapshotPending = false;
+      this.lastUndoPushMs = 0;
       if (clearUndo) {
         this.undoStack = [];
         this.redoStack = [];
@@ -1935,12 +2076,38 @@ export class WysiwygEditorEngine {
     const oldTailIdx: number = startLine + oldCount - 1;
     const boundaryTight: boolean = oldTailIdx >= 0 && oldTailIdx < this.metas.length
       ? this.metas[oldTailIdx].tightBreakAfter : false;
-    let lead: WysiwygParagraph = startLine < this.metas.length
-      ? this.metas[startLine].clone() : new WysiwygParagraph();
+    let leadSrcIdx: number = startLine < this.metas.length ? startLine : -1;
+    let lead: WysiwygParagraph = leadSrcIdx >= 0
+      ? this.metas[leadSrcIdx].clone() : new WysiwygParagraph();
     if (newCount === 1 && oldCount >= 2 && startLine + oldCount - 1 < this.metas.length) {
       const firstRange: [number, number] = WysiwygTriggers.lineRange(oldText, startLine);
       if (firstRange[0] === firstRange[1] && this.metas[startLine + oldCount - 1].kind !== WysiwygBlockKind.PARAGRAPH) {
         lead = this.metas[startLine + oldCount - 1].clone();
+        leadSrcIdx = startLine + oldCount - 1;
+      }
+    }
+    // D1：原子块（表格/图片）行与相邻行内容合并时，不得沿用旧原子 meta 导出——
+    // 否则导出只输出 tableRawMd/图片语法，合并进来的文本被丢弃，或已删表格被复活。
+    // 仅当合并后首行内容与原子行原内容完全一致（空行被吸收）时才保留原子 meta。
+    if ((lead.kind === WysiwygBlockKind.TABLE || lead.kind === WysiwygBlockKind.IMAGE) && leadSrcIdx >= 0) {
+      const mergedRange: [number, number] = WysiwygTriggers.lineRange(newText, startLine);
+      const mergedText: string = newText.substring(mergedRange[0], mergedRange[1]);
+      const srcRange: [number, number] = WysiwygTriggers.lineRange(oldText, leadSrcIdx);
+      const srcText: string = oldText.substring(srcRange[0], srcRange[1]);
+      if (mergedText !== srcText) {
+        lead = new WysiwygParagraph();
+      }
+    }
+    // D1：被替换掉的表格行像素图随 meta 一并释放（存活的 lead 除外），防止泄漏。
+    const survivingTableId: number = lead.kind === WysiwygBlockKind.TABLE ? lead.blockGroupId : -1;
+    for (let r: number = 0; r < oldCount && startLine + r < this.metas.length; r++) {
+      const removedMeta: WysiwygParagraph = this.metas[startLine + r];
+      if (removedMeta.kind === WysiwygBlockKind.TABLE && removedMeta.blockGroupId !== survivingTableId) {
+        const stalePm: PixelMap | undefined = this.tablePixelMaps.get(removedMeta.blockGroupId);
+        this.tablePixelMaps.delete(removedMeta.blockGroupId);
+        if (stalePm !== undefined) {
+          stalePm.release();
+        }
       }
     }
     // 多行粘贴/变更的内部行间必须 tight，否则导出时每行之间都会被插入空行（数据损坏）。
@@ -2406,7 +2573,8 @@ export class WysiwygEditorEngine {
       bodyPara, this.fontSize, colors);
     const emptyLine: boolean = range[0] === range[1];
     const insertIdx: number = emptyLine ? pIdx : pIdx + 1;
-    const isAtEnd: boolean = emptyLine ? pIdx + 1 >= this.metas.length : pIdx + 1 >= this.metas.length;
+    // #10：原三目两分支相同（死代码），等价化简。
+    const isAtEnd: boolean = pIdx + 1 >= this.metas.length;
 
     if (emptyLine) {
       if (isAtEnd) {
@@ -2453,7 +2621,7 @@ export class WysiwygEditorEngine {
       this.expectedProgrammaticText = nextText;
       this.lastCaretOffset = cursor;
       this.richController.setCaretOffset(cursor);
-      this.applyTypingStyleForCaret(emptyLine && !isAtEnd ? insertIdx : insertIdx + (isAtEnd ? 1 : 0), cursor, nextText);
+      this.applyTypingStyleForCaret(isAtEnd ? insertIdx + 1 : insertIdx, cursor, nextText);
     } finally {
       this.isLoadingDocument = false;
     }
@@ -2476,11 +2644,11 @@ export class WysiwygEditorEngine {
       return;
     }
 
-    this.pushUndoNow();
     const range: [number, number] = WysiwygTriggers.lineRange(curText, pIdx);
-    const oldPm: PixelMap | undefined = this.tablePixelMaps.get(tableId);
 
     if (trimmedMd.length === 0) {
+      this.pushUndoNow();
+      const oldPm: PixelMap | undefined = this.tablePixelMaps.get(tableId);
       this.tablePixelMaps.delete(tableId);
       this.isLoadingDocument = true;
       try {
@@ -2520,23 +2688,21 @@ export class WysiwygEditorEngine {
       return;
     }
 
+    // #3：先离屏渲染新表格，渲染失败则静默返回——不压撤销、不改元数据、不释放旧位图、不触发变更。
+    const rendered: RenderedTableImage = WysiwygTableRenderer.render(
+      trimmedMd, this.contentWidthVp, this.fontSize, this.resMgr);
+    if (rendered.pixelMap === undefined) {
+      return;
+    }
+
+    this.pushUndoNow();
+    const oldPm: PixelMap | undefined = this.tablePixelMaps.get(tableId);
     meta.tableRawMd = trimmedMd;
     const inline: WysiwygInline = WysiwygInline.plain('');
     inline.isImage = true;
     inline.imageTarget = 'table';
     inline.imageRawMd = trimmedMd;
     meta.inlines = [inline];
-
-    const rendered: RenderedTableImage = WysiwygTableRenderer.render(
-      trimmedMd, this.contentWidthVp, this.fontSize, this.resMgr);
-    if (rendered.pixelMap === undefined) {
-      if (oldPm !== undefined) {
-        this.tablePixelMaps.delete(tableId);
-        oldPm.release();
-      }
-      this.emitImmediateChange();
-      return;
-    }
 
     const nextText: string = `${curText.substring(0, range[0])} ${curText.substring(range[1])}`;
     const pStyle: RichEditorParagraphStyle = this.paragraphStyleForIndex(this.metas, pIdx);
@@ -2644,6 +2810,31 @@ export class WysiwygEditorEngine {
       if (pm !== undefined) {
         pm.release();
       }
+    }
+  }
+
+  /** #8：删除 imageMap 中已不被任何 ImageSpan 引用的记录，防止图片删除/替换后映射无限累积。 */
+  private pruneStaleImageRecords(spans: Array<RichEditorImageSpanResult | RichEditorTextSpanResult>): void {
+    if (this.imageMap.size === 0) {
+      return;
+    }
+    const usedUris: Set<string> = new Set<string>();
+    for (const span of spans) {
+      if (WysiwygStyleHelper.isImageSpanResult(span)) {
+        const imgSpan: RichEditorImageSpanResult = WysiwygStyleHelper.asImageSpan(span);
+        if (imgSpan.valueResourceStr !== undefined) {
+          usedUris.add(String(imgSpan.valueResourceStr));
+        }
+      }
+    }
+    const staleKeys: string[] = [];
+    this.imageMap.forEach((_rec: WysiwygImageRecord, key: string): void => {
+      if (!usedUris.has(key)) {
+        staleKeys.push(key);
+      }
+    });
+    for (const key of staleKeys) {
+      this.imageMap.delete(key);
     }
   }
 
@@ -2911,6 +3102,8 @@ export class WysiwygEditorEngine {
     }
     if (this.metas.length > lineCount) {
       this.metas.splice(lineCount);
+      // #6：被截断的表格段位图随 meta 一并释放，防止行数收缩路径泄漏 PixelMap。
+      this.releaseStaleTablePixelMaps();
     }
   }
 
@@ -2997,8 +3190,13 @@ export class WysiwygEditorEngine {
     return Math.max(0, this.richController.getCaretOffset());
   }
 
-  /** 在按键即将发生前，以零开销（尽量直接复用 lastSyncedMarkdown）压入撤销快照。 */
-  private pushUndoFromCache(caretHint: number): void {
+  /**
+   * 在按键即将发生前压入撤销快照。
+   * D3 降频：纯文本输入期（allowTypingSkip 且非结构变化且在降频窗口内）跳过按键内全量导出，
+   * 快照延后到停顿同步（emitImmediateChange 搭车，md 已导出零额外成本）；
+   * 连续输入超过 TYPING_SNAPSHOT_WINDOW_MS 仍会强制导出一次，撤销粒度有界。
+   */
+  private pushUndoFromCache(caretHint: number, allowTypingSkip: boolean = true): void {
     if (!this.ready) {
       return;
     }
@@ -3006,8 +3204,22 @@ export class WysiwygEditorEngine {
     if (now - this.lastUndoPushMs < WysiwygEditorEngine.UNDO_DEBOUNCE_MS && this.undoStack.length > 0) {
       return;
     }
-    const snapMd: string = this.dirtyForSync ? this.exportMarkdown() : this.lastSyncedMarkdown;
-    this.commitUndoSnapshot(snapMd, caretHint);
+    if (allowTypingSkip && this.dirtyForSync && !this.structureChangedSinceSnapshot &&
+      now - this.lastUndoPushMs < WysiwygEditorEngine.TYPING_SNAPSHOT_WINDOW_MS) {
+      this.typingSnapshotPending = true;
+      return;
+    }
+    if (this.dirtyForSync) {
+      const startMs: number = Date.now();
+      const snapMd: string = this.exportMarkdown();
+      const costMs: number = Date.now() - startMs;
+      if (costMs >= 8) {
+        hilog.debug(0x0000, 'WysiwygUndo', 'undo snapshot export cost %{public}dms', costMs);
+      }
+      this.commitUndoSnapshot(snapMd, caretHint);
+    } else {
+      this.commitUndoSnapshot(this.lastSyncedMarkdown, caretHint);
+    }
   }
 
   private pushUndoNow(): void {
@@ -3019,6 +3231,8 @@ export class WysiwygEditorEngine {
   }
 
   private commitUndoSnapshot(md: string, caret: number): void {
+    this.structureChangedSinceSnapshot = false;
+    this.typingSnapshotPending = false;
     if (this.undoStack.length > 0 && this.undoStack[this.undoStack.length - 1].md === md) {
       this.lastUndoPushMs = Date.now();
       return;
@@ -3073,6 +3287,11 @@ export class WysiwygEditorEngine {
 
   private emitImmediateChange(): void {
     this.clearSyncTimer();
-    this.onMarkdownChangeFn(this.exportMarkdown());
+    const md: string = this.exportMarkdown();
+    // D3：输入期被跳过的撤销快照在停顿同步时补拍（md 已导出，零额外成本）。
+    if (this.typingSnapshotPending) {
+      this.commitUndoSnapshot(md, this.safeCaret());
+    }
+    this.onMarkdownChangeFn(md);
   }
 }

@@ -15,7 +15,8 @@ export struct MdPropertiesView {
     Column() {
       ForEach(this.frontmatter.properties, (property: MdProperty, index: number) => {
         this.propertyRow(property)
-      }, (property: MdProperty, index: number): string => `prop_${index}_${property.key}_${property.value}`)
+      }, (property: MdProperty, index: number): string =>
+      `prop_${index}_${property.key}_${property.value}_${property.listValue.join('|')}_${property.rawBlock}`)
     }
     .width('100%')
     .padding({ left: 14, right: 14, top: 8, bottom: 10 })

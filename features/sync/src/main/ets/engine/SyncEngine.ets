@@ -48,6 +48,12 @@ class PlannedConflictItem {
   preloadedBinaryTempPath: string = '';
 }
 
+/** 本地扫描结果：可同步条目 + 因超限被跳过的文件路径（决策阶段须原样保留两端）。 */
+class LocalCollectResult {
+  entries: RemoteEntry[] = [];
+  oversizedPaths: Set<string> = new Set<string>();
+}
+
 /** 单轮同步执行期增量进展追踪（支持部分失败断点续传）。 */
 class SyncExecutionProgress {
   succeededUploads: Set<string> = new Set<string>();
@@ -83,6 +89,10 @@ class SyncExecutionPlan {
   verifiedEqualEntries: RemoteEntry[] = [];
   /** 规划阶段收集并哈希好的本地条目快照（persistSyncState 复用，避免全库二次 sha256）。 */
   localEntries: RemoteEntry[] = [];
+  /** 本地超限跳过的文件：persistSyncState 须结转其清单与基线，不得因全量覆写丢失。 */
+  oversizedPaths: Set<string> = new Set<string>();
+  /** 本地超限跳过但远端存在的条目快照（含清单哈希），persistSyncState 原样结转回清单。 */
+  oversizedCarry: RemoteEntry[] = [];
   serverTagMap: Map<string, string> = new Map<string, string>();
   summary: SyncPlanSummary = new SyncPlanSummary();
 }
@@ -107,6 +117,8 @@ export class SyncEngine {
   private status: SyncStatus = new SyncStatus();
   private conflicts: SyncConflict[] = [];
   private pendingPlan: SyncPlanSummary = new SyncPlanSummary();
+  /** 规划阶段已预载到沙箱临时目录的冲突二进制路径：plan 未成形就抛异常时兜底清理。 */
+  private preloadedTempPaths: string[] = [];
 
   public getStatus(): SyncStatus {
     return this.status;
@@ -131,6 +143,7 @@ export class SyncEngine {
     this.status.message = 'syncing';
     this.conflicts = [];
     this.pendingPlan = new SyncPlanSummary();
+    this.preloadedTempPaths = [];
     const provider: SyncProvider = new WebDavProvider();
     this.provider = provider;
     let plan: SyncExecutionPlan | null = null;
@@ -189,7 +202,14 @@ export class SyncEngine {
         if (progress.hasAnyProgress() || plan.keptLocalDeleted.length > 0) {
           await this.persistPartialCheckpoint(provider, vault, context, plan, progress);
         }
+      } else {
+        // 计划构建中途抛异常：plan 尚未成形，已预载的冲突临时文件
+        // 不在任何 plan.conflicts 里，须按引擎侧记录逐一清理，防止泄漏。
+        for (const tempPath of this.preloadedTempPaths) {
+          SyncEngine.removeTempFileSafe(tempPath);
+        }
       }
+      this.preloadedTempPaths = [];
       const err = error as BusinessError;
       const code: string = err.code === undefined ? '' : ` (${err.code})`;
       this.status.state = SyncState.FAILED;
@@ -198,6 +218,7 @@ export class SyncEngine {
     } finally {
       await provider.disconnect();
       this.provider = null;
+      this.preloadedTempPaths = [];
     }
     return this.status;
   }
@@ -287,8 +308,10 @@ export class SyncEngine {
     plan.ignoreRules = SyncEngine.loadIgnoreRules(vault.rootPath);
 
     const remoteEntries: RemoteEntry[] = await provider.list('');
-    plan.localEntries = await this.collectLocalEntries(
+    const localCollect: LocalCollectResult = await this.collectLocalEntries(
       vault, plan.baselines, plan.ignoreRules);
+    plan.localEntries = localCollect.entries;
+    plan.oversizedPaths = localCollect.oversizedPaths;
     const localEntries: RemoteEntry[] = plan.localEntries;
     LOG.info(`sync plan: local=${localEntries.length}, remote=${remoteEntries.length}, ` +
       `targetChanged=${plan.targetChanged}`);
@@ -400,6 +423,7 @@ export class SyncEngine {
           item.local = local;
           item.remote = remote;
           item.preloadedBinaryTempPath = preloadedTemp;
+          this.preloadedTempPaths.push(preloadedTemp);
           plan.conflicts.push(item);
           continue;
         }
@@ -413,6 +437,15 @@ export class SyncEngine {
     for (const remote of remoteEntries) {
       if (SyncPathGuard.isIgnoredByRules(remote.path, plan.ignoreRules) ||
         localMap.has(remote.path)) {
+        continue;
+      }
+      // 本地超限被跳过的文件：两端各自原样保留，绝不参与远端决策
+      // （否则基线 synced + 同 targetKey 时会被 TRASH_REMOTE，远端副本丢失）。
+      if (localCollect.oversizedPaths.has(remote.path)) {
+        LOG.warn(`skip remote decision for oversized local file: ${remote.path}`);
+        // 记录远端条目快照（含清单哈希）：persistSyncState 原样结转回远端清单，
+        // 否则全量覆写 manifest 会丢失该文件的哈希记录，退化为冲突/内容探测。
+        plan.oversizedCarry.push(remote);
         continue;
       }
       const baseline: SyncBaseline | undefined = plan.baselines.get(remote.path);
@@ -623,11 +656,11 @@ export class SyncEngine {
       LOG.info(`sync pull pending: ${pulls.length} files`);
     }
     // 超限文件单项跳过（不拉取也不计成功），下轮仍会重试判定，避免内存被单个超大文件撑爆。
+    // 仅记日志不计 itemErrors：超限是持续性状态，计入会让每轮同步都永久报"失败"。
     const boundedPulls: RemoteEntry[] = [];
     for (const remote of pulls) {
       if (remote.size > 0 && remote.size > MAX_SYNC_FILE_BYTES) {
         LOG.warn(`sync pull skip oversized file (${remote.size} bytes): ${remote.path}`);
-        progress.itemErrors.push(`${remote.path}: 文件超过同步上限 64MB，已跳过`);
         continue;
       }
       boundedPulls.push(remote);
@@ -735,6 +768,14 @@ export class SyncEngine {
       }
     }
 
+    // F4：本地超限跳过的文件：远端清单条目原样结转，防止全量覆写 manifest 丢失
+    // 该文件的哈希记录（丢失后下一轮 etag 未知，退化为冲突/逐文件内容探测）。
+    for (const carry of plan.oversizedCarry) {
+      if (!finalLocalMap.has(carry.path)) {
+        manifestEntries.push(carry);
+      }
+    }
+
     await provider.putManifest(manifestEntries);
 
     const baselineRows: SyncBaselineRow[] = [];
@@ -748,6 +789,28 @@ export class SyncEngine {
       baselineRows.push(SyncEngine.buildSyncedBaselineRow(
         entry.path, entry.etag, entry.mtime, entry.size,
         plan.serverTagMap.get(entry.path) ?? '', plan.targetKey));
+    }
+
+    // F4：本地超限跳过的文件：基线行原样结转（保留 serverTag 与既有状态），
+    // 防止 replaceAll 全量覆写把"曾同步"记录清掉。
+    for (const carry of plan.oversizedCarry) {
+      if (finalLocalMap.has(carry.path)) {
+        continue;
+      }
+      const prev: SyncBaseline | undefined = plan.baselines.get(carry.path);
+      if (prev !== undefined && prev.state === 'conflict') {
+        baselineRows.push(SyncEngine.buildConflictBaselineRow(carry.path, prev, plan.targetKey));
+        continue;
+      }
+      if (prev !== undefined && prev.state === 'synced' && prev.fileHash.length > 0) {
+        baselineRows.push(SyncEngine.buildSyncedBaselineRow(
+          carry.path, prev.fileHash, prev.mtime, prev.size, carry.serverTag, plan.targetKey));
+        continue;
+      }
+      if (carry.etag.length > 0) {
+        baselineRows.push(SyncEngine.buildSyncedBaselineRow(
+          carry.path, carry.etag, carry.mtime, carry.size, carry.serverTag, plan.targetKey));
+      }
     }
 
     for (const deleted of plan.keptLocalDeleted) {
@@ -994,18 +1057,22 @@ export class SyncEngine {
    * 收集本地可同步文件（Markdown 笔记与图片附件）。
    * 传入上次同步的基线时，mtime 与 size 均未变化的文件直接复用基线哈希，
    * 不再重算 sha256（大库的主要同步耗时）。
+   * 超过 MAX_SYNC_FILE_BYTES 的文件不进 entries，但路径记入 oversizedPaths：
+   * 远端决策阶段须据此原样跳过，否则曾同步过的文件长大后超限会被误判为
+   * "远端独有 + 已同步基线"而把远端副本移入 .trash/（数据丢失）。
    */
   private async collectLocalEntries(vault: VaultInfo,
     baselines: Map<string, SyncBaseline> = new Map<string, SyncBaseline>(),
-    ignoreRules: string[] = []): Promise<RemoteEntry[]> {
+    ignoreRules: string[] = []): Promise<LocalCollectResult> {
+    const result: LocalCollectResult = new LocalCollectResult();
     const entries: RemoteEntry[] = [];
     this.collectFiles(vault.rootPath, '', entries, ignoreRules);
-    const result: RemoteEntry[] = [];
     for (const entry of entries) {
       const absolute: string = `${vault.rootPath}/${entry.path}`;
       const stat = fileIo.statSync(absolute);
       if (stat.size > MAX_SYNC_FILE_BYTES) {
         LOG.warn(`skip oversized file (${stat.size} bytes): ${entry.path}`);
+        result.oversizedPaths.add(entry.path);
         continue;
       }
       const item: RemoteEntry = new RemoteEntry();
@@ -1017,12 +1084,12 @@ export class SyncEngine {
         SyncEngine.isHashReusable(cached, stat.mtime, stat.size)) {
         item.etag = cached.fileHash;
         item.isDir = false;
-        result.push(item);
+        result.entries.push(item);
         continue;
       }
       item.etag = await hash.hash(absolute, 'sha256');
       item.isDir = false;
-      result.push(item);
+      result.entries.push(item);
     }
     return result;
   }

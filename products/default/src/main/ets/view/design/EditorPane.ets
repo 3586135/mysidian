@@ -115,8 +115,13 @@ export struct EditorPane {
   private static readonly EDITOR_ID: string = 'editor_text_area';
   /** 当前查找关键词。 */
   private findKeyword: string = '';
+  /** #4：异步聚焦/选区恢复定时器句柄（组件销毁或重入时必须清除，防止回调打到已销毁组件）。 */
+  private selectFocusTimerId: number = -1;
+  private pendingCaretTimerId: number = -1;
+  private disposed: boolean = false;
 
   aboutToAppear(): void {
+    this.disposed = false;
     // 注册 VM 注入钩子：光标处插入文本（手写图片等外部内容）。
     this.vm.onInsertTextAtCaret = (text: string, atEnd: boolean): void => {
       if (!this.vm.editMode) {
@@ -143,6 +148,16 @@ export struct EditorPane {
   }
 
   aboutToDisappear(): void {
+    // #4：销毁前清掉所有挂起的异步定时器并封锁回调。
+    this.disposed = true;
+    if (this.selectFocusTimerId >= 0) {
+      clearTimeout(this.selectFocusTimerId);
+      this.selectFocusTimerId = -1;
+    }
+    if (this.pendingCaretTimerId >= 0) {
+      clearTimeout(this.pendingCaretTimerId);
+      this.pendingCaretTimerId = -1;
+    }
     this.vm.onInsertTextAtCaret = (text: string, atEnd: boolean): void => {};
   }
 
@@ -878,6 +893,8 @@ export struct EditorPane {
     const snippet: string = syntax === 'table'
       ? this.tableTemplate()
       : syntax;
+    // #12：代码片段插入是离散工具栏动作，先压独立撤销快照（addText 触发的 onChange 会被 600ms 合并窗口吞掉）。
+    this.pushToolbarUndoSnapshot();
     this.textEditorController.addText(snippet, { offset: caret });
     // addText 未触发 onChange 时的兜底：手动同步缓冲区。
     const text: string = this.vm.draftBuffer;
@@ -1056,14 +1073,27 @@ export struct EditorPane {
     const end: number = start + this.findKeyword.length;
     if (!this.sourceMode) {
       this.wysiwygBridge.requestFocus();
-      setTimeout((): void => {
-        this.wysiwygBridge.selectRange(start, end);
+      // #4：重入先清旧定时器，销毁后不再触发选区回调。
+      if (this.selectFocusTimerId >= 0) {
+        clearTimeout(this.selectFocusTimerId);
+      }
+      this.selectFocusTimerId = setTimeout((): void => {
+        this.selectFocusTimerId = -1;
+        if (!this.disposed) {
+          this.wysiwygBridge.selectRange(start, end);
+        }
       }, 60);
       return;
     }
     this.getUIContext().getFocusController().requestFocus(EditorPane.EDITOR_ID);
-    setTimeout((): void => {
-      this.textEditorController.setTextSelection(start, end, { menuPolicy: MenuPolicy.HIDE });
+    if (this.selectFocusTimerId >= 0) {
+      clearTimeout(this.selectFocusTimerId);
+    }
+    this.selectFocusTimerId = setTimeout((): void => {
+      this.selectFocusTimerId = -1;
+      if (!this.disposed) {
+        this.textEditorController.setTextSelection(start, end, { menuPolicy: MenuPolicy.HIDE });
+      }
     }, 60);
   }
 
@@ -1214,6 +1244,8 @@ export struct EditorPane {
     // replaceFrom >= 0 时替换已输入的查询串（支持前缀 / 包含命中与标签补全）。
     const from: number = item.replaceFrom >= 0 && item.replaceFrom < caret ? item.replaceFrom : caret;
     const next: string = text.substring(0, from) + item.insertText + text.substring(caret);
+    // #12：程序化替换会屏蔽 onChange，必须手动压撤销快照，否则补全结果无法撤销。
+    this.pushToolbarUndoSnapshot();
     this.replaceEditorText(next, from + item.insertText.length);
     this.showCompletion = false;
   }
@@ -1227,10 +1259,17 @@ export struct EditorPane {
       const position: number = Math.max(0, Math.min(limit, srcCaret));
       this.focusRestoreSourceCaret = position;
       this.lastSourceCaret = position;
-      setTimeout((): void => {
-        this.getUIContext().getFocusController().requestFocus(EditorPane.EDITOR_ID);
-        this.textEditorController.caretPosition(position);
-        this.lastSourceCaret = position;
+      // #4：重入先清旧定时器，销毁后不再触发焦点/光标回调。
+      if (this.pendingCaretTimerId >= 0) {
+        clearTimeout(this.pendingCaretTimerId);
+      }
+      this.pendingCaretTimerId = setTimeout((): void => {
+        this.pendingCaretTimerId = -1;
+        if (!this.disposed) {
+          this.getUIContext().getFocusController().requestFocus(EditorPane.EDITOR_ID);
+          this.textEditorController.caretPosition(position);
+          this.lastSourceCaret = position;
+        }
       }, 60);
       return;
     }
@@ -1241,13 +1280,31 @@ export struct EditorPane {
     this.vm.pendingCaret = -1;
     const limit: number = this.vm.draftBuffer.length;
     const position: number = caret > limit ? limit : caret;
-    setTimeout((): void => {
-      this.textEditorController.caretPosition(position);
+    if (this.pendingCaretTimerId >= 0) {
+      clearTimeout(this.pendingCaretTimerId);
+    }
+    this.pendingCaretTimerId = setTimeout((): void => {
+      this.pendingCaretTimerId = -1;
+      if (!this.disposed) {
+        this.textEditorController.caretPosition(position);
+      }
     }, 80);
+  }
+
+  /** #5：当前编辑会话文档标识（切换笔记 / 外部预览时变化）。 */
+  private currentDocKey(): string {
+    return this.vm.selectedPath.length > 0 ? this.vm.selectedPath : this.vm.externalUri;
+  }
+
+  /** #5：异步选择/导入返回后校验是否仍处于发起时的同一文档同一编辑态会话。 */
+  private isSameEditSession(docKey: string, editMode: boolean): boolean {
+    return !this.disposed && this.currentDocKey() === docKey && this.vm.editMode === editMode;
   }
 
   /** 选择图片并插入到当前光标处。 */
   private async pickAndInsertImage(): Promise<void> {
+    const docKeyAtPick: string = this.currentDocKey();
+    const editModeAtPick: boolean = this.vm.editMode;
     try {
       const pickerInstance = new photoAccessHelper.PhotoViewPicker();
       const options = new photoAccessHelper.PhotoSelectOptions();
@@ -1260,6 +1317,10 @@ export struct EditorPane {
       const uri: string = result.photoUris[0];
       const extension: string = this.extensionOfUri(uri);
       const relative: string = await this.vm.importAttachment(uri, extension);
+      // #5：选择器与导入均为异步，返回后必须确认仍是同一编辑会话，防止插入到已切换的笔记。
+      if (!this.isSameEditSession(docKeyAtPick, editModeAtPick)) {
+        return;
+      }
       if (relative.length === 0) {
         this.toast($r('app.string.msg_image_failed'));
         return;
@@ -1279,6 +1340,8 @@ export struct EditorPane {
 
   /** 选择文档/音视频等附件并导入当前仓库附件目录，在光标处插入链接。 */
   private async pickAndInsertAttachment(): Promise<void> {
+    const docKeyAtPick: string = this.currentDocKey();
+    const editModeAtPick: boolean = this.vm.editMode;
     try {
       const hostContext = this.getUIContext().getHostContext();
       const documentPicker = hostContext !== undefined ?
@@ -1293,6 +1356,10 @@ export struct EditorPane {
       const origName: string = VaultManager.extractUriFileName(uri);
       const extension: string = this.extensionOfUri(origName.length > 0 ? origName : uri, '');
       const relative: string = await this.vm.importAttachment(uri, extension, origName);
+      // #5：选择器与导入均为异步，返回后必须确认仍是同一编辑会话，防止插入到已切换的笔记。
+      if (!this.isSameEditSession(docKeyAtPick, editModeAtPick)) {
+        return;
+      }
       if (relative.length === 0) {
         this.toast($r('app.string.msg_attachment_failed'));
         return;
