@@ -12,7 +12,7 @@ devecocli run --skip-build               # 装机运行（必须先 build 成功
 
 - `devecocli check arkts` 对 `"app.string.xxx"` 资源引用会报 "Unknown resource name" —— **已知误报**，以 `devecocli build` 为权威。
 - 若 `C:\Users\song\.local\bin\deveco.exe` 被 Device Guard / WDAC 拦截（报 "blocked by your organization's Device Guard policy"），复制到 `C:\Users\song\AppData\Local\Temp\deveco\` 再以 `deveco2.exe __devecocli-proxy -- build` 调用。
-- 单元测试位于 `features/markdown/src/test/LocalUnit.test.ets`（等），CLI 无 test 命令，只能在 DevEco Studio 内运行。
+- 单元测试位于 `features/markdown/src/test/LocalUnit.test.ets`（等）。CLI 可直接跑（无需 DevEco Studio GUI）：`$env:DEVECO_SDK_HOME="C:\Program Files\Huawei\DevEco Studio\sdk"; & "C:\Program Files\Huawei\DevEco Studio\tools\node\node.exe" "C:\Program Files\Huawei\DevEco Studio\tools\hvigor\bin\hvigorw.js" --mode module -p module=markdown@default test --no-daemon`；结果文本在 `features/markdown/.test/default/intermediates/test/coverage_data/test_result.txt`（75 用例约 16s；DEVECO_SDK_HOME 未设时报 00303217 配置错误）。
 
 ### 签名配置（不入库）
 
