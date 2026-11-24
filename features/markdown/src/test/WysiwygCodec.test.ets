@@ -312,5 +312,107 @@ export default function wysiwygCodecTest() {
       expect(orderedDoc.paragraphs[2].ordinal).assertEqual(3);
       expect(WysiwygCodec.serialize(orderedDoc)).assertEqual(orderedMd);
     });
+
+    it('roundTripsInlineEscapesWithoutSemanticLoss', 0, () => {
+      // \*a\* 的字面星号往返不得退化成斜体（此前 InlineParser 丢 \ 且序列化不还原）。
+      const md: string = '前文 \\*a\\* 后文';
+      const doc: WysiwygDocument = WysiwygCodec.parse(md);
+      const inline = doc.paragraphs[0].inlines[0];
+      expect(inline.kind).assertEqual(WysiwygSpanKind.PLAIN);
+      expect(inline.italic).assertFalse();
+      expect(inline.text.includes('前文')).assertTrue();
+
+      const out: string = WysiwygCodec.serialize(doc);
+      expect(out).assertEqual(md);
+      const twice: string = WysiwygCodec.serialize(WysiwygCodec.parse(out));
+      expect(twice).assertEqual(md);
+
+      // 所见模式键入的字面星号同样受转义协议保护。
+      const typed: WysiwygDocument = WysiwygCodec.parse('占位');
+      const typedInline = new WysiwygInline();
+      typedInline.text = '*a*';
+      typed.paragraphs[0].inlines = [typedInline];
+      const typedOut: string = WysiwygCodec.serialize(typed);
+      expect(typedOut).assertEqual('\\*a\\*');
+      const reparsed: WysiwygDocument = WysiwygCodec.parse(typedOut);
+      expect(reparsed.paragraphs[0].inlines[0].kind).assertEqual(WysiwygSpanKind.PLAIN);
+      expect(reparsed.paragraphs[0].inlines[0].text).assertEqual('*a*');
+    });
+
+    it('keepsBackslashRunsAndWindowsPathsStable', 0, () => {
+      // 反斜杠+字母不是转义（CommonMark），原样保留不膨胀。
+      const md: string = '路径 C:\\Users\\song\\notes 保持不变';
+      const doc: WysiwygDocument = WysiwygCodec.parse(md);
+      expect(doc.paragraphs[0].inlines[0].text).assertEqual('路径 C:\\Users\\song\\notes 保持不变');
+      expect(WysiwygCodec.serialize(doc)).assertEqual(md);
+      expect(WysiwygCodec.serialize(WysiwygCodec.parse(WysiwygCodec.serialize(doc)))).assertEqual(md);
+
+      // 字面反斜杠+标点（源码 \\*）与结尾反斜杠（后随样式标记）必须转义防吞。
+      const tricky: WysiwygDocument = WysiwygCodec.parse('占位');
+      const trickyInline = new WysiwygInline();
+      trickyInline.text = 'a\\*b\\';
+      tricky.paragraphs[0].inlines = [trickyInline];
+      const boldInline = new WysiwygInline();
+      boldInline.text = '粗';
+      boldInline.bold = true;
+      tricky.paragraphs[0].inlines.push(boldInline);
+      const trickyOut: string = WysiwygCodec.serialize(tricky);
+      expect(trickyOut).assertEqual('a\\\\\\*b\\\\**粗**');
+      const trickyBack: WysiwygDocument = WysiwygCodec.parse(trickyOut);
+      expect(trickyBack.paragraphs[0].inlines[0].text).assertEqual('a\\*b\\');
+      expect(trickyBack.paragraphs[0].inlines[1].bold).assertTrue();
+    });
+
+    it('escapesMathDollarTildeAndExclaimEdges', 0, () => {
+      // 成对 $ 会形成行内数学、成对 ~~ 形成删除线、末尾 ! 紧跟 wiki 链接会变嵌入。
+      const doc: WysiwygDocument = WysiwygCodec.parse('占位');
+      const plain = new WysiwygInline();
+      plain.text = 'a $5$ b ~~c~~ d!';
+      const wiki = WysiwygCodec.parseInlines('[[目标]]')[0];
+      doc.paragraphs[0].inlines = [plain, wiki];
+
+      const out: string = WysiwygCodec.serialize(doc);
+      expect(out).assertEqual('a \\$5\\$ b \\~~c\\~~ d\\![[目标]]');
+
+      const back: WysiwygDocument = WysiwygCodec.parse(out);
+      expect(back.paragraphs[0].inlines[0].kind).assertEqual(WysiwygSpanKind.PLAIN);
+      expect(back.paragraphs[0].inlines[0].text).assertEqual('a $5$ b ~~c~~ d!');
+      expect(back.paragraphs[0].inlines[1].kind).assertEqual(WysiwygSpanKind.WIKI_LINK);
+      expect(WysiwygCodec.serialize(back)).assertEqual(out);
+
+      // 被转义的 \! 不得触发嵌入检测（\![[x]] = 字面 ! + wiki 链接）；
+      // 真实未转义的 !（\\![[x]]）仍解析为嵌入。
+      const escapedBang: WysiwygInline[] = WysiwygCodec.parseInlines('前 \\![[目标]]');
+      expect(escapedBang[0].text).assertEqual('前 !');
+      expect(escapedBang[1].kind).assertEqual(WysiwygSpanKind.WIKI_LINK);
+      const realBang: WysiwygInline[] = WysiwygCodec.parseInlines('前 \\\\![[目标]]');
+      expect(realBang[0].text).assertEqual('前 \\');
+      expect(realBang[1].kind).assertEqual(WysiwygSpanKind.PLAIN);
+      expect(realBang[1].text).assertEqual('![[目标]]');
+    });
+
+    it('keepsBlockTriggerLeadingCharsAsParagraph', 0, () => {
+      const cases: string[] = ['- item', '1. item', '> quote', '# 标题', '| a |', '<div>x'];
+      const expected: string[] =
+        ['\\- item', '1\\. item', '\\> quote', '\\# 标题', '\\| a |', '\\<div>x'];
+      for (let i = 0; i < cases.length; i++) {
+        const doc: WysiwygDocument = WysiwygCodec.parse('占位');
+        const inline = new WysiwygInline();
+        inline.text = cases[i];
+        doc.paragraphs[0].inlines = [inline];
+        const out: string = WysiwygCodec.serialize(doc);
+        expect(out).assertEqual(expected[i]);
+        const back: WysiwygDocument = WysiwygCodec.parse(out);
+        expect(back.paragraphs[0].kind).assertEqual(WysiwygBlockKind.PARAGRAPH);
+        expect(WysiwygCodec.serialize(back)).assertEqual(out);
+      }
+    });
+
+    it('keepsNaturalTextAndInlineStylesUntouched', 0, () => {
+      // 自然文本零扰动：x = 1、a ~ b、snake_case、中文标点不得被加转义。
+      const md: string = 'x = 1 与 a ~ b 与 snake_case 与 你好，世界！ 保持原样 **加粗** 依旧。';
+      const out: string = WysiwygCodec.serialize(WysiwygCodec.parse(md));
+      expect(out).assertEqual(md);
+    });
   });
 }

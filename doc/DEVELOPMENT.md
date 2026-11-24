@@ -1,6 +1,6 @@
 # 开发状态与设计决策
 
-> 最后更新：2026-11-23。本文档记录各里程碑的功能实现、关键设计决策、验证状态与已知问题，供后续开发（含 AI 协作）快速接续。
+> 最后更新：2026-11-24。本文档记录各里程碑的功能实现、关键设计决策、验证状态与已知问题，供后续开发（含 AI 协作）快速接续。
 
 ## 里程碑历史（git 提交）
 
@@ -17,6 +17,24 @@
 | v0.5.0 | **安全、性能与生产力增强**：Asset Store 密码硬件级加密、DB v4 同步哈希缓存、冲突处理中心、FTS5 自愈 + BM25 排序、未链接提及 RDB 化、页内查找替换、文件树节点操作菜单、图片全屏缩放预览、应用内主题切换 |
 | v0.6.0 | **查询引擎 RDB 化、代码高亮、书签、本地快照备份与多端生态**：Dataview/日历 RDB 批量加速、列表项文本与标签入库、原生代码块语法着色、置顶书签、本地定时/一键快照备份恢复、2in1 键盘快捷键与桌面长按快捷方式 |
 | v1.0.0 | **全端质感打磨、同步安全无感化、系统打开方式与 1.0 正式发布**：首页默认素雅 5 色莫兰迪纸感列表与原地目录穿透面包屑、透明毛玻璃三页签底栏、按年月分卷日记（`日记/YYYY-MM/YYYY-MM-DD.md`）、自适应大纲浮层与多行编辑工具栏、WebDAV 干跑安全闸门/断点落盘/`.trash/` 软删与新建仓库自签名开关、系统 `.md`「打开方式」只读预览与一键导入、Ceramic Washi 分层应用图标、`md_*` 资源解耦与全模块单测通过 |
+
+## 近期变更（2026-11-24，inline 转义往返重建 + `.tmp` 孤儿清理 + 分享扩展实测）
+
+从第一性原理修复 v1.5.3 已知限制中的三项（先质疑问题定义、再推演二阶影响后动手）：
+
+- **① inline 转义序列化往返丢失（信息论视角）**：`InlineParser` 消费 `\*` 等转义产出无标记文本，而 `WysiwygCodec` 序列化侧从 plain 文本"裸"生成 Markdown——投影回原文是有损的。修复 = 在序列化侧重建转义协议对偶（`escapePlainRun`）：
+  - **规则表**：无条件转义 `` ` `` `*` `$`（防代码/强调/数学定界）；`\` 仅当下一字符为 ASCII 标点或位于 run 末尾；`_` 仅词界处；`~`/`=` 仅成对（next===同字符）或 run 末尾；`!` 仅 run 末字符且 exclaimUnsafe（防与前文拼接成 `![[`）；`#` 行首 + next 空格/`#`/`'` 或 isTagLikeAt；行首块级触发转义 `-` `+` `>` `|`、`<` next 字母/`/`/`!`、有序列表仅转义点号分隔符。
+  - **刻意的非转义（勿"修复"）**：`[` 及其后随 `!` 不转义——EMBED/WIKI_LINK 片段在模型中是原文透传（`pushWikiMediaBlock`/walkMdInlines 产出 `plain('![[...]]')` 原文 inline），转义 `[` 会破坏 `![[嵌入笔记]]` 类内容往返（曾引入后被 80 用例中 2 例打回）；用户键入 `[[x]]` 自动成链是 Obsidian 预期行为。
+  - **配套修复 InlineParser.parseWiki 既有潜伏 bug**：`isEmbed` 原只查源码前一位字符 `charAt(start-1)==='!'`，序列化器产出 `\!` 后被转义的 `!` 仍触发嵌入检测；新增 `isCharEscaped`（前导反斜杠奇偶计数，`\\!`/`\\\!` 均正确判别）豁免被转义的 `!`。
+  - 转义在 `serializeInlines`/`inlineSourceOffset`/`inlineWysiwygOffset` 三处消费点语义一致；fast-path 依据 run 的 changed 标志。
+- **② `.tmp` 固定名并发互踩（前提证伪）**：推演证明"并发互踩窗口"实际为零——`writeNote` 全同步写（open→write→close 无 await，JS 单线程不会交错），真实风险是**崩溃残留孤儿 `.tmp`**（进程在 rename 前被杀，文件永驻仓库目录）。修复走最小面：`VaultManager.deleteNote`/`relocateNote` 调 `removeStaleTempFile` 清理同名 `.tmp`；`writeNote`/`FileHistory.rollback` 补原子性契约注释。不修假问题（未引入唯一临时名/锁）。
+- **③ 分享扩展实测（5555 Mate 90 Pro 模拟器，触摸注入本轮已恢复）**：
+  - 注册合规性经 `bm dump` 与 Share Kit 文档双重确认（action `ohos.want.action.sendData` + entity `entity.system.share` + uris `general.markdown`/`general.plain-text`；文档明确 uri 内 `scheme` 为预留字段不参与匹配）。
+  - **浏览器页面分享**（example.com → 菜单 → 分享）：系统面板正常弹出但 MySidian 正确缺席——浏览器分享的是 URL/hyperlink 型记录，不匹配 plain-text/markdown，属预期非缺陷。
+  - **`.md` 文件分享 E2E**（浏览器经 GitLab raw `?inline=false` 强制下载 README.md 至用户存储 → 文件管理器长按 → 分享 → 全部 → MySidian）：`ShareExtensionAbility` 无头落盘 `README-20261124004744.md`（5869B 内容逐字节保真）、`note` 表登记、应用列表按"最近修改"置顶、打开渲染正常——**全链路通过**。
+  - **`.txt` 文件分享 E2E**（同一文件改名 README.txt 再分享）：`general.plain-text` 分支匹配成功，落盘 `README.txt-20261124005849.md` + DB 登记通过。
+  - 实测中发现并已修复：`saveAsNote` 标题清理原先只剥 `.md|.markdown`，`.txt` 源文件会把扩展名留在笔记名中间（`README.txt-<stamp>.md`）——已扩展剥离集合为 `md|markdown|txt|text|log|html?|org`（ShareExtensionAbility.ets）。
+- 验证：markdown 80/80（新增 5 测试 + 2 组 escapedBang/realBang 回归断言）、vault 24/24、default 47/47；`devecocli check arkts` 5 个编辑文件 0 错误；`devecocli build` 签名构建成功。
 
 ## 近期变更（2026-11-23，WebDAV 读路径流式化 + 双重体积熔断）
 
@@ -50,7 +68,7 @@
   - ZipTransfer `copyFileToUri`：target 打开失败不再泄漏 source fd；`writeSync` 按返回值循环补写（部分写入不再产出截断导出文件）；
   - `MdPropertiesView` ForEach key 补 `listValue`/`rawBlock`；`FileHistory.rollback`/`writeNote` rename 失败清理 `.tmp` 残留。
 - **编辑器复扫收编 15 项**：查找替换拒绝触及表格/图片原子行占位符（`rangeTouchesAtomicLine`）；期望文本分支泄漏修复（增量拼接与控制器全量一致时同步缓存消费期望）；`applyTableEdit` 先离屏渲染后提交（渲染失败零副作用）；EditorPane 异步定时器句柄统一管理（销毁/重入清除）；图片/附件选择器异步返回后会话校验（防插入已切换笔记）；`syncMetaCountToPlainText` 截断释放表格位图；文档切换重置撤销降频状态；imageMap 无限累积修剪；选区夹紧；死三目清理；IMAGE 行与 TABLE 行同走原子块守卫；源码模式程序化替换补撤销快照；任务勾选命中区按 `WysiwygMarginCache` 真实几何推导（indent*18+4，15vp）。
-- **已知限制（本轮记录不修）**：inline 转义反斜杠往返丢失（`\*a\*` → `*a*`，InlineParser 丢 `\` 且序列化不还原，需重建转义往返协议）；远端 `remote.size===0` 时读路径无体积上限（OOM 风险，需流式上限；**已于同日修复**，见上方流式熔断段落）；`syncIndex` 非事务化（中断留半索引，下轮全量自愈）；`.tmp` 固定名并发写互踩（同笔记并发保存窗口极小）；`createVault` 半程失败留孤儿目录；`createBackup` 半程 zip 残留；TOCTOU（listFileSync/statSync 竞态）；闪念在编辑器中不实时显示（draftBuffer 非响应式，编辑器是权威来源）。
+- **已知限制（本轮记录不修）**：~~inline 转义反斜杠往返丢失（`\*a\*` → `*a*`，InlineParser 丢 `\` 且序列化不还原，需重建转义往返协议）~~ → **已于 2026-11-24 修复**（escapePlainRun 转义协议对偶，见当日"近期变更"）；远端 `remote.size===0` 时读路径无体积上限（OOM 风险，需流式上限；**已于同日修复**，见上方流式熔断段落）；`syncIndex` 非事务化（中断留半索引，下轮全量自愈）；~~`.tmp` 固定名并发写互踩（同笔记并发保存窗口极小）~~ → **前提证伪并已于 2026-11-24 修复**（并发窗口实为零，真实风险为崩溃残留孤儿，deleteNote/relocateNote 清理，见当日"近期变更"）；`createVault` 半程失败留孤儿目录；`createBackup` 半程 zip 残留；TOCTOU（listFileSync/statSync 竞态）；闪念在编辑器中不实时显示（draftBuffer 非响应式，编辑器是权威来源）。
 - 验证：`devecocli check arkts` 全轮次 0 错误；`devecocli build` exitCode=0（签名构建成功）；新增 11 个单测断言（Batch C 7 + Batch F 4）。
 
 ## 近期变更（2026-11-22，编辑工具栏命令化重构：参考 obsidian-editing-toolbar）
@@ -550,7 +568,7 @@ raw → FrontmatterParser → BlockParser（块级：标题/列表/任务/代码
 6. 真机验证遗留：`2026-10-15.md` Gemini OAuth 任务曾被勾选、`Hermes记录.md` 有一行误插 `验证任务A`，待用户在应用内手动处理（用户数据，非代码问题）。
 7. 5555（折叠屏模拟器）UI 自动化偶发 a11y 树与实际渲染不一致、Toggle 点击不生效（"设置→仓库管理→新建"对话框），根因未明；屏幕熄灭也会导致点击失效（先 `power-shell wakeup; power-shell setmode 602`）。
 8. **服务卡片为静态视图**：本 SDK 卡片应用禁 `@StorageLink/@StorageProp`（`'StorageLink' can't support form application`）且未提供 `FormComponent`，卡片页无法取动态数据；真实数据由 `formProvider.updateForm` 发布（卡片侧渲染未验证）。可在设置里手动添加卡片。
-9. **分享面板**已注册为 `entity.system.share` 扩展（`skills`），需从第三方应用分享 Markdown 才会触发；系统分享面板的实测触发路径未覆盖。
+9. ~~**分享面板**已注册为 `entity.system.share` 扩展（`skills`），需从第三方应用分享 Markdown 才会触发；系统分享面板的实测触发路径未覆盖~~ → **已于 2026-11-24 实测覆盖**：`.md`/`.txt` 文件分享全链路通过（文件管理器 → 分享面板 → MySidian → 落盘 + DB + UI），浏览器 URL 分享正确缺席（类型不匹配），见当日"近期变更"。
 10. **数学公式为 Unicode 近似**：分数渲染为 `(a)/(b)`（非堆叠），复杂公式（矩阵、多行对齐）不支持；如需专业排版需引入 KaTeX/Web 方案。
 11. **宽屏分屏时右侧信息面板自动收起**：分屏 + 信息面板同时展开会把正文挤得过窄，故分屏时优先收起信息面板（可手动再打开）。
 

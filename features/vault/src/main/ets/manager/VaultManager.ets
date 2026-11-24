@@ -331,6 +331,10 @@ export class VaultManager {
     if (dir.length > 0 && !fileIo.accessSync(dir)) {
       fileIo.mkdirSync(dir, true);
     }
+    // 原子写契约：open→write→fsync→rename 全为同步调用且段内无 await，
+    // 在 ArkTS 单线程事件循环上不可分割——固定名 .tmp 不存在并发互踩窗口；
+    // 崩溃残留至多一份且被下次写自愈（TRUNC 复用）。若未来把文件 IO 移出
+    // 主线程（taskpool/worker）或在此段插入 await，必须改唯一临时名 + 孤儿清扫。
     const tempPath: string = `${absolute}.tmp`;
     const file = fileIo.openSync(tempPath,
       fileIo.OpenMode.READ_WRITE | fileIo.OpenMode.CREATE | fileIo.OpenMode.TRUNC);
@@ -365,7 +369,23 @@ export class VaultManager {
     if (fileIo.accessSync(absolute)) {
       fileIo.unlinkSync(absolute);
     }
+    this.removeStaleTempFile(absolute);
     await VaultDao.touch(this.context, vault.id);
+  }
+
+  /**
+   * 清理同路径原子写崩溃残留的 `<path>.tmp`（正常路径由 rename 消费不留残留；
+   * 残留对笔记索引与双向同步均不可见，仅在删除/搬移主文件时随主文件一并清掉）。
+   */
+  private removeStaleTempFile(absolute: string): void {
+    const tempPath: string = `${absolute}.tmp`;
+    if (fileIo.accessSync(tempPath)) {
+      try {
+        fileIo.unlinkSync(tempPath);
+      } catch (_ignored) {
+        // 清理失败不阻断主流程；残留下次写入自愈
+      }
+    }
   }
 
   /** 在仓库内创建目录（已存在时返回 false）。 */
@@ -652,6 +672,7 @@ export class VaultManager {
       fileIo.mkdirSync(dir, true);
     }
     fileIo.renameSync(absolute, target);
+    this.removeStaleTempFile(absolute);
     await NoteDao.updatePath(this.context, vault.id, relativePath, newRelativePath,
       VaultPath.basenameWithoutExt(newRelativePath));
     await this.refreshNote(vault, newRelativePath);

@@ -148,6 +148,8 @@ export class FileHistory {
       FileHistory.prune(dir, relativePath);
     }
     // 原子写回：直接 TRUNC 目标文件在写入中途崩溃会留下截断的半份笔记。
+    // 契约同 VaultManager.writeNote：open→write→fsync→rename 全同步无 await，
+    // 单线程事件循环上固定名 .tmp 无并发窗口，崩溃残留由下次写入自愈。
     const tempPath: string = `${absolute}.tmp`;
     const file = fileIo.openSync(tempPath,
       fileIo.OpenMode.READ_WRITE | fileIo.OpenMode.CREATE | fileIo.OpenMode.TRUNC);

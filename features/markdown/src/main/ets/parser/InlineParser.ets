@@ -210,7 +210,10 @@ export class InlineParser {
     }
     const result: InlineParseResult = new InlineParseResult();
     const node: MdInline = new MdInline();
-    const isEmbed: boolean = start > 0 && text.charAt(start - 1) === '!';
+    // 前置 `!` 须是真实未转义的 `!`：`\![[x]]` 的 `!` 来自转义（字面量），
+    // 后随 `[[x]]` 应按 wiki 链接解析而非嵌入（序列化侧 escapePlainRun 依赖此语义）。
+    const isEmbed: boolean = start > 0 && text.charAt(start - 1) === '!' &&
+      !this.isCharEscaped(text, start - 1);
     node.type = isEmbed ? MdInlineType.EMBED : MdInlineType.WIKI_LINK;
 
     const pipe: number = content.indexOf('|');
@@ -474,6 +477,21 @@ export class InlineParser {
     const code: number = ch.charCodeAt(0);
     return (code >= 33 && code <= 47) || (code >= 58 && code <= 64) ||
       (code >= 91 && code <= 96) || (code >= 123 && code <= 126);
+  }
+
+  /**
+   * index 处字符是否被转义：紧邻前导反斜杠为奇数个（\! 的 ! 已转义；
+   * \\! 的 ! 未转义——前两个反斜杠互相抵消）。按奇偶计数而非只看前一位，
+   * 否则 `\\\!` 这类「转义反斜杠 + 转义感叹号」会被误判。
+   */
+  private isCharEscaped(text: string, index: number): boolean {
+    let count: number = 0;
+    let scan: number = index - 1;
+    while (scan >= 0 && text.charAt(scan) === '\\') {
+      count++;
+      scan--;
+    }
+    return count % 2 === 1;
   }
 
   /** URL 结尾位置：括号深度计数，容忍 URL 内成对括号，遇未配对 ')' 收尾。 */

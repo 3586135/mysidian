@@ -14,17 +14,19 @@ devecocli run --skip-build               # 装机运行（必须先 build 成功
 - 若 `C:\Users\song\.local\bin\deveco.exe` 被 Device Guard / WDAC 拦截（报 "blocked by your organization's Device Guard policy"），复制到 `C:\Users\song\AppData\Local\Temp\deveco\` 再以 `deveco2.exe __devecocli-proxy -- build` 调用。
 - 单元测试位于 `features/markdown/src/test/LocalUnit.test.ets`（等）。CLI 可直接跑（无需 DevEco Studio GUI）：`$env:DEVECO_SDK_HOME="C:\Program Files\Huawei\DevEco Studio\sdk"; & "C:\Program Files\Huawei\DevEco Studio\tools\node\node.exe" "C:\Program Files\Huawei\DevEco Studio\tools\hvigor\bin\hvigorw.js" --mode module -p module=markdown@default test --no-daemon`；结果文本在 `features/markdown/.test/default/intermediates/test/coverage_data/test_result.txt`（75 用例约 16s；DEVECO_SDK_HOME 未设时报 00303217 配置错误）。
 
-### 签名配置（不入库）
+### 签名配置与敏感材料（严禁入库）
 
-- git 跟踪的 `build-profile.json5` 的 `signingConfigs` 为空（签名材料不上传）。
+- git 跟踪的 `build-profile.json5` 的 `signingConfigs` 恒为空数组 `[]`（签名材料不上传）。
 - 本地 `build-profile.json5` 含签名材料，已设 `git update-index --skip-worktree` 隔离（`git ls-files -v` 显示 `S`）；签名版备份在 `build-profile.signed.json5`（已 gitignore）。
 - 新克隆/换机后：复制 `build-profile.signed.json5` 覆盖 `build-profile.json5` 并重设 skip-worktree；或在 DevEco Studio（File → Project Structure → Signing Configs）重新自动签名。
 - 无签名配置时 `devecocli build` 只产出 `default-default-unsigned.hap`（无法装机），必须带签名材料构建。
+- **AGC 与凭据文件防护**：`.gitignore` 已屏蔽 `agconnect-services.json`（`**/agconnect-services.json`）、签名与证书私钥（`*.p12`、`*.p7b`、`*.cer`、`*.pem`、`*.key`、`*.keystore`、`*.jks`）及 `.env*`；**严禁**使用 `git add -f` 强行提交，也禁止将 `client_secret`、`agcgw`、`developer_id`、`cp_id`、真实账号/Token/WebDAV 密码、本地用户绝对路径及私密笔记内容写入源码、测试、截图或 `README.md`。
 
-### 发布约定
+### 发布与提交前安全自检约定
 
-- 发布新版本时，GitHub Release 上传**未签名**安装包（`default-default-unsigned.hap`，重命名为 `mysidian-x.y.z-unsigned.hap`），不再上传 signed hap（v0.2.0 是最后一个附带签名包的版本）。
+- 发布新版本时，GitHub Release 仅上传**未签名**安装包（`default-default-unsigned.hap`，重命名为 `mysidian-x.y.z-unsigned.hap`），严禁公开附带 `-signed.hap`（注：`v0.1.0`、`v0.1.1`、`v0.2.0`、`v0.6.0`、`v1.1.0` 等早期历史 Release 曾附带过 `-signed.hap`，现已严格禁止）。
 - 创建 Release 走 GitHub REST API：`git credential fill`（输入需 LF 文件重定向，PowerShell 管道 CRLF 会报错）取 token；body 用 `[System.IO.File]::ReadAllText` 读入（PS 5.1 的 `Get-Content` 字符串带 PSPath 属性导致 422）。
+- **提交与发版前必须自检**：检查 `git diff --cached`、新增文件及产出 `.hap` 包内条目，确保不含 `agconnect-services.json`、私钥/证书、凭据、本机绝对路径或个人隐私邮箱；Git 提交作者保持使用 noreply 邮箱，如工作区存在无关本地改动，须在干净隔离的 tag worktree 中打包发布以保证源码与产物一致。
 
 ## 测试设备环境
 

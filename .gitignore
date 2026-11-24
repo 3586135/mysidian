@@ -5,6 +5,7 @@
 /.idea
 **/build
 /.hvigor
+**/.hvigor
 .cxx
 /.clangd
 /.clang-format
@@ -22,3 +23,16 @@
 .tmp-ui/
 /.deveco/
 /dist/
+
+# 敏感配置与签名材料（AGC / 证书 / 私钥 / 环境变量）
+agconnect-services.json
+**/agconnect-services.json
+*.p12
+*.p7b
+*.cer
+*.pem
+*.key
+*.keystore
+*.jks
+.env
+.env.*

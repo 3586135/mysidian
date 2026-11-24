@@ -125,7 +125,7 @@ export default class ShareExtensionAbility extends BaseShareExtensionAbility {
       const pad = (value: number): string => value < 10 ? `0${value}` : `${value}`;
       const stamp: string = `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}` +
         `${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
-      const baseTitle: string = title.replace(/\.(md|markdown)$/i, '').trim();
+      const baseTitle: string = title.replace(/\.(md|markdown|txt|text|log|html?|org)$/i, '').trim();
       const name: string = baseTitle.length > 0 ? baseTitle.replace(/[\\/:*?"<>|]/g, '_') : '分享内容';
       const path: string = `${name}-${stamp}.md`;
       const trimmedText: string = text.trimStart();

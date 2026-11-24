@@ -1,5 +1,6 @@
 import { MdInline, MdInlineType } from '@ohos/domain';
 import { InlineParser } from '../parser/InlineParser';
+import { TagRules } from '../parser/TagRules';
 import {
   WysiwygBlockKind,
   WysiwygDocument,
@@ -192,7 +193,9 @@ export class WysiwygCodec {
         text += inlines[j].text;
         j++;
       }
-      out += WysiwygCodec.wrapInlineStyle(text, cur.bold, cur.italic, cur.strike, cur.highlight);
+      const follow: WysiwygInline | null = j < inlines.length ? inlines[j] : null;
+      out += WysiwygCodec.wrapInlineStyle(text, cur.bold, cur.italic, cur.strike, cur.highlight,
+        i === 0, WysiwygCodec.isBracketLeadingInline(follow));
       i = j;
     }
     return out;
@@ -401,8 +404,10 @@ export class WysiwygCodec {
         mergedText += inlines[j].text;
         j++;
       }
+      const followSrc: WysiwygInline | null = j < inlines.length ? inlines[j] : null;
       const serialized: string = WysiwygCodec.wrapInlineStyle(
-        mergedText, cur.bold, cur.italic, cur.strike, cur.highlight);
+        mergedText, cur.bold, cur.italic, cur.strike, cur.highlight,
+        i === 0, WysiwygCodec.isBracketLeadingInline(followSrc));
       if (visLeft >= mergedText.length) {
         srcAcc += serialized.length;
         visLeft -= mergedText.length;
@@ -443,8 +448,10 @@ export class WysiwygCodec {
         mergedText += inlines[j].text;
         j++;
       }
+      const followVis: WysiwygInline | null = j < inlines.length ? inlines[j] : null;
       const serialized: string = WysiwygCodec.wrapInlineStyle(
-        mergedText, cur.bold, cur.italic, cur.strike, cur.highlight);
+        mergedText, cur.bold, cur.italic, cur.strike, cur.highlight,
+        i === 0, WysiwygCodec.isBracketLeadingInline(followVis));
       if (srcLeft >= serialized.length) {
         srcLeft -= serialized.length;
         visAcc += mergedText.length;
@@ -1073,16 +1080,20 @@ export class WysiwygCodec {
   }
 
   private static wrapInlineStyle(raw: string, bold: boolean, italic: boolean,
-    strike: boolean, highlight: boolean): string {
-    if (raw.length === 0 || (!bold && !italic && !strike && !highlight)) {
+    strike: boolean, highlight: boolean, atContentStart: boolean, exclaimUnsafe: boolean): string {
+    if (raw.length === 0) {
       return raw;
     }
-    const leadMatch: RegExpExecArray | null = /^(\s*)(.*?)(\s*)$/.exec(raw);
+    const escaped: string = WysiwygCodec.escapePlainRun(raw, atContentStart, exclaimUnsafe);
+    if (!bold && !italic && !strike && !highlight) {
+      return escaped;
+    }
+    const leadMatch: RegExpExecArray | null = /^(\s*)(.*?)(\s*)$/.exec(escaped);
     const leading: string = leadMatch !== null ? leadMatch[1] : '';
-    const core: string = leadMatch !== null ? leadMatch[2] : raw;
+    const core: string = leadMatch !== null ? leadMatch[2] : escaped;
     const trailing: string = leadMatch !== null ? leadMatch[3] : '';
     if (core.length === 0) {
-      return raw;
+      return escaped;
     }
     let out: string = core;
     if (highlight) {
@@ -1099,5 +1110,134 @@ export class WysiwygCodec {
       out = `*${out}*`;
     }
     return `${leading}${out}${trailing}`;
+  }
+
+  /** 下一个待序列化片段是否以 `[` 开头（wiki/链接，会使前置 `!` 变成嵌入/图片语法）。 */
+  private static isBracketLeadingInline(inline: WysiwygInline | null): boolean {
+    if (inline === null || inline.isImage) {
+      return false;
+    }
+    return inline.kind === WysiwygSpanKind.WIKI_LINK || inline.kind === WysiwygSpanKind.MD_LINK;
+  }
+
+  /** 是否为可转义 ASCII 标点（CommonMark 范围，与 InlineParser 一致）。 */
+  private static isAsciiPunctuation(ch: string): boolean {
+    if (ch.length === 0) {
+      return false;
+    }
+    const code: number = ch.charCodeAt(0);
+    return (code >= 33 && code <= 47) || (code >= 58 && code <= 64) ||
+      (code >= 91 && code <= 96) || (code >= 123 && code <= 126);
+  }
+
+  private static isWordChar(ch: string): boolean {
+    if (ch.length === 0) {
+      return false;
+    }
+    const code: number = ch.charCodeAt(0);
+    return (code >= 48 && code <= 57) || (code >= 65 && code <= 90) || (code >= 97 && code <= 122);
+  }
+
+  private static isAsciiLetter(ch: string): boolean {
+    if (ch.length === 0) {
+      return false;
+    }
+    const code: number = ch.charCodeAt(0);
+    return (code >= 65 && code <= 90) || (code >= 97 && code <= 122);
+  }
+
+  /**
+   * 镜像 InlineParser 的标签判定（isTagStart + findTagEnd + isTagBody）：
+   * 位置 index 处的 `#` 是否会被重解析为标签节点。
+   */
+  private static isTagLikeAt(raw: string, index: number, prev: string): boolean {
+    if (WysiwygCodec.isWordChar(prev)) {
+      return false;
+    }
+    const next: string = index + 1 < raw.length ? raw.charAt(index + 1) : '';
+    if (next.length === 0 || next === ' ' || next === '#') {
+      return false;
+    }
+    let end: number = index + 1;
+    while (end < raw.length && TagRules.isTagChar(raw.charAt(end))) {
+      end++;
+    }
+    return TagRules.isTagBody(raw.substring(index + 1, end));
+  }
+
+  /**
+   * 序列化侧行内转义协议：把 PLAIN 文本中会被 InlineParser 重新解释为行内语法
+   * （强调/行内代码/链接/嵌入/标签/数学/删除线/高亮/转义符）或块级起始符的字符
+   * 加上反斜杠，使 parse(serialize(x)) 与 x 的解析语义一致（往返稳定）。
+   *
+   * 规则设计原则：配对符（` * $）与转义符 \ 无条件转义——配对可跨片段成立，
+   * 局部上下文不足以判定安全；_ 按词界、~ = 仅成对/末位转义，保证自然文本
+   * （x = 1、a ~ b、snake_case）零扰动；块级触发符仅在行内内容起始（atContentStart）
+   * 转义。`[` 与其后的 `!` 特意不转义：嵌入/链接片段在模型中是原文透传
+   * （walkMdInlines 的 EMBED→plain），转义会破坏往返；用户键入 [[x]]/![[x]]
+   * 自动成链也是预期行为。exclaimUnsafe：片段末尾的 `!` 后若紧跟 wiki/链接片段，
+   * 需转义防拼接出 `![[` 被解析为嵌入（配合 InlineParser.parseWiki 对被转义
+   * `!` 的豁免，`\![[` 重解析回字面 ! + wiki 链接）。
+   */
+  private static escapePlainRun(raw: string, atContentStart: boolean, exclaimUnsafe: boolean): string {
+    const len: number = raw.length;
+    let out: string = '';
+    let prev: string = ' ';
+    let i: number = 0;
+    let changed: boolean = false;
+    while (i < len) {
+      const ch: string = raw.charAt(i);
+      const next: string = i + 1 < len ? raw.charAt(i + 1) : '';
+      const last: boolean = i === len - 1;
+      const start: boolean = atContentStart && i === 0;
+      let emit: string = ch;
+      if (ch === '`' || ch === '*' || ch === '$') {
+        emit = `\\${ch}`;
+      } else if (ch === '\\' && (WysiwygCodec.isAsciiPunctuation(next) || next.length === 0)) {
+        emit = '\\\\';
+      } else if (ch === '_') {
+        if (!WysiwygCodec.isWordChar(prev)) {
+          emit = '\\_';
+        }
+      } else if (ch === '~' || ch === '=') {
+        if (next === ch || last) {
+          emit = `\\${ch}`;
+        }
+      } else if (ch === '!' && last && exclaimUnsafe) {
+        emit = '\\!';
+      } else if (ch === '#') {
+        if ((start && (next === ' ' || next === '#')) ||
+          WysiwygCodec.isTagLikeAt(raw, i, prev)) {
+          emit = '\\#';
+        }
+      } else if (start && (ch === '-' || ch === '+' || ch === '>' || ch === '|')) {
+        emit = `\\${ch}`;
+      } else if (start && ch === '<' &&
+        (WysiwygCodec.isAsciiLetter(next) || next === '/' || next === '!')) {
+        emit = '\\<';
+      } else if (start && ch >= '0' && ch <= '9') {
+        // 有序列表触发：数字串 + '.'/')' + 空白/结尾 → 只转义分隔符（1. x → 1\. x）。
+        let d: number = i;
+        while (d < len && raw.charAt(d) >= '0' && raw.charAt(d) <= '9') {
+          d++;
+        }
+        const delim: string = d < len ? raw.charAt(d) : '';
+        const after: string = d + 1 < len ? raw.charAt(d + 1) : '';
+        if ((delim === '.' || delim === ')') && (after === ' ' || after.length === 0)) {
+          out += `${raw.substring(i, d)}\\${delim}`;
+          prev = delim;
+          i = d + 1;
+          changed = true;
+          continue;
+        }
+      }
+      if (emit !== ch) {
+        changed = true;
+      }
+      out += emit;
+      prev = ch;
+      i++;
+    }
+    return changed ? out : raw;
   }
 }
