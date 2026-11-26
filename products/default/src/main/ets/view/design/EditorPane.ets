@@ -517,8 +517,8 @@ export struct EditorPane {
         .textOverflow({ overflow: TextOverflow.Ellipsis })
         .layoutWeight(1)
         .onClick(() => {
-          // 点击标题即可重命名当前笔记。
-          if (!this.vm.editMode && this.vm.selectedPath.length > 0) {
+          // 点击标题即可重命名当前笔记；编辑态同样允许（改名前草稿自动落盘，改名后继续编辑）。
+          if (this.vm.selectedPath.length > 0) {
             this.onRequestRename();
           }
         })

@@ -1531,6 +1531,7 @@ export class VaultViewModel {
     }
     // 改名前先把当前脏草稿落盘到旧路径：否则改名后 openNote 内的 saveDraft
     // 仍写旧 selectedPath，会把已改名的旧文件复活，产生内容分叉。
+    const resumeEdit: boolean = this.editMode && this.selectedPath === path;
     if (this.editMode && this.selectedPath === path && this.draftBuffer !== this.noteContent) {
       await this.saveDraft();
     }
@@ -1556,7 +1557,12 @@ export class VaultViewModel {
     await this.reindexPaths([newPath].concat(rewritten));
     await this.rewritePathRefs(path, newPath);
     if (this.selectedPath === path) {
-      await this.openNote(newPath);
+      // 重开改名后的笔记：不记入返回历史（旧路径已不存在，压栈会导致返回打开死路径）。
+      await this.openNoteInternal(newPath, false);
+      if (resumeEdit && this.selectedPath === newPath) {
+        // 编辑态改名：改名前草稿已随旧路径落盘，此处恢复编辑会话继续编辑。
+        this.startEdit();
+      }
     }
     await this.refreshTree();
     return true;
@@ -1609,6 +1615,7 @@ export class VaultViewModel {
     }
     // 移动前先把当前脏草稿落盘到旧路径：否则移动后 openNote 内的 saveDraft
     // 仍写旧 selectedPath，会把已移动的旧文件复活，产生内容分叉。
+    const resumeEdit: boolean = this.editMode && this.selectedPath === path;
     if (this.editMode && this.selectedPath === path && this.draftBuffer !== this.noteContent) {
       await this.saveDraft();
     }
@@ -1618,7 +1625,12 @@ export class VaultViewModel {
     }
     await this.rewritePathRefs(path, target);
     if (this.selectedPath === path) {
-      await this.openNote(target);
+      // 重开移动后的笔记：不记入返回历史（旧路径已不存在，压栈会导致返回打开死路径）。
+      await this.openNoteInternal(target, false);
+      if (resumeEdit && this.selectedPath === target) {
+        // 编辑态移动：移动前草稿已随旧路径落盘，此处恢复编辑会话继续编辑。
+        this.startEdit();
+      }
     }
     await this.refreshTree();
     return true;

@@ -18,6 +18,15 @@
 | v0.6.0 | **查询引擎 RDB 化、代码高亮、书签、本地快照备份与多端生态**：Dataview/日历 RDB 批量加速、列表项文本与标签入库、原生代码块语法着色、置顶书签、本地定时/一键快照备份恢复、2in1 键盘快捷键与桌面长按快捷方式 |
 | v1.0.0 | **全端质感打磨、同步安全无感化、系统打开方式与 1.0 正式发布**：首页默认素雅 5 色莫兰迪纸感列表与原地目录穿透面包屑、透明毛玻璃三页签底栏、按年月分卷日记（`日记/YYYY-MM/YYYY-MM-DD.md`）、自适应大纲浮层与多行编辑工具栏、WebDAV 干跑安全闸门/断点落盘/`.trash/` 软删与新建仓库自签名开关、系统 `.md`「打开方式」只读预览与一键导入、Ceramic Washi 分层应用图标、`md_*` 资源解耦与全模块单测通过 |
 
+## 近期变更（2026-11-26，dataview 勾选冻结行修复 + 编辑态点标题改名）
+
+用户报告两 bug，均在 5555 Mate 90 Pro 模拟器实测复现→定位→修复→回归：
+
+- **① Dataview TASK 勾选"卡住/复点反向改写"（ForEach 索引键复用陷阱）**：症状——跨笔记任务勾选后行不消失（末位行会消失）、反复点会把已完成任务悄悄翻回未完成、重开文件再点才正常。根因：`MdBlockView.dataViewTaskView` 的 ForEach 键生成器用数组下标 `dv_${index}_${checked}`；`toggleDataViewTask` 乐观翻转后把不匹配任务从 `dataTasks` 移除，剩余任务下标前移与被删行键相同，ArkUI ForEach"键相同即复用不重执行 builder"→复用被删任务的旧行（旧视觉+旧闭包）：勾选行冻结、再点触发旧对象翻转回写源文件、末位移除因键消失而正常。修复：`@Local dataTasksRev` 修订号在每次翻转时自增，键改身份+版本 `dv_${rev}_${path}_${lineNumber}_${checked}`（chips 键同理）——移除后剩余行键不变正确复用、被删行键消失立即销毁、rev bump 使组头（按 index 判断 needGroupHeader）随移除重算。实测：连续勾选非末位两行均立即消失、源文件 `[x]`+`✅ 日期` 写入正确、剩余行上移无冻结。
+- **② 编辑模式点标题不能改名（须先保存再改）**：两层根因——(a) `EditorPane.editorHeader` 标题 onClick 有 `!this.vm.editMode` guard，编辑态点击无效；(b) 即使经侧栏长按改名，`renameNote → openNote → applyDocument` 无条件 `editMode=false` 把用户踢回预览。修复：去掉 (a) guard；`renameNote`/`moveNote` 开头捕获 `resumeEdit`，重开改用 `openNoteInternal(newPath, false)`（顺手修二阶问题：`openNote` 会把已不存在的旧路径压入返回历史，返回键打开死路径），重开后 `startEdit()` 恢复编辑会话（改名前脏草稿已随旧路径落盘，内容零丢失）。实测：新建笔记自动进入所见编辑态→点标题弹重命名对话框→改名→仍在编辑态（所见/取消/保存俱在）→继续输入保存，内容落盘到新名文件。
+- UI 自动化经验：退格清空输入框用 `hdc shell uinput -K -d 2055 -u 2055`（KEYCODE_DEL=2055；`devecocli ui keyevent 2055` 无效）；对话框输入框点击位置决定光标落点（点击偏右置尾）；键盘弹出会使 DialogHost 上移，后续按钮坐标需重取 a11y dump。
+- 验证：markdown 80/80、`devecocli check arkts` 3 个编辑文件 0 错误、`devecocli build` 签名构建成功、两 bug 全流程模拟器实测通过（测试数据已还原：2026-11-26.md 逐字节一致；测试笔记 uitest-rename-01 已移入回收站待用户清空）。
+
 ## 近期变更（2026-11-24，inline 转义往返重建 + `.tmp` 孤儿清理 + 分享扩展实测）
 
 从第一性原理修复 v1.5.3 已知限制中的三项（先质疑问题定义、再推演二阶影响后动手）：

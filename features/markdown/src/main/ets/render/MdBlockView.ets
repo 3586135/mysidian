@@ -52,6 +52,8 @@ export struct MdBlockView {
   /** 阅读态正文是否处于长按划词选中状态。 */
   @Event onSelectionChange: (active: boolean) => void = (_active: boolean): void => {};
   @Local dataTasks: DataViewTask[] = [];
+  /** 任务列表修订号：乐观移除后下标前移，若 ForEach 键含下标会复用被删行的旧节点与旧闭包，勾选行"冻结"且再点会反向改写来源笔记；键改用 来源+行号+修订号 保证唯一稳定。 */
+  @Local dataTasksRev: number = 0;
   @Local dataLoaded: boolean = false;
   private dataViewQuery: DataViewQuery | null = null;
   @Local dataViewTableRows: string[][] = [];
@@ -528,7 +530,7 @@ export struct MdBlockView {
                 ForEach(this.taskChips(task.item), (chip: TaskChip) => {
                   this.taskChipView(chip)
                 }, (chip: TaskChip, chipIndex: number): string =>
-                  `dvchip_${index}_${chipIndex}_${task.item.checked}`)
+                  `dvchip_${this.dataTasksRev}_${task.path}_${task.item.lineNumber}_${chipIndex}`)
               }
               .margin({ top: 2 })
             }
@@ -538,7 +540,8 @@ export struct MdBlockView {
         }
         .width('100%')
         .alignItems(VerticalAlign.Top)
-      }, (task: DataViewTask, index: number): string => `dv_${index}_${task.item.checked}`)
+      }, (task: DataViewTask, index: number): string =>
+        `dv_${this.dataTasksRev}_${task.path}_${task.item.lineNumber}_${task.item.checked}`)
     }
     .width('100%')
     .alignItems(HorizontalAlign.Start)
@@ -666,6 +669,7 @@ export struct MdBlockView {
   private toggleDataViewTask(task: DataViewTask): void {
     const next: boolean = !task.item.checked;
     task.item.checked = next;
+    this.dataTasksRev++;
     this.onToggleDataViewTask(task, next);
     if (this.dataViewQuery !== null && !this.dataViewQuery.matchesItem(task.item)) {
       const kept: DataViewTask[] = [];
