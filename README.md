@@ -18,6 +18,13 @@
 
 </div>
 
+> [!IMPORTANT]
+> **本项目已移交，不再维护。** 后续维护与更新请移步新仓库：**[lindos-ohdev/onionnote](https://github.com/lindos-ohdev/onionnote)**。
+>
+> 由于新项目更改了应用包名，本仓库的笔记数据迁移到新项目需要 **先导出，再导入**。
+>
+> 如果你是通过 **WebDAV** 同步笔记的，则无需手动迁移：在新应用中新建仓库时配置好 WebDAV，数据会自动同步回来。
+
 ---
 
 ## 基本信息
